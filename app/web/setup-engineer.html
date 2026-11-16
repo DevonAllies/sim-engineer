@@ -632,14 +632,14 @@ function analyze(run){
   const rhOK = has("LFrideHeight") && has("LRrideHeight");
   if (rhOK){
     const fr=j=>(ch.LFrideHeight[j]+ch.RFrideHeight[j])*500, rr=j=>(ch.LRrideHeight[j]+ch.RRrideHeight[j])*500;
-    const fast=[], fastR=[], brk=[], brkF=[], hsC=[], hsCR=[], spl=[];
+    const fast=[], fastR=[], brk=[], brkF=[], hsC=[], hsCR=[], spl=[], vF=[];
     for (const j of idx){ const v=ch.Speed[j]*3.6, ay=Math.abs(ch.LatAccel[j]);
-      if (v>200 && ay<3 && ch.Brake[j]<0.03){ fast.push(fr(j)); fastR.push(rr(j)); }
+      if (v>200 && ay<3 && ch.Brake[j]<0.03){ fast.push(fr(j)); fastR.push(rr(j)); vF.push(v); }
       if (v>140 && ay>8 && ch.Brake[j]<0.05){ hsC.push(fr(j)); hsCR.push(rr(j)); }
       if (v>120 && ch.Brake[j]>0.5){ brk.push(rr(j)); brkF.push(fr(j)); }
       if (ch.CFSRrideHeight) spl.push(ch.CFSRrideHeight[j]*1000);
     }
-    A.rh = {front:median(fast), rear:median(fastR), nFast:fast.length,
+    A.rh = {front:median(fast), rear:median(fastR), nFast:fast.length, vFast:vF.length?median(vF):NaN,   // vFast: the speed those ride heights were measured at
       hsFront:median(hsC), hsRear:median(hsCR), nHs:hsC.length,
       brkRear:pct(brk,.9), brkFront:pct(brkF,.1), nBrk:brk.length,
       splMin:pct(spl,.005), splLow: spl.filter(x=>x<3).length/run.tick/rep.length};
@@ -2080,6 +2080,13 @@ function render(){
   <section><h2>Setup in this run <small>read from the telemetry file</small></h2><div class="tablewrap">${setupTable(run)}</div></section>
   ${runs.length>1?`<section><h2>Compare runs</h2><div class="tablewrap">${compareHTML()}</div></section>`:""}`,
   };
+  // cross-track car models: in their own tabs always; on Home too while this track is new to you (fewer than 3 stints here)
+  { const d=W.dampers, a=W.aero, h=W.home;
+    W.dampers=()=>d()+safe(()=>dampCrossHTML(run, A),"dampCross");
+    W.aero=()=>a()+safe(()=>aeroCrossHTML(run, A, S),"aeroCross");
+    W.home=()=>{ const here=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===learnTrackOf(run) && r.laps>=MIN_LAPS && r.date>=LEARN_CUTOFF).length;
+      return h() + (here<3 ? `<section><h2>New track: predictions from your other tracks <small>${here} stint${here===1?"":"s"} of ${MIN_LAPS}+ laps here so far</small></h2><p class="muted" style="margin:0">What this car does everywhere else, applied here: the ride heights to start from, how hard the dampers will work, and the setup from the most similar track.</p></section>`
+        + safe(()=>aeroCrossHTML(run, A, S),"aeroCross") + safe(()=>dampCrossHTML(run, A),"dampCross") : ""); }; }
   out.innerHTML = head + W[view]();
   if (view==="balance") drawMap($("#map"),run,A);
   if (view==="balance" || view==="home") wireBalanceFeel(run);
@@ -2363,7 +2370,7 @@ function aeroPoint(run, A){
   if (!A || !A.rh || !Number.isFinite(A.rh.front)) return null;
   const wE=SET.wing(run), st=end=>{ const v=run.setupFlat.filter(e=>e.key.toLowerCase()==="rideheight" && e.path.toLowerCase().includes(end)).map(e=>parseFloat(e.raw)); return v.length? mean(v) : NaN; };
   const r2=v=>Number.isFinite(v)?+v.toFixed(2):null;
-  return {w:wE?parseFloat(wE.raw):null, sF:r2(st("front")), sR:r2(st("rear")), fA:r2(A.rh.front), rA:r2(A.rh.rear), vmax:r2(A.vmax),
+  return {w:wE?parseFloat(wE.raw):null, sF:r2(st("front")), sR:r2(st("rear")), fA:r2(A.rh.front), rA:r2(A.rh.rear), vmax:r2(A.vmax), vF:r2(A.rh.vFast),
     df: A.aero ? r2(A.aero.fastF+A.aero.fastR) : null, fpct: A.aero ? r2(A.aero.fastPct*100) : null,
     // springs, bump-rubber gaps and how much of the straights each axle spends on its rubbers (so the model can learn their effect)
     ...(()=>{ const B=A.bump||{}, k=c=>{ const e=SET.spring(run,CORNERS[c]); return e?parseFloat(e.raw):NaN; }, av=(a,b)=>r2((a+b)/2);
@@ -2993,7 +3000,7 @@ function tyreStepsHTML(run, A, S, TW){
     list.push(cold ? "Driving: on the out lap brake hard several times (that heats the tyres far more than weaving), and keep the car working through the corners; a bit of slip adds heat" : "Driving: less sliding and smoother inputs; a sliding tyre overheats");
     steps.push(`<div style="margin:6px 0"><b>${ax} tyres ${cold?"too cold":"too hot"} by about ${by}°C</b>, in this order:<ol style="margin:4px 0 0 20px;line-height:1.6">${list.map(x=>`<li>${x}</li>`).join("")}</ol></div>`); }
   return `<div class="sugg p2" style="margin:0 0 12px"><h3>How to get them into the window</h3>${steps.join("")}
-    ${Number.isFinite(trk)&&trk<28&&axles.some(([,v])=>v<TW.lo)?`<p class="muted" style="font-size:12px;margin-top:6px">The track is only ${Math.round(trk)}°C, so part of this is the conditions: you may not reach the window fully today. Change one thing at a time and watch the temperatures move in the per-lap table.</p>`:""}</div>`;
+    ${Number.isFinite(trk)&&trk<28&&axles.some(([,v])=>v<TW.lo)?`<p class="muted" style="font-size:12px;margin-top:6px">The track is only ${Math.round(trk)}°C, so part of this is the conditions: you may not reach the window fully today. Change one thing at a time and watch the lap-average temperatures move from stint to stint (Compare → setting history).</p>`:""}</div>`;
 }
 function tiresHTML(A,S,run){
   let h = "";
@@ -3004,12 +3011,10 @@ function tiresHTML(A,S,run){
     <div class="grid" style="margin-bottom:6px">${["LF","RF","LR","RR"].filter(c=>TW.tyres[c]).map(c=>{ const t=TW.tyres[c]; return `<div class="stat"><div class="k">${c}</div><div class="v sm">${Math.round(t.eq)}°C</div>
       <div style="position:relative;height:8px;border-radius:4px;background:rgba(127,127,127,.25);margin:6px 0 4px"><i style="position:absolute;left:${X(TW.lo)}%;width:${X(TW.hi)-X(TW.lo)}%;top:0;bottom:0;background:var(--good);opacity:.45;border-radius:4px"></i><i style="position:absolute;left:${X(t.eq)}%;top:-3px;width:3px;height:14px;background:var(--ink);border-radius:2px"></i></div>
       <div class="s">${word(t.state)}</div></div>`; }).join("")}</div>
-    <p class="muted" style="font-size:12px;margin:0 0 10px">Whole-tyre temperature (inside, middle and outside together), ${TW.how}. GT3 tyres generally grip best around 80–95°C on the garage reading: a general figure, not from the manual, so change it under Targets if you know better for your car. </p>` + tyreStepsHTML(run, A, S, TW); }
+    <p class="muted" style="font-size:12px;margin:0 0 10px">Whole-tyre temperature (inside, middle and outside together), ${TW.how}. ${TW.measured&&TW.measured.sure?`Window ${TW.lo}–${TW.hi}°C, <b>measured</b> from your own laps in this car (grip against tyre temperature, below).`:`Window ${TW.lo}–${TW.hi}°C: a general GT3 figure until your own laps measure this car's (grip against tyre temperature, below).`} </p>` + tyreStepsHTML(run, A, S, TW); }
   const liveT = Object.fromEntries(Object.entries(A.tires).filter(([,t])=>t.temps).map(([c,t])=>[c,{...t,hot:t.press}]));
   const PL = A.endTyres && A.endTyres.perLap;
-  if (PL && PL.length) h += `<h3 style="font-size:14px;margin:0 0 6px">Per lap <small class="muted">inside / middle / outside °C, averaged over every corner of that lap</small></h3>
-    <div class="tablewrap" style="margin-bottom:10px"><table><tr><th>Lap</th>${["LF","RF","LR","RR"].map(c=>`<th>${c}</th>`).join("")}</tr>
-    ${PL.map(p=>`<tr><td>${p.lap}</td>${["LF","RF","LR","RR"].map(c=>{ const x=p.t[c]; return `<td style="white-space:nowrap">${Math.round(x.inner)} / ${Math.round(x.mid)} / ${Math.round(x.outer)} <span class="muted" style="font-size:11px">Δ${fmt(x.inner-x.outer,1)}</span></td>`; }).join("")}</tr>`).join("")}</table></div>`;
+  // the lap-by-lap temperatures (PL) are still read and stored with every lap (the models use them); only the average is shown here
   if (A.endTyres) h += `<h3 style="font-size:14px;margin:0 0 6px">${A.endTyres.avg?"Average of the laps":"End of stint"}</h3>` + tyreGrid(A.endTyres.t, A.pressUnit)
     + `<p class="muted" style="font-size:12px">From ${A.endTyres.src}. Targets: ${A.endTyres.avg ? "inside about 2–5°C hotter than outside, middle within ±2°C of the edge average (live temps through the corners read cooler and closer together than the garage screen, where the same targets are 4–11°C and ±3°C)" : "inside 4–11°C hotter than outside; middle within ±3°C of the edge average"}.</p>`;
   else if (Object.keys(liveT).length) h += tyreGrid(liveT, A.pressUnit) + `<p class="muted" style="font-size:12px">Live carcass temps, averaged over later laps.</p>`;
@@ -3758,6 +3763,9 @@ function learnRecord(run, A, opts){
   // temperature across each tyre (inner / middle / outer, garage-equivalent): what camber, pressure and toe did, stint by stint
   if (A.endTyres && A.endTyres.t){ const off=A.tw&&Number.isFinite(A.tw.off)?A.tw.off:0; rec.tread={};
     for (const [c,t] of Object.entries(A.endTyres.t)) if (Number.isFinite(t.inner)) rec.tread[c]={i:num(t.inner+off), m:num(t.mid+off), o:num(t.outer+off), p:num(t.hot)}; }
+  // the suspension's working conditions: how bumpy, how hard the dampers work per axle, bottoming and kerb slides (the cross-track damper model)
+  try { const D=A.damp||{}, ax=cs=>{ const v=cs.filter(c=>D[c]); return v.length?{hs:num(mean(v.map(c=>D[c].hsB+D[c].hsR))), p95:num(mean(v.map(c=>Math.max(D[c].p95B||0,D[c].p95R||0))))}:null; };
+    rec.susp={rough:num(A.surface&&A.surface.vertSd), p90:num(A.surface&&A.surface.p90), F:ax(["LF","RF"]), R:ax(["LR","RR"]), bottom:Array.isArray(A.bottom)?A.bottom.filter(p=>p.hardLaps).length:null, kerbSlides:num(A.osKerb)}; } catch(e){}
   if (!dry) try { refLapUpdate(run, A, rec); } catch(e){}   // the reference lap: the fastest clean lap you've ever done here
   try { const P=trackProfile(run, A); rec.prof={w:Object.fromEntries(Object.entries(P.w).map(([k,v])=>[k,+v.toFixed(3)])), vmax:num(P.vmax), corners:P.corners}; } catch(e){}   // lift and coast: where and how long you coast before each braking zone, and what it saves in fuel
   if (dry) return rec;
@@ -4032,12 +4040,13 @@ let LEARN_SCAN=false;
 // bumped when a version stores more per lap: every recording is read once more in the background (off track), so old stints get the new data too
 // 7: grip and tyre temperature per lap, fuel load, tyre age, wet / dry, track profile, time of day (0.14.x)
 // 8: tread temperatures per stint, and the reference lap (fastest clean lap per car + track, with its trace)
-const SCAN_KEY="se.learnFiles8";
+// 9: the speed the at-speed ride heights were measured at, and the suspension summary (cross-track aero and damper models)
+const SCAN_KEY="se.learnFiles9";
 async function learnScan(statusEl){
   if (LEARN_SCAN || !LEARN) return; LEARN_SCAN=true;
   const say = t => { document.querySelectorAll(".learnstatus").forEach(e=>e.textContent=t); if (statusEl) statusEl.textContent=t; };
   let done={}; try { done=JSON.parse(localStorage.getItem(SCAN_KEY)||"{}"); } catch(e){}
-  let seen={}; for (const k of ["se.learnFiles6","se.learnFiles7"]) try { Object.assign(seen, JSON.parse(localStorage.getItem(k)||"{}")); } catch(e){}   // read by an older version: only refresh stints that are still remembered (never bring back one you forgot)
+  let seen={}; for (const k of ["se.learnFiles6","se.learnFiles7","se.learnFiles8"]) try { Object.assign(seen, JSON.parse(localStorage.getItem(k)||"{}")); } catch(e){}   // read by an older version: only refresh stints that are still remembered (never bring back one you forgot)
   try {
     const d=await (await fetch("/api/files",{cache:"no-store"})).json();
     const files=(d.files||[]).filter(f=>f.size>1500000 && !done[f.name+"|"+f.size]);
@@ -4896,6 +4905,74 @@ function settingHistoryHTML(run){
        ${tyreKey?`<td>${t?fmt(t.io,1)+"°":"–"}</td><td>${t?fmt(t.me,1)+"°":"–"}</td><td>${t&&Number.isFinite(t.p)?fmt(t.p,0):"–"}</td>`:""}<td>${Number.isFinite(r.trackT)?Math.round(r.trackT)+"°":"–"}</td>
        <td style="min-width:180px">${ch===null?'<span class="muted">first there</span>':ch.length?esc(ch.map(c=>c.txt).join("; ")):'<span class="muted">nothing else</span>'}</td></tr>`; }).join("")}</table></div>
    <p class="muted" style="font-size:12px">Lap time is the typical (median) clean lap against your best stint at the same track, so different tracks can sit in one table. "Also changed" shows what else was different from the stint before at that track: if something else changed too, the lap time and balance aren't down to this setting alone (the model line above separates them). ${tyreKey?"Inner − outer: a few degrees hotter inside is the usual camber target; middle − edges near zero means the pressure suits the tyre. ":""}Tread temperatures are stored from 0.14.3 on (older stints get them when their recordings are re-read). * under ${MIN_LAPS} clean laps.</p></section>`;
+}
+// ================= cross-track car models: what this car does everywhere, applied to the track you're at =================
+// fit y = intercept + X·b on centred data (Bayesian ridge with loose priors), so every effect comes with its ±
+function fitCentred(X, y, tau){ const n=X.length, p=X[0].length, xm=Array.from({length:p},(_,j)=>mean(X.map(r=>r[j]))), ym=mean(y);
+  const F=bayesRidge(X.map(r=>r.map((v,j)=>v-xm[j])), y.map(v=>v-ym), tau||new Array(p).fill(100)); if (!F) return null;
+  F.a=ym-F.b.reduce((s,b,j)=>s+b*xm[j],0); F.xm=xm; F.f=x=>F.a+x.reduce((s,v,j)=>s+v*F.b[j],0); return F; }
+// --- aero platform: how far each axle squashes at speed (static − ride height at speed), from speed², spring rate and wing ---
+function aeroCross(run, A){
+  const recs=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.date>=LEARN_CUTOFF && !r.wet && r.laps>=3 && r.aero && Number.isFinite(r.aero.sF) && Number.isFinite(r.aero.fA) && Number.isFinite(r.aero.rA) && Number.isFinite(r.aero.sR));
+  const cur=aeroPoint(run, A); if (!cur || recs.length<4) return {n:recs.length, tracks:new Set(recs.map(r=>r.track)).size};
+  const vOf=a=>Number.isFinite(a.vF)?a.vF:Number.isFinite(a.vmax)?a.vmax*0.86:NaN;
+  const kRef={F:median(recs.map(r=>r.aero.kF).filter(v=>v>0)), R:median(recs.map(r=>r.aero.kR).filter(v=>v>0))}, wRef=median(recs.map(r=>r.aero.w).filter(Number.isFinite));
+  const feat=(a,ax)=>{ const q=(vOf(a)/100)**2, k=a["k"+ax]>0&&kRef[ax]>0 ? kRef[ax]/a["k"+ax] : 1, w=Number.isFinite(a.w)&&Number.isFinite(wRef) ? a.w-wRef : 0; return [q*k, q*w]; };
+  const out={n:recs.length, tracks:new Set(recs.map(r=>r.track)).size, cur, v:vOf(cur)};
+  for (const ax of ["F","R"]){ const P=recs.filter(r=>Number.isFinite(vOf(r.aero))), X=P.map(r=>feat(r.aero,ax)), y=P.map(r=>r.aero["s"+ax]-r.aero[ax==="F"?"fA":"rA"]);
+    if (P.length<4) continue; const wv=new Set(P.map(r=>r.aero.w)).size>1, F=fitCentred(wv?X:X.map(x=>[x[0]]), y, wv?[50,5]:[50]), stat=cur["s"+ax];
+    if (!F || !(F.b[0]>0)){ // it doesn't sink more at higher speed: resting on its bump rubber / splitter at speed. Use what it does sink.
+      const m=median(y), sd=Math.sqrt(mean(y.map(v=>(v-m)**2))); out[ax]={F:null, flat:true, sq:m, se:sd, pred:stat-m, meas:cur[ax==="F"?"fA":"rA"], stat, wv:false}; continue; }
+    const x=feat(cur,ax), sq=F.f(wv?x:[x[0]]);
+    out[ax]={F, sq, se:F.sigma, pred:stat-sq, meas:cur[ax==="F"?"fA":"rA"], stat, wv, perV:F.b[0]*((vOf(cur)/100)**2-((vOf(cur)-20)/100)**2)}; }
+  return out; }
+function aeroCrossHTML(run, A, S){
+  const X=aeroCross(run,A); if (!X || !X.F && !X.R) return `<section><h2>Aero platform across tracks</h2><p class="muted">Needs 4+ dry stints of 3+ laps in this car (${X?X.n:0} so far, ${X?X.tracks:0} track${X&&X.tracks===1?"":"s"}). It learns how far the car sinks at speed from every track, so at a new track it can say what static ride heights to start with.</p></section>`;
+  const W=(PROFILES[run.carPath]||{}).aeroWin, mid=a=>(a[0]+a[1])/2;
+  const row=ax=>{ const x=X[ax]; if (!x) return ""; const win=W?W.df[ax==="F"?"f":"r"]:null, need=win?mid(win)+x.sq:NaN;
+    return `<tr><td><b>${ax==="F"?"Front":"Rear"}</b></td><td>${fmt(x.stat,1)} mm</td><td>${fmt(x.sq,1)} mm <span class="muted">±${fmt(x.se,1)}</span></td><td><b>${fmt(x.pred,1)} mm</b></td><td>${fmt(x.meas,1)} mm</td><td>${win?`${win[0]}–${win[1]}`:"–"}</td><td>${Number.isFinite(need)?`<b>${need.toFixed(1)} mm</b> (${need-x.stat>=0?"+":"−"}${Math.abs(need-x.stat).toFixed(1)})`:"–"}</td></tr>`; };
+  const per=ax=>{ const x=X[ax]; if (!x) return ""; const nm=ax==="F"?"front":"rear";
+    return x.flat ? `the ${nm} sinks about ${fmt(x.sq,1)} mm whatever the speed: it's resting on its bump rubber (or the splitter limit) at speed, so the rubber gap and static height set it, not the springs`
+      : `the ${nm} sinks ${fmt(x.sq,1)} mm here, ${fmt(x.perV,1)} mm more for every extra 20 km/h${x.wv?`, ${x.F.b[1]>=0?"+":"−"}${fmt(Math.abs(x.F.b[1]*((X.v/100)**2)),2)} mm per wing step`:""}`; };
+  return `<section><h2>Aero platform across tracks <small>how far this car sinks at speed, learned from ${X.n} stints at ${X.tracks} track${X.tracks===1?"":"s"}</small></h2>
+   <div class="tablewrap"><table style="font-size:12px"><tr><th></th><th>Static now</th><th>Sinks at this track's speed</th><th>Predicted at speed</th><th>Measured this stint</th><th>Max-downforce window</th><th>Static to centre it</th></tr>${row("F")}${row("R")}</table></div>
+   <p class="muted" style="font-size:12px">The squash at speed grows with speed² and the downforce, and is resisted by the springs; the model learns how much from every track you've driven: ${[per("F"),per("R")].filter(Boolean).join("; ")} (this track's straight-line speed: ${Math.round(X.v)} km/h). "Predicted" vs "Measured" shows how well it carries over. At a new track, drive two laps and this tells you the static ride heights that put the car in iRacing's window at that track's speed, before you change anything else. Bump-rubber contact makes the car stop sinking: if a corner rests on its rubber at speed, it sinks less than this says.</p></section>`;
+}
+// --- dampers and suspension: how hard the dampers work (fast-damper share), and kerb slides, from track roughness and the clicks ---
+function dampKeys(vals, ax){ const o={}; for (const [k,v] of Object.entries(vals)){ if (!new RegExp(ax==="F"?"Front|LF|RF":"Rear|LR|RR").test(k) || !/Damp|Shock|Bump|Rebound|Comp/i.test(k)) continue;
+    const hs=/HighSpeed|(^|\.)Hs|HS[A-Z]/.test(k), ls=/LowSpeed|(^|\.)Ls|LS[A-Z]/.test(k), comp=/Comp|Bump/i.test(k)&&!/Rubber|Gap/i.test(k), reb=/Reb/i.test(k);
+    const id=(hs?"hs":ls?"ls":"")+(comp?"c":reb?"r":""); if (id.length===3) o[id]=v; } return o; }
+function dampCross(run, A){
+  const recs=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.date>=LEARN_CUTOFF && !r.wet && r.laps>=3 && r.susp && Number.isFinite(r.susp.rough) && r.setup);
+  const cv=smVals(Object.fromEntries(run.setupFlat.filter(e=>!LEARN_SKIP.test(e.path)).map(e=>[e.path.replace(/^CarSetup\./,""), e.raw])));
+  const rough=A.surface&&A.surface.vertSd, out={n:recs.length, tracks:new Set(recs.map(r=>r.track)).size, rough};
+  if (recs.length<5 || !Number.isFinite(rough)) return out;
+  out.roughTyp=median(recs.map(r=>r.susp.rough));
+  for (const ax of ["F","R"]){ const P=recs.filter(r=>r.susp[ax] && Number.isFinite(r.susp[ax].hs)); if (P.length<5) continue;
+    const K=["hsc","hsr","lsc","lsr"].filter(k=>P.filter(r=>Number.isFinite(dampKeys(smVals(r.setup),ax)[k])).length>=P.length*0.8);
+    const varied=K.filter(k=>new Set(P.map(r=>dampKeys(smVals(r.setup),ax)[k])).size>1);
+    const X=P.map(r=>{ const d=dampKeys(smVals(r.setup),ax); return [r.susp.rough, ...varied.map(k=>Number.isFinite(d[k])?d[k]:0)]; }), y=P.map(r=>r.susp[ax].hs*100);
+    const F=fitCentred(X, y, [20, ...varied.map(()=>1.5)]); if (!F) continue;
+    const cd=dampKeys(cv, ax), x=[rough, ...varied.map(k=>Number.isFinite(cd[k])?cd[k]:0)];
+    out[ax]={F, varied, pred:F.f(x), typ:median(y), now:(()=>{ const D=A.damp||{}, cs=ax==="F"?["LF","RF"]:["LR","RR"], v=cs.filter(c=>D[c]); return v.length?mean(v.map(c=>(D[c].hsB+D[c].hsR)*100)):NaN; })(), clicks:cd}; }
+  // kerb slides (rear stepping out on a kerb or bump), against roughness and the rear high-speed clicks
+  { const P=recs.filter(r=>Number.isFinite(r.susp.kerbSlides)); const K=["hsc","hsr"].filter(k=>new Set(P.map(r=>dampKeys(smVals(r.setup),"R")[k])).size>1);
+    if (P.length>=5){ const F=fitCentred(P.map(r=>{ const d=dampKeys(smVals(r.setup),"R"); return [r.susp.rough, ...K.map(k=>Number.isFinite(d[k])?d[k]:0)]; }), P.map(r=>r.susp.kerbSlides), [5, ...K.map(()=>0.5)]);
+      if (F){ const cd=dampKeys(cv,"R"); out.kerb={F, K, pred:F.f([rough, ...K.map(k=>Number.isFinite(cd[k])?cd[k]:0)]), now:A.osKerb}; } } }
+  return out; }
+const DK_LABEL={hsc:"high-speed bump", hsr:"high-speed rebound", lsc:"low-speed bump", lsr:"low-speed rebound"};
+function dampCrossHTML(run, A){
+  const X=dampCross(run,A); if (!X.F && !X.R) return `<section><h2>Dampers across tracks</h2><p class="muted">Needs 5+ dry stints of 3+ laps in this car with damper data (${X.n} so far, ${X.tracks} track${X.tracks===1?"":"s"}; recordings, not the live feed). It learns how bumpy tracks and your damper clicks change how hard the dampers work, so a new track comes with a prediction.</p></section>`;
+  const rel=X.rough/X.roughTyp, sg=(b,se,d=1)=>`<span class="${Math.abs(b)>2*se?"":"muted"}">${b>=0?"+":"−"}${Math.abs(b).toFixed(d)}</span> <span class="muted" style="font-size:11px">±${se.toFixed(d)}</span>`;
+  const block=ax=>{ const x=X[ax]; if (!x) return ""; const F=x.F, name=ax==="F"?"Front":"Rear";
+    const diff=x.pred-x.typ, best=x.varied.map((k,i)=>({k, b:F.b[1+i], se:F.se[1+i]})).filter(e=>Math.abs(e.b)>2*e.se && /^hs/.test(e.k)).sort((a,b)=>Math.abs(b.b)-Math.abs(a.b))[0];
+    const fix=best && diff>2 && best.b<0 ? `${Math.max(1,Math.round(diff/-best.b))} click${Math.round(diff/-best.b)>1?"s":""} more ${DK_LABEL[best.k]} brings it back to your usual` : best && diff<-2 && best.b<0 ? `there's room to soften ${DK_LABEL[best.k]} for more grip over the bumps` : "";
+    return `<tr><td><b>${name}</b></td><td>${fmt(x.now,1)}%</td><td>${fmt(x.pred,1)}%</td><td>${fmt(x.typ,1)}%</td><td>${sg(F.b[0],F.se[0],1)}</td>${["hsc","hsr","lsc","lsr"].map(k=>{ const i=x.varied.indexOf(k); return `<td>${i>=0?sg(F.b[1+i],F.se[1+i],2):'<span class="muted">not varied</span>'}</td>`; }).join("")}<td style="font-size:12px">${fix||'<span class="muted">nothing to change</span>'}</td></tr>`; };
+  return `<section><h2>Dampers across tracks <small>learned from ${X.n} stints at ${X.tracks} track${X.tracks===1?"":"s"}: how hard the dampers work, by track roughness and your clicks</small></h2>
+   <p style="margin:4px 0">This track is <b>${rel>1.15?`${Math.round((rel-1)*100)}% bumpier`:rel<0.87?`${Math.round((1-rel)*100)}% smoother`:"about as bumpy"}</b> than your usual track in this car.</p>
+   <div class="tablewrap"><table style="font-size:12px"><tr><th></th><th>Fast-damper share now</th><th>Predicted here</th><th>Your usual</th><th>Per unit of roughness</th>${["hsc","hsr","lsc","lsr"].map(k=>`<th>Per click ${DK_LABEL[k]}</th>`).join("")}<th>Suggestion</th></tr>${block("F")}${block("R")}</table></div>
+   ${X.kerb?`<p style="margin:6px 0;font-size:13px">Kerb and bump slides: ${fmt(X.kerb.now,1)} per lap now, ${fmt(X.kerb.pred,1)} predicted for this track's roughness with your current rear high-speed clicks.</p>`:""}
+   <p class="muted" style="font-size:12px">Fast-damper share = how much of the lap the dampers spend at high shaft speed (bumps and kerbs). A share well above your usual means the tyres are being bounced off the road there: more high-speed bump calms it (at some cost to grip over the kerbs). Bold = the effect is clearly bigger than its ±, grey = not sure yet. Each click effect is learned with the track's roughness taken out, so a bumpy track isn't blamed on a click.</p></section>`;
 }
 // --- 5) what to test next: the change that teaches the model most, given what's bothering the car ---
 function testNextHTML(run, A){

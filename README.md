@@ -160,6 +160,7 @@ Not in the repo: `node_modules`, installers, `.ibt` telemetry, the database, and
 
 | Version | Changes |
 |---|---|
+| 0.14.4 | Cross-track aero platform model (static ride heights for the window at any track's speed) and damper model (fast-damper share by roughness and clicks); new-track predictions on Home; lap-by-lap tyre temperatures hidden (still stored). |
 | 0.14.3 | Setting history (every value of a setting, where, when and what it did); reference lap from all stints (kept automatically, compared in GP); optimal and realistic lap across all stints; tyre temperature model learns across tracks using each lap's load; tread temps per stint; recordings re-read once more. |
 | 0.14.2 | "Learn from" selector for the tyre and fuel models (this stint, 7 / 30 days, season; this track or all); past recordings re-read once in the background so old stints get the per-lap grip and tyre data. |
 | 0.14.1 | Tyre heat sources with driving and setup advice, grip against tyre temperature, measured tyre window, wet / dry learned separately. |
