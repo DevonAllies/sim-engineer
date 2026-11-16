@@ -1,0 +1,597 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bono the Engineer</title>
+<style>
+:root{--ink:#eef0f4;--muted:#9aa3b2;--line:rgba(255,255,255,.09);--panel:rgba(14,16,21,.82);--accent:#ff6a4d;
+  --us2:#4a9cf0;--us1:#8cc4f7;--ok:#5fd38d;--os1:#ffc06b;--os2:#ff8a3c;--bad:#ff5d5d}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:transparent;overflow:hidden;height:100%}
+body{font:12px/1.25 system-ui,"Segoe UI",sans-serif;color:var(--ink);font-variant-numeric:tabular-nums;user-select:none}
+.brand{display:flex;align-items:center;gap:6px;min-width:0}
+.brand img{height:16px;max-width:90px;object-fit:contain;display:none}
+.brand .bt{font-size:10px;font-weight:800;letter-spacing:.12em;color:var(--ink);background:rgba(255,255,255,.1);border-radius:4px;padding:1px 6px;white-space:nowrap}
+.rhgrid{display:grid;grid-template-columns:1.1fr 1fr 1fr;gap:1px 6px;background:rgba(255,255,255,.05);border-radius:6px;padding:3px 6px;font-size:11px;align-items:baseline}
+.rhgrid .k{font-size:9px}
+.rhgrid b{font-size:12px}
+.rhgrid .d{font-size:9.5px;color:var(--muted);font-weight:400}
+.coach{font-size:11.5px;font-weight:700;background:rgba(255,255,255,.05);border-radius:6px;padding:3px 6px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.log{display:flex;flex-direction:column;gap:1px;font-size:10px;color:var(--muted);min-height:36px}
+.log div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.log div:first-child{color:var(--ink)}
+#root{position:relative;width:100%;height:100%;padding:9px 11px;background:var(--panel);border:1px solid var(--line);border-radius:10px;transition:opacity .25s;display:flex;flex-direction:column;gap:6px}
+body.hidden #root{opacity:0}
+body.edit #root{outline:2px dashed var(--accent);outline-offset:-2px;-webkit-app-region:drag;cursor:move}
+#editbar{display:none;position:absolute;left:0;right:0;bottom:0;font-size:10px;text-align:center;color:#fff;background:var(--accent);border-radius:0 0 10px 10px;padding:2px}
+body.edit #editbar{display:block}
+.k{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.top{display:flex;justify-content:space-between;align-items:baseline}
+.top b{font-size:11px;letter-spacing:.1em;color:var(--accent)}
+.view{display:none;flex-direction:column;gap:6px;flex:1}
+body.drive #drive, body.report #report{display:flex}
+/* balance */
+.big{font-size:22px;font-weight:800;letter-spacing:.02em;text-align:center;line-height:1.1}
+.scale{display:flex;gap:3px;height:9px}
+.scale i{flex:1;border-radius:3px;background:rgba(255,255,255,.08);transition:background .15s}
+.scale i.on{box-shadow:0 0 0 1px rgba(255,255,255,.7) inset}
+.chips{display:flex;gap:5px}
+.chip{flex:1;background:rgba(255,255,255,.05);border-radius:6px;padding:3px 6px;min-width:0}
+.chip b{display:block;font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.line{font-size:10.5px;color:var(--muted);background:rgba(255,255,255,.05);border-radius:6px;padding:3px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.line b{color:var(--ink)}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-top:auto}
+.stat{background:rgba(255,255,255,.05);border-radius:6px;padding:3px 6px}
+.stat b{display:block;font-size:12px}
+.tgt{font-size:9.5px;color:var(--muted);font-weight:400}
+/* colours for the 5-step scale */
+.c-2{color:var(--os2)}.c-1{color:var(--os1)}.c0{color:var(--ok)}.c1{color:var(--us1)}.c2{color:var(--us2)}
+.ok{color:var(--ok)}.warn{color:var(--os2)}.bad{color:var(--bad)}
+/* report */
+.tyres{display:grid;grid-template-columns:1fr 1fr;gap:5px;flex:1}
+.ty{background:rgba(255,255,255,.05);border-radius:6px;padding:4px 6px;display:flex;flex-direction:column;gap:3px}
+.ty .hd{display:flex;justify-content:space-between;align-items:baseline;font-size:10px;color:var(--muted)}
+.ty .hd b{color:var(--ink);font-size:12px}
+.temps{display:flex;gap:2px}
+.temps i{flex:1;height:16px;line-height:16px;border-radius:3px;font-style:normal;font-size:10.5px;font-weight:700;color:#111;text-align:center}
+.verdict{font-size:10px}
+</style>
+</head>
+<body class="hidden drive">
+<div id="root">
+  <div class="top"><span class="brand"><img id="logo" alt=""><span class="bt" id="brand"></span><b id="title">BONO</b></span><span class="k" id="info">waiting for iRacing</span></div>
+
+  <div class="view" id="drive">
+    <div class="big" id="big">–</div>
+    <div class="scale" id="scale"><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="coach" id="coach"><span class="k">Vs your best</span> <span class="muted">–</span></div>
+    <div class="coach" id="loss"><span class="k">Vs fastest</span> <span class="tgt">starts after your first clean lap</span></div>
+    <div class="stats">
+      <div class="stat"><span class="k">Brake bias</span><b id="ibias">–</b></div>
+      <div class="stat"><span class="k">TC</span><b id="itc">–</b></div>
+      <div class="stat"><span class="k">ABS</span><b id="iabs">–</b></div>
+    </div>
+    <div class="line" id="incar">In-car suggestions appear after a few corners</div>
+  </div>
+
+  <div class="view" id="report">
+    <div class="tyres" id="tyres"></div>
+    <div class="line" id="rbal">–</div>
+  </div>
+
+  <div id="editbar">Bono the Engineer · drag to move · drag the edge to resize</div>
+</div>
+<script>
+"use strict";
+const BASE_W = 340;
+const Q = new URLSearchParams(location.search), UNITS = Q.get("units")==="psi" ? "psi" : "kPa", NUMBERS = Q.get("numbers")==="1";
+// wheelbase + ride-height targets from each car's iRacing manual (picked from the telemetry's CarPath)
+// help: +1 when a higher number means more TC/ABS help, -1 when lower means more (Mercedes); tc/abs: dry ranges from the manuals
+const CARS = {
+  acuransxevo22gt3:{wb:2.642, f:40, r:55, help:1, tc:[2,7], abs:[2,7]},
+  mercedesamgevogt3:{wb:2.630, f:40, r:67.5, help:-1, tc:[1,11], abs:[7,11]},
+  lamborghinievogt3:{wb:2.645, f:40, r:62, help:1, tc:[1,10], abs:[1,6]},
+  porsche992rgt3:{wb:2.507, help:1}, dallarap217:{wb:3.010, f:5, r:50, help:1},
+  porsche9922cup:{wb:2.459, help:1},
+};
+const $ = id => document.getElementById(id);
+const fmt = (v,d=1) => Number.isFinite(v) ? v.toFixed(d) : "–";
+const median = a => { if (!a.length) return NaN; const s=Float64Array.from(a).sort(); const m=s.length>>1; return s.length%2? s[m] : (s[m-1]+s[m])/2; };
+// text size and font come from the app (Overlays panel); the window itself can be any size
+let TEXT = 1;
+function fit(){ document.body.style.zoom = TEXT; }
+fit();
+if (window.se && window.se.onStyle) window.se.onStyle(s => { TEXT = s.text || 1; document.body.style.fontFamily = `"${s.font||"Segoe UI"}", system-ui, sans-serif`; fit(); });
+
+let edit = false;
+if (window.se) window.se.onEditMode(on => { edit = on; document.body.classList.toggle("edit", on); });
+
+// ---------- balance in words: 5 steps ----------
+// understeer angle (deg, front wheel) relative to the car's own gentle-cornering baseline
+const STEPS = [ {max:-1.0, w:"Oversteer", c:-2}, {max:-0.4, w:"Slight oversteer", c:-1}, {max:0.7, w:"Neutral", c:0}, {max:1.6, w:"Slight understeer", c:1}, {max:Infinity, w:"Understeer", c:2} ];
+const step = u => STEPS.find(s=>u<=s.max);
+// trend over recent corners: each corner judged on its own, so one bad corner isn't averaged away by a lap of neutral driving
+function trend(el, vals){
+  const v=vals.filter(Number.isFinite); if (v.length<3){ el.textContent="–"; el.className=""; return; }
+  const m=v.reduce((a,b)=>a+b,0)/v.length, s=step(m);
+  const pushN=v.filter(x=>x>0.7).length, looseN=v.filter(x=>x<-0.4).length;
+  let txt=s.w; if (s.c>0) txt+=` ${pushN}/${v.length}`; else if (s.c<0) txt+=` ${looseN}/${v.length}`;
+  else if (pushN||looseN) txt += pushN>=looseN ? ` · ${pushN} push` : ` · ${looseN} loose`;
+  el.textContent = txt + (NUMBERS? ` ${fmt(m)}°` : ""); el.className = "c"+s.c;
+}
+function word(el, a, minN=20){
+  if (a.length<minN){ el.textContent="–"; el.className=""; return; }
+  const m=median(a), s=step(m); el.textContent = s.w + (NUMBERS? ` ${fmt(m)}°` : ""); el.className = "c"+s.c;
+}
+
+// ---------- iRacing data ----------
+const WANT = ["PlayerTrackSurface","SessionTime","Speed","SteeringWheelAngle","YawRate","LatAccel","Brake","Throttle","Lap","LapDist","LapDistPct","OnPitRoad","IsOnTrack","PlayerCarInPitStall","BrakeABSactive","VertAccel","LFspeed","RFspeed","LRspeed","RRspeed",
+  "LFrideHeight","RFrideHeight","LRrideHeight","RRrideHeight","CFSRrideHeight","dcBrakeBias","dcTractionControl","dcABS",
+  "LFpressure","RFpressure","LRpressure","RRpressure",
+  "LFtempL","LFtempM","LFtempR","RFtempL","RFtempM","RFtempR","LRtempL","LRtempM","LRtempR","RRtempL","RRtempM","RRtempR"];
+const TYPES = {0:"getUint8",1:"getUint8",2:"getInt32",3:"getUint32",4:"getFloat32",5:"getFloat64"};
+const cstr = b => { let s=""; for (const x of b){ if(!x) break; s+=String.fromCharCode(x);} return s; };
+const CORN = {LF:"LeftFront",RF:"RightFront",LR:"LeftRear",RR:"RightRear"};
+function parseMeta(buf){
+  const dv=new DataView(buf), i32=o=>dv.getInt32(o,true);
+  const siLen=i32(16), siOff=i32(20), numVars=i32(24), varOff=i32(28), bufLen=i32(36), vars={};
+  for (let i=0;i<numVars;i++){ const o=varOff+i*144; vars[cstr(new Uint8Array(buf,o+16,32))]={type:i32(o),off:i32(o+4),count:i32(o+8)}; }
+  const yaml=cstr(new Uint8Array(buf,siOff,siLen));
+  const idx=(yaml.match(/DriverCarIdx:\s*(\d+)/)||[])[1];
+  let car=""; if (idx!==undefined){ const m=yaml.match(new RegExp("\\n\\s*- CarIdx:\\s*"+idx+"\\s*\\n[\\s\\S]*?CarPath:\\s*(\\S+)")); if (m) car=m[1]; }
+  // garage tyre reading (CarSetup › TiresAero › corner › LastTemps / LastHotPressure)
+  const garage={}, setup=yaml.slice(yaml.indexOf("CarSetup:"));
+  for (const [c,name] of Object.entries(CORN)){
+    const m=setup.match(new RegExp(name+":[\\s\\S]*?LastHotPressure:\\s*([\\d.]+)[\\s\\S]*?LastTemps(OMI|IMO):\\s*([^\\n]+)"));
+    if (!m) continue; const v=m[3].split(",").map(parseFloat); if (v.length!==3 || v.some(isNaN)) continue;
+    const omi=m[2]==="OMI"; garage[c]={outer:omi?v[0]:v[2], mid:v[1], inner:omi?v[2]:v[0], hot:parseFloat(m[1])};
+    const tr=setup.match(new RegExp(name+":[\\s\\S]*?TreadRemaining:\\s*([^\\n]+)"));
+    if (tr){ const w=tr[1].split(",").map(parseFloat).filter(x=>!isNaN(x)); if (w.length===3) garage[c].tread=Math.min(...w); }
+  }
+  // static (parked) ride heights from the garage setup
+  const rh = n => { const m=setup.match(new RegExp("Chassis:[\\s\\S]*?"+n+":[\\s\\S]*?RideHeight:\\s*([\\d.]+)")); return m? parseFloat(m[1]) : NaN; };
+  const stat = { f:(rh("LeftFront")+rh("RightFront"))/2, r:(rh("LeftRear")+rh("RightRear"))/2 };
+  let carName=""; if (idx!==undefined){ const m=yaml.match(new RegExp("\\n\\s*- CarIdx:\\s*"+idx+"\\s*\\n[\\s\\S]*?CarScreenName:\\s*([^\\n]+)")); if (m) carName=m[1].trim(); }
+  const names={}; for (const m of yaml.matchAll(/- CarIdx:\s*(\d+)\s*\n\s*UserName:\s*([^\n]+)/g)) names[+m[1]]=m[2].trim();
+  const trackL = (parseFloat((yaml.match(/TrackLength:\s*([\d.]+)/)||[])[1])||0)*1000;
+  const trackId = ((yaml.match(/TrackID:\s*(\d+)/)||[])[1]) || ((yaml.match(/TrackName:\s*([^\n]+)/)||[])[1]||"").trim();
+  return {trackId, trackL, vars, bufLen, car, carName, garage, garageSig: JSON.stringify(garage), stat, me: idx!==undefined? +idx : -1, names};
+}
+function decode(dv,p,vars){ const s={}; for (const k of WANT){ const v=vars[k]; if (v && v.count===1) s[k]=dv[TYPES[v.type]](p+v.off,true); } return s; }
+
+// ---------- rolling analysis ----------
+let zone=null;
+const ST = { vert:[], zones:[], spin:[], exitSlides:[], outLap:true, corners:[], gen:null, si:null, next:-120, meta:null, last:null, recent:[], lap:null, cur:null, prev:null, stint:null, ratios:[], sgn:[0,0], K:15, osRun:0, connected:false, ref:null, best:Infinity, lapT0:null, log:[], coach:null };
+function newLap(){ return {trace:[], entry:[],mid:[],exit:[],slow:[],fast:[],corners:[],rhF:[],rhR:[],rhcF:[],rhcR:[],spl:Infinity,slides:0,tyre:{n:0},valid:true}; }
+function newStint(){ return {laps:0, entry:[],mid:[],exit:[], garageSig: ST.meta ? ST.meta.garageSig : "", lastLapTyres:null}; }
+ST.cur = newLap();
+let corner=null, quiet=0;
+function addLog(msg){ if (ST.log[0] && ST.log[0].msg===msg) return; ST.log.unshift({msg, t:Date.now()}); ST.log.length=Math.min(ST.log.length,4); }
+const sg = x => (x>=0?"+":"−")+Math.abs(Math.round(x));
+const atKm = m => Number.isFinite(m) ? (m/1000).toFixed(2)+" km" : "";
+function closeCorner(){
+  if (corner && corner.us.length>20){
+    const endP = ST.last ? ST.last.LapDistPct : NaN;
+    const rec = {a:corner.a, m:corner.apexP, b:endP, at:corner.at, brkAt:corner.brkAt, apexAt:corner.apexAt, powAt:corner.powAt, endAt: ST.last ? ST.last.LapDist : NaN, exitSlide:corner.exitSlide, us:median(corner.us), v:median(corner.v), entry:corner.entry, min:corner.min, exit:corner.lastV,
+                 usIn: corner.usIn.length>5 ? median(corner.usIn) : NaN, slide:corner.slide,
+                 ph:{entry:corner.ph.entry.length>8?median(corner.ph.entry):NaN, mid:corner.ph.mid.length>8?median(corner.ph.mid):NaN, exit:corner.ph.exit.length>8?median(corner.ph.exit):NaN}};
+    ST.cur.corners.push(rec); judge(rec);
+    ST.corners.push(rec); if (ST.corners.length>24) ST.corners.shift();
+  }
+  corner=null;
+}
+// corner entry coaching: compare this corner with the same corner on your best lap
+// ---------- time lost per corner to the fastest car in your class (live: every car's position, 20x a second) ----------
+// sections come from your best lap: a = braking point, m = slowest point (apex), b = corner exit
+function buildSecs(ref){
+  const secs = ref.filter(c=>c.a<c.m && c.m<c.b && c.b-c.a<0.25).map((c,i)=>({n:i+1, a:c.a, m:c.m, b:c.b}));
+  if (secs.length<2) return;
+  ST.secs = secs; ST.bnd = [];
+  secs.forEach((s,k)=>{ ST.bnd.push({p:s.a,k,w:0},{p:s.m,k,w:1},{p:s.b,k,w:2}); });
+  ST.bnd.sort((x,y)=>x.p-y.p); ST.det = {}; ST.bestOther = {};
+}
+function readArr(dv,p,v){ const fn=TYPES[v.type], sz=v.type===5?8:(v.type<=1?1:4), out=new Array(v.count); for (let i=0;i<v.count;i++) out[i]=dv[fn](p+v.off+i*sz,true); return out; }
+function timeCars(dv, p, t){
+  const V=ST.meta.vars, vp=V.CarIdxLapDistPct; if (!vp || vp.count<2) return;
+  const pct=readArr(dv,p,vp), pit=V.CarIdxOnPitRoad?readArr(dv,p,V.CarIdxOnPitRoad):null, surf=V.CarIdxTrackSurface?readArr(dv,p,V.CarIdxTrackSurface):null, cls=V.CarIdxClass?readArr(dv,p,V.CarIdxClass):null;
+  const me=ST.meta.me, B=ST.bnd;
+  for (let car=0; car<pct.length; car++){
+    if (cls && me>=0 && cls[car]!==cls[me]) continue;
+    const D = ST.det[car] || (ST.det[car]={prev:NaN, prevT:NaN, cur:{}, buf:[]});
+    const x=pct[car];
+    if (!(x>=0) || (pit&&pit[car]) || (surf&&surf[car]!==3)){ D.prev=NaN; D.cur={}; D.buf=[]; continue; }
+    D.buf.push([t,x]); if (D.buf.length>700) D.buf.shift();
+    if (Number.isFinite(D.prev)){
+      let d=x-D.prev; if (d<-0.5) d+=1;
+      if (d<0 || d>0.05){ D.cur={}; }
+      else for (const h of B){
+        let q=h.p-D.prev; if (q<=0) q+=1; if (q>d) continue;
+        const tc=D.prevT+(t-D.prevT)*(q/d), c=D.cur[h.k]||(D.cur[h.k]={});
+        if (h.w===0){ D.cur[h.k]={a:tc}; }
+        else if (h.w===1 && c.a){ c.m=tc; }
+        else if (h.w===2 && c.a && c.m && tc-c.a<60){
+          const r={entry:c.m-c.a, exit:tc-c.m, total:tc-c.a};
+          const prof = () => passProfile(D.buf.filter(s=>s[0]>=c.a-3), ST.meta.trackL);
+          if (car===me) reportLoss(h.k, r, prof());
+          else { const b=ST.bestOther[h.k]; if (!b || r.total<b.total) ST.bestOther[h.k]={...r, car, prof:prof()}; }
+          delete D.cur[h.k];
+        }
+      }
+    }
+    D.prev=x; D.prevT=t;
+  }
+}
+function reportLoss(k, mine, prof){
+  const b=ST.bestOther[k]; if (!b) { ST.loss={name:`T${k+1}`, none:true, t:Date.now()}; return; }
+  const entry=mine.entry-b.entry, exit=mine.exit-b.exit;
+  ST.loss={name:`T${k+1}`, loss:mine.total-b.total, entry, exit, who:(ST.meta.names||{})[b.car]||"", advice: adviceFor(prof, b.prof, ST.meta.trackL, entry, exit), t:Date.now()};
+}
+// speed from position over time (same method for you and the others), then braking point / apex speed / acceleration point
+function passProfile(buf, L){
+  if (!L) return null; const pts=[]; for (let i=1;i<buf.length;i++){ let d=buf[i][1]-buf[i-1][1]; if (d<-0.5) d+=1; const dt=buf[i][0]-buf[i-1][0]; if (dt<=0 || d<0 || d>0.05) continue; pts.push({p:buf[i][1], v:d*L/dt*3.6}); }
+  if (pts.length<10) return null;
+  const v=pts.map((x,i)=>{ let s=0,n=0; for (let k=i-2;k<=i+2;k++) if (pts[k]){ s+=pts[k].v; n++; } return s/n; });
+  let iMin=0; for (let i=0;i<v.length;i++) if (v[i]<v[iMin]) iMin=i;
+  let iMax=0; for (let i=0;i<=iMin;i++) if (v[i]>v[iMax]) iMax=i;
+  let iBrk=iMax; for (let i=iMax;i<iMin;i++) if (v[i]<v[iMax]-4){ iBrk=i; break; }
+  let iAcc=v.length-1; for (let i=iMin;i<v.length;i++) if (v[i]>v[iMin]+3){ iAcc=i; break; }
+  return {brk:pts[iBrk].p, vmin:v[iMin], acc:pts[iAcc].p};
+}
+function adviceFor(mine, theirs, L, lossIn, lossOut){
+  const out=[], wrap=d=>d>0.5?d-1:d<-0.5?d+1:d, M=8; if (!mine || !theirs || !L) return out;
+  if (lossIn>0.03){ const dm=wrap(mine.brk-theirs.brk)*L;
+    if (dm<-M) out.push(`brake ${Math.round(-dm)} m later`); else if (dm>M) out.push(`brake ${Math.round(dm)} m earlier`); else if (mine.vmin<theirs.vmin-2) out.push(`+${Math.round(theirs.vmin-mine.vmin)} km/h at the apex`); else out.push("carry more speed in"); }
+  if (lossOut>0.03){ const dm=wrap(mine.acc-theirs.acc)*L;
+    if (dm>M) out.push(`power ${Math.round(dm)} m earlier`); else if (dm<-M) out.push(`wait ${Math.round(-dm)} m longer before full throttle`); else out.push("smoother on the power"); }
+  return out;
+}
+// time at a lap distance (m) from a lap trace (time since the line, every 5 m)
+function tAt(tr, m){ if (!tr || !Number.isFinite(m)) return NaN; for (let i=Math.floor(m/5); i>=0 && i>Math.floor(m/5)-12; i--) if (tr[i]!==undefined) return tr[i]; return NaN; }
+const seg = (tr,a,b) => tAt(tr,b)-tAt(tr,a);
+// your own pedals vs your best lap: where the brake went on, where full throttle came back, and what it cost
+function pedalAdvice(rec, ref){
+  const out={tips:[], lossIn:NaN, lossOut:NaN, loss:NaN};
+  if (!ST.refTrace) return out;
+  const fin=Number.isFinite, a=Math.min(fin(rec.brkAt)?rec.brkAt:rec.at, fin(ref.brkAt)?ref.brkAt:ref.at)-15, m=ref.apexAt, b=rec.endAt;
+  if (!(fin(a) && fin(m) && fin(b) && a<m && m<b && b-a<1500)) return out;
+  out.lossIn = seg(ST.cur.trace,a,m)-seg(ST.refTrace,a,m); out.lossOut = seg(ST.cur.trace,m,b)-seg(ST.refTrace,m,b); out.loss=out.lossIn+out.lossOut;
+  if (!fin(out.loss)) return out;
+  const M=5, R=Math.round, dB=rec.brkAt-ref.brkAt, dP=rec.powAt-ref.powAt, dMin=rec.min-ref.min;   // dB>0 = braked later, dP>0 = full throttle later
+  if (out.loss<=0.03){ out.lossIn=Math.min(out.lossIn,0); out.lossOut=Math.min(out.lossOut,0); }   // the corner as a whole didn't cost time: no fix needed
+  if (out.lossIn>0.03){
+    if (dB<-M) out.tips.push(`brake ${R(-dB)} m later`);
+    else if (dB>M) out.tips.push(`brake ${R(dB)} m earlier`);               // braked later and still lost time: overshot
+    else if (dMin<-2) out.tips.push(`release the brake sooner, +${R(-dMin)} km/h at the apex`);
+    else out.tips.push("carry more speed to the apex");
+  }
+  if (out.lossOut>0.03){
+    if (rec.exitSlide && !(dP>M)) out.tips.push(fin(dP)&&dP<-M ? `wait ${R(-dP)} m longer before full throttle` : "smoother on the power, it slid");
+    else if (dP>M) out.tips.push(`full throttle ${R(dP)} m earlier`);
+    else if (dP<-M) out.tips.push(`wait ${R(-dP)} m longer before full throttle`);
+    else out.tips.push("smoother on the power");
+  }
+  if (!out.tips.length && out.loss<-0.05){                                // faster than your best: say what worked
+    if (dB>M) out.tips.push(`braking ${R(dB)} m later worked`);
+    else if (dP<-M) out.tips.push(`full throttle ${R(-dP)} m earlier worked`);
+  }
+  return out;
+}
+const refKey = () => ST.meta && ST.meta.car && ST.meta.trackId ? ST.meta.car+"|"+ST.meta.trackId : "";
+// your saved best lap at this track: used as the reference from the first flying lap, until you set a best lap this session
+function loadStoredRef(){
+  const k=refKey(), g=ST.gen; if (!k || !window.se || !window.se.learnRefGet) return;
+  window.se.learnRefGet(k).then(r=>{ if (!r || g!==ST.gen || ST.ref || !Array.isArray(r.corners) || r.corners.length<3) return;
+    ST.ref=r.corners; ST.refTrace=(r.trace||[]).map(v=>v==null?undefined:v); ST.refStored=true; ST.refBest=r.best;
+    if (!ST.secs) buildSecs(ST.ref); }).catch(()=>{});
+}
+function judge(rec){
+  const ref = ST.ref && ST.ref.reduce((b,c)=>{ const d=Math.abs(c.at-rec.at); return d<80 && (!b || d<Math.abs(b.at-rec.at)) ? c : b; }, null);
+  const name = ref ? `T${ST.ref.indexOf(ref)+1}` : atKm(rec.at);
+  const pushIn = rec.usIn>1.6, slide = rec.slide;
+  let v=null;
+  if (ref){
+    const dE=rec.entry-ref.entry, dM=rec.min-ref.min, dX=rec.exit-ref.exit, d=`in ${sg(dE)} · apex ${sg(dM)} · out ${sg(dX)} km/h`;
+    const P = pedalAdvice(rec, ref), vs = ST.refStored ? "vs your best here (saved)" : "vs your best";
+    const lt = Number.isFinite(P.loss) ? `${P.loss>=0?"+":"−"}${Math.abs(P.loss).toFixed(2)} s` : "";
+    if (P.tips.length) v={w:P.tips.join(", "), c: P.loss>0.03 ? "warn" : "ok", d: lt ? `${lt} ${vs}` : d, loss:P.loss};
+    else if (dE>3 && (dM<-1 || dX<-2 || pushIn || slide)) v={w:"Too fast in", c:"warn", d: d + (pushIn?" · pushed":"") + (slide?" · slid":"")};
+    else if (dE<-3 && dM<-1 && !pushIn && !slide) v={w:"Too slow in – carry more speed", c:"c1", d};
+    else if (Number.isFinite(P.loss) && Math.abs(P.loss)<=0.03) v={w:"Same as your best", c:"ok", d:lt+" "+vs};
+    else if (dM>1 && dX>-1) v={w:"Good corner", c:"ok", d: lt ? lt+" "+vs : d};
+    else if (dX<-3) v={w:"Slow exit", c:"warn", d};
+  } else if (pushIn) v={w:"Too fast in (front pushing)", c:"warn", d:""};
+  else if (slide) v={w:"Unstable entry (rear slid)", c:"warn", d:""};
+  if (v){ ST.coach={name, ...v, t:Date.now()}; addLog(`${name}: ${v.w}${v.d?" ("+v.d+")":""}`); }
+}
+function endLap(){
+  closeCorner();
+  if (ST.stint && ST.cur.valid && ST.cur.mid.length+ST.cur.exit.length>40){
+    ST.stint.laps++; ST.lapsClean=(ST.lapsClean||0)+1; for (const p of ["entry","mid","exit"]) ST.stint[p].push(...ST.cur[p]);
+    if (ST.cur.tyre.n>300){ ST.stint.lastLapTyres = ST.cur.tyre;   // add this lap to the stint's tyre average
+      // each lap's own average (all its corners) is added; the report divides by the number of laps, so every lap counts the same
+      const S=ST.stint.tyreSum || (ST.stint.tyreSum={n:0, laps:0}), T=ST.cur.tyre; S.laps++; S.n=S.laps;
+      for (const [k,v] of Object.entries(T)) if (k!=="n") S[k]=(S[k]||0)+v/T.n; }
+  }
+  // best lap so far becomes the reference for corner coaching
+  const s=ST.last, lt = (s && ST.lapT0!==null) ? s.SessionTime-ST.lapT0 : NaN;
+  if (ST.cur.valid && Number.isFinite(lt) && lt>20 && ST.cur.corners.length>2){
+    const best = lt<ST.best; addLog(`Lap ${ST.lap}: ${Math.floor(lt/60)}:${(lt%60).toFixed(2).padStart(5,"0")}${best?" (best)":""}`);
+    if (best){ ST.best=lt; ST.ref=ST.cur.corners; ST.refTrace=ST.cur.trace; ST.refStored=false; if (!ST.secs) buildSecs(ST.ref);
+      // remember your best lap here for next time (kept only if it beats the one already saved)
+      if (window.se && window.se.learnRefPut && refKey()){
+        const I=ST.cur.inp||{n:[]}, avg=(a,d)=>Array.from({length:ST.cur.trace.length}, (_,i)=>I.n[i] ? +(a[i]/I.n[i]).toFixed(d) : null);
+        window.se.learnRefPut(refKey(), {best:lt, date:Date.now(), corners:JSON.parse(JSON.stringify(ST.cur.corners)), trace:Array.from(ST.cur.trace, v=>v===undefined?null:v),
+          inputs: I.n.length ? {speed:avg(I.v||[],1), brake:avg(I.b||[],3), throttle:avg(I.t||[],3), steer:avg(I.s||[],3)} : null}); } }
+  }
+  ST.lapT0 = s ? s.SessionTime : null;
+  if (ST.outLap && ST.last && !ST.last.OnPitRoad && ST.last.IsOnTrack){ ST.outLap=false;   // crossing the line ends the out lap
+    const v=ST.vert; if (v.length>300){ const m=v.reduce((a,b)=>a+b,0)/v.length, sd=Math.sqrt(v.reduce((a,b)=>a+(b-m)*(b-m),0)/v.length);
+      const surf = sd<1.0 ? "smooth" : sd<1.35 ? "medium" : "bumpy";
+      ST.coach = {name:"Track", w:`${surf} surface`, c: surf==="bumpy"?"warn":"ok", d: surf==="bumpy"?"softer, more mechanical setup suits it":surf==="smooth"?"a stiffer, aero setup can work":"no strong push either way", t:Date.now()+12000}; } }
+  const wasValid = ST.cur.valid;
+  ST.prev = ST.cur; ST.cur = newLap();
+  if (wasValid && !ST.outLap) balanceCall();
+}
+function addSample(s){
+  const car = CARS[ST.meta.car] || {wb:2.65};
+  ST.last = s;
+  if (ST.lap!==null && s.Lap!==ST.lap) endLap();
+  ST.lap = s.Lap;
+  if (!s.IsOnTrack || s.OnPitRoad){ if (s.OnPitRoad){ ST.cur.valid=false; ST.outLap=true; } return; }   // in/out laps don't count
+  // off track: this lap isn't clean, so it isn't counted, but the count carries on from the next line crossing (no reset)
+  if (s.PlayerTrackSurface===0) ST.cur.valid=false;
+  if (!ST.stint) ST.stint = newStint();
+  const V=s.Speed, ay=Math.abs(s.LatAccel), st=s.SteeringWheelAngle, r0=s.YawRate;
+  if (ay>3) ST.sgn[st*r0>=0?0:1]++;
+  const r = r0*(ST.sgn[0]>=ST.sgn[1] ? 1 : -1);
+  if (ay>1.5 && ay<4 && V>15 && Math.abs(r)>0.05 && Math.abs(st)>0.03 && st*r>0){ ST.ratios.push(st/(car.wb*r/V)); if (ST.ratios.length>3000) ST.ratios.shift(); }
+  // track surface: up-and-down vibration on straights (fine on the out lap: bumps don't care about tyre temperature)
+  if (V*3.6>150 && ay<2 && s.Brake<0.02 && Math.abs(st)<0.05 && Number.isFinite(s.VertAccel)){ ST.vert.push(s.VertAccel); if (ST.vert.length>6000) ST.vert.shift(); }
+  if (ST.outLap){ ST.recent=[]; corner=null; return; }   // out lap: cold tyres, only calibrate the steering baseline
+  let us = NaN;
+  if (ay>6 && V>12 && Math.abs(r)>0.03){
+    us = (st/ST.K - car.wb*r/V)*Math.sign(r)*180/Math.PI;
+    ST.cur[s.Brake>0.05 ? "entry" : s.Throttle<0.4 ? "mid" : "exit"].push(us);
+    const kmh=V*3.6; if (kmh<125) ST.cur.slow.push(us); else if (kmh>175) ST.cur.fast.push(us);
+  }
+  ST.recent.push(us); if (ST.recent.length>60) ST.recent.shift();
+  const kmh=V*3.6;
+  // lap trace (time every 5 m) and pedal points, for "brake earlier / later, power earlier / later" vs your best lap
+  if (ST.lapT0!==null && Number.isFinite(s.LapDist)){ const bi=Math.floor(s.LapDist/5); if (ST.cur.trace[bi]===undefined) ST.cur.trace[bi]=s.SessionTime-ST.lapT0;
+    // your inputs every 5 m (speed, brake, throttle, steering): saved with your best lap so GP, the driver coach, can compare
+    const I=ST.cur.inp || (ST.cur.inp={n:[],v:[],b:[],t:[],s:[]}); I.n[bi]=(I.n[bi]||0)+1; I.v[bi]=(I.v[bi]||0)+kmh; I.b[bi]=(I.b[bi]||0)+s.Brake; I.t[bi]=(I.t[bi]||0)+s.Throttle; I.s[bi]=(I.s[bi]||0)+s.SteeringWheelAngle; }
+  if (s.Brake>0.08 && !(ST.pb>0.08)){ ST.brkOn=s.LapDist; if (corner && !Number.isFinite(corner.brkAt) && corner.min>=kmh) corner.brkAt=s.LapDist; }
+  ST.pb=s.Brake;
+  if (ay>6 && V>12){ if (!corner){ const bo=s.LapDist-ST.brkOn; corner={a: (zone && Number.isFinite(zone.pct)) ? zone.pct : s.LapDistPct, apexP:s.LapDistPct, at:s.LapDist, brkAt: bo>=0 && bo<400 ? ST.brkOn : NaN, apexAt:s.LapDist, powAt:NaN, exitSlide:false, us:[], v:[], usIn:[], ph:{entry:[],mid:[],exit:[]}, entry:kmh, min:kmh, lastV:kmh, slide:false}; }
+    if (Number.isFinite(us)) corner.ph[s.Brake>0.05 ? "entry" : s.Throttle<0.4 ? "mid" : "exit"].push(us);
+    if (kmh<corner.min){ corner.apexP=s.LapDistPct; corner.apexAt=s.LapDist; corner.powAt=NaN; }
+    if (!Number.isFinite(corner.powAt) && s.Throttle>0.95 && s.LapDist>corner.apexAt) corner.powAt=s.LapDist;
+    corner.min=Math.min(corner.min,kmh); corner.lastV=kmh;
+    if (Number.isFinite(us)){ corner.us.push(us); corner.v.push(kmh); if (s.Brake>0.05 || corner.us.length<30) corner.usIn.push(us); } quiet=0; }
+  else if (corner){ corner.lastV=kmh; if (!Number.isFinite(corner.powAt) && s.Throttle>0.95 && s.LapDist>corner.apexAt) corner.powAt=s.LapDist; if (ay<4 && ++quiet>18) closeCorner(); }
+  const os = V>12 && ay>4 && ((Math.abs(r)>0.08 && st*r<0 && Math.abs(st)>0.04) || us<-1.5);
+  if (os){ ST.osRun++; if (ST.osRun===8){ ST.cur.slides++; if (corner) corner.slide=true; addLog(`Slide ${s.Brake>0.05?"on entry":s.Throttle<0.4?"mid-corner":"on exit"} at ${atKm(s.LapDist)}`); } } else ST.osRun=0;
+  if (s.LFrideHeight!==undefined){ const f=(s.LFrideHeight+s.RFrideHeight)*500, rr=(s.LRrideHeight+s.RRrideHeight)*500;
+    if (kmh>170 && ay<3 && s.Brake<0.03){ ST.cur.rhF.push(f); ST.cur.rhR.push(rr); }          // straights: downforce squashing the car
+    else if (ay>8 && kmh>90){ ST.cur.rhcF.push(f); ST.cur.rhcR.push(rr); } }                   // loaded corners
+  if (s.CFSRrideHeight!==undefined && V>30) ST.cur.spl = Math.min(ST.cur.spl, s.CFSRrideHeight*1000);
+  // in-car: braking zones (bias / ABS) and exit traction (TC)
+  const wheels = s.LFspeed>0 && s.LRspeed>0;
+  if (!zone && s.Brake>0.3 && kmh>80) zone={n:0, abs:0, fl:0, rl:0, slide:false, at:s.LapDist, pct:s.LapDistPct};
+  if (zone){
+    if (s.Brake>0.1){ zone.n++; if (s.BrakeABSactive) zone.abs++;
+      if (wheels && V>15){ if ((s.LFspeed+s.RFspeed)/2/V<0.88) zone.fl++; if ((s.LRspeed+s.RRspeed)/2/V<0.88) zone.rl++; } zone.after=0; }
+    else if (++zone.after>90 || s.Throttle>0.6){ if (zone.n>24) { ST.zones.push(zone); if (ST.zones.length>8) ST.zones.shift(); } zone=null; }
+    if (zone && os) zone.slide=true;
+  }
+  if (s.Throttle>0.6 && V>8 && V<45 && wheels){ ST.spin.push((s.LRspeed+s.RRspeed)/(s.LFspeed+s.RFspeed)-1 > 0.08 ? 1 : 0); if (ST.spin.length>900) ST.spin.shift(); }
+  if (os && s.Throttle>0.4 && ST.osRun===8){ ST.exitSlides.push(Date.now()); if (corner) corner.exitSlide=true; }
+  // tyre surface temps summed over the lap (fallback for the stint report)
+  // (tyre temps are summed while cornering only: when the tyres are working)
+  if (V>15 && ay>8){ const t=ST.cur.tyre; t.n++; for (const c of Object.keys(CORN)) for (const z of ["L","M","R"]){ const k=c+z, v=s[c+"temp"+z]; if (Number.isFinite(v)) t[k]=(t[k]||0)+v; } for (const c of Object.keys(CORN)){ const p=s[c+"pressure"]; if (Number.isFinite(p)) t[c+"P"]=(t[c+"P"]||0)+p; } }
+}
+setInterval(()=>{ if (ST.ratios.length>150){ const k=median(ST.ratios); if (k>6 && k<30) ST.K=k; } }, 2000);
+// remember each car's steering ratio, so next time the balance reads right from the first corner (no calibration wait)
+setInterval(()=>{ const car=ST.meta&&ST.meta.car; if (car && ST.ratios.length>600 && window.se && window.se.learnKvPut) window.se.learnKvPut("bono","K|"+car,{K:ST.K, wb:(CARS[car]||{}).wb, n:ST.ratios.length, date:Date.now()}); }, 60000);
+function loadStoredK(){ const car=ST.meta&&ST.meta.car; if (!car || !window.se || !window.se.learnKvGet) return;
+  window.se.learnKvGet("bono","K|"+car).then(v=>{ if (v && v.K>6 && v.K<30 && ST.ratios.length<150){ ST.K=v.K; ST.Kstored=true; } }).catch(()=>{}); }
+
+// ---------- stint report (tyres) ----------
+const tCol = t => { if (!Number.isFinite(t)) return "#555"; const x=Math.max(0,Math.min(1,(t-55)/50)); return `hsl(${220-x*220},75%,62%)`; };
+const pr = p => !Number.isFinite(p) ? "–" : UNITS==="psi" ? fmt(p*0.145038,1)+" psi" : fmt(p,0)+" kPa";
+function reportTyres(){
+  const g=ST.meta && ST.meta.garage;
+  // 1st choice: average over every clean lap of the stint (the garage reading is one snapshot = mostly the last corner)
+  const L = ST.stint && (ST.stint.tyreSum || ST.stint.lastLapTyres);
+  if (L && L.n){ const t={}; for (const c of Object.keys(CORN)){ const left=c[0]==="L", a=L[c+"L"]/L.n, m=L[c+"M"]/L.n, b=L[c+"R"]/L.n;
+      t[c]={outer:left?a:b, mid:m, inner:left?b:a, hot:L[c+"P"]/L.n};
+      if (g && g[c] && Number.isFinite(g[c].tread) && ST.meta.garageSig!==ST.stint.garageSig) t[c].tread=g[c].tread; }   // tread still comes from the garage
+    if (Object.values(t).every(x=>Number.isFinite(x.mid))) return {src: ST.stint.tyreSum ? `average of ${ST.stint.tyreSum.laps} lap${ST.stint.tyreSum.laps>1?"s":""}` : "last lap average", t}; }
+  if (g && Object.keys(g).length===4 && ST.stint && ST.meta.garageSig!==ST.stint.garageSig) return {src:"garage reading", t:g};
+  return null;
+}
+function verdict(t, avg){
+  // garage reading: inside 4–11°C hotter, middle ±3. Corner-averaged live temps read ~2.2× closer together: 2–5°C, ±2
+  const spread=t.inner-t.outer, dm=t.mid-(t.inner+t.outer)/2, lo=avg?1.8:4, hi=avg?5:11, pt=avg?2:3;
+  const cam = spread>hi ? ["less camber","warn"] : spread<lo ? ["more camber","warn"] : ["camber OK","ok"];
+  const pre = dm>pt ? ["pressure high","warn"] : dm<-pt ? ["pressure low","warn"] : ["pressure OK","ok"];
+  return `<span class="${cam[1]}">${cam[0]}</span> · <span class="${pre[1]}">${pre[0]}</span>`;
+}
+// working window (80–95°C on the garage reading; the corner-averaged live temps read ~22°C cooler, so they're shifted)
+function tyreWin(R){
+  const off = R.src==="garage reading" ? 0 : 22, lo=80, hi=95, ax = cs => { const v=cs.map(c=>R.t[c]).filter(Boolean).map(t=>(t.inner+t.mid+t.outer)/3+off); return v.length ? v.reduce((a,b)=>a+b,0)/v.length : NaN; };
+  const word = v => !Number.isFinite(v) ? "–" : v<lo-2 ? `<span class="c1">cold (${Math.round(v)}°)</span>` : v>hi+2 ? `<span class="warn">hot (${Math.round(v)}°)</span>` : `<span class="ok">in window</span>`;
+  const f=ax(["LF","RF"]), r=ax(["LR","RR"]);
+  return {f:word(f), r:word(r), fv:f, rv:r, lo, hi};
+}
+function drawReport(){
+  const R = reportTyres();
+  $("title").textContent = "STINT REPORT";
+  $("info").textContent = ST.stint ? `${ST.stint.laps} lap${ST.stint.laps===1?"":"s"}${R?" · "+R.src:""}` : "";
+  $("tyres").innerHTML = !R ? `<div class="line" style="grid-column:1/-1">Do a full lap and the tyre report shows here when you're back in.</div>` :
+    ["LF","RF","LR","RR"].map(c=>{ const t=R.t[c], cells = c[0]==="L" ? [t.outer,t.mid,t.inner] : [t.inner,t.mid,t.outer];
+      return `<div class="ty"><div class="hd"><span>${c}${Number.isFinite(t.tread)?` · <span class="${t.tread<60?"warn":""}">${fmt(t.tread,0)}% tread</span>`:""}</span><b>${pr(t.hot)}</b></div>
+        <div class="temps">${cells.map(v=>`<i style="background:${tCol(v)}">${Math.round(v)}</i>`).join("")}</div>
+        <div class="verdict">${verdict(t, R.src!=="garage reading")}</div></div>`; }).join("");
+  const S=ST.stint, ws = a => { if (a.length<30) return "–"; const s=step(median(a)); return `<b class="c${s.c}">${s.w}</b>`; };
+  const W = R ? tyreWin(R) : null;
+  $("rbal").innerHTML = (W ? `Tyres · front ${W.f} · rear ${W.r} · ` : "") + (S ? `balance entry ${ws(S.entry)} · mid ${ws(S.mid)} · exit ${ws(S.exit)}` : "");
+}
+
+// ---------- in-car adjustments: brake bias, TC, ABS (things you can change from the cockpit) ----------
+function drawInCar(s, car){
+  // you changed bias / TC / ABS: forget what was measured on the old value, so the advice doesn't keep asking for more
+  const now={bias:s.dcBrakeBias, tc:s.dcTractionControl, abs:s.dcABS}, was=ST.dc;
+  if (was && was.bias>0 && now.bias>0){   // (a jump from an empty first reading isn't a change you made)
+    if (Math.abs(now.bias-was.bias)>0.01 || now.abs!==was.abs){ ST.zones=[]; ST.checking={what: Math.abs(now.bias-was.bias)>0.01 ? "bias" : "abs", t:Date.now(), lap0:ST.lapsClean||0}; }
+    if (now.tc!==was.tc){ ST.spin=[]; ST.exitSlides=[]; ST.checking={what:"tc", t:Date.now(), lap0:ST.lapsClean||0}; }
+  }
+  ST.dc=now;
+  // 5 clean laps once per session before any suggestion; after that every clean lap keeps counting (pit stops don't restart it).
+  // After you change bias / TC / ABS, that setting is judged again after one clean lap on the new value.
+  const MINL=5, laps=ST.lapsClean||0, since = laps - (ST.checking ? ST.checking.lap0 : 0);
+  const Z=ST.zones, help=car.help||1, ready = !ST.outLap && Z.length>=4 && laps>=MINL && (!ST.checking || since>=1);
+  const chk = ST.checking && since<1 ? ST.checking.what : null;
+  if (!chk && !ready && !ST.outLap){ $("ibias").innerHTML=fmt(s.dcBrakeBias,1); $("itc").innerHTML=fmt(s.dcTractionControl,0); $("iabs").innerHTML=fmt(s.dcABS,0);
+    $("incar").innerHTML = laps<MINL ? `Watching bias, TC and ABS: ${laps} of ${MINL} clean laps` : "Watching bias, TC and ABS"; return; }
+  if (chk){ const nm={bias:"brake bias", tc:"TC", abs:"ABS", setup:"stint"}[chk];
+    $("ibias").innerHTML = fmt(s.dcBrakeBias,1) + (chk==="bias"?' <span class="tgt">checking</span>':"");
+    $("itc").innerHTML = fmt(s.dcTractionControl,0) + (chk==="tc"?' <span class="tgt">checking</span>':"");
+    $("iabs").innerHTML = fmt(s.dcABS,0) + (chk==="abs"?' <span class="tgt">checking</span>':"");
+    $("incar").innerHTML = `New ${nm} noted: checking it over the next clean lap`;
+    return;
+  }
+  const fwd=Z.filter(z=>z.rl/z.n>0.08 || z.slide), rwd=Z.filter(z=>(z.fl/z.n>0.12 || z.abs/z.n>0.4) && !z.slide);
+  const lockF=Z.length? Z.reduce((a,z)=>a+z.fl/z.n,0)/Z.length : 0, absUse=Z.length? Z.reduce((a,z)=>a+z.abs/z.n,0)/Z.length : 0;
+  const spin = ST.spin.length>200 ? ST.spin.reduce((a,b)=>a+b,0)/ST.spin.length : NaN;
+  ST.exitSlides = ST.exitSlides.filter(t=>Date.now()-t<120000);                        // last 2 minutes
+  const km = z => Number.isFinite(z.at) ? (z.at/1000).toFixed(1)+" km" : "";
+  const tips=[];
+  // brake bias
+  let b = fmt(s.dcBrakeBias,1);
+  if (ready && fwd.length>=2 && fwd.length>rwd.length){ b += ` <span class="warn">→ ${fmt(s.dcBrakeBias+0.5,1)} ▲</span>`; tips.push(`Bias forward: rear loose on the brakes at ${fwd.map(km).slice(0,3).join(", ")}`); }
+  else if (ready && rwd.length>=3 && rwd.length>fwd.length){ b += ` <span class="c1">→ ${fmt(s.dcBrakeBias-0.5,1)} ▼</span>`; tips.push(`Bias back: fronts doing all the braking (${rwd.length} of ${Z.length} zones)`); }
+  $("ibias").innerHTML = b;
+  // TC (respect the car's numbering and dry range)
+  const tcNow=s.dcTractionControl, more=tcNow+help, less=tcNow-help, inR=(v,r)=>!r || (v>=r[0] && v<=r[1]);
+  let tc = fmt(tcNow,0);
+  if (!ST.outLap && (spin>0.12 || ST.exitSlides.length>=3) && inR(more,car.tc)){ tc += ` <span class="warn">→ ${more}</span>`; tips.push(`More TC: ${ST.exitSlides.length>=3?ST.exitSlides.length+" slides on exit":"wheelspin on exit"} in the last 2 min`); }
+  else if (!ST.outLap && ST.spin.length>600 && spin<0.02 && !ST.exitSlides.length && inR(less,car.tc)){ tc += ` <span class="c1">→ ${less}</span>`; tips.push("Less TC: hardly any wheelspin, you can put the power down sooner"); }
+  $("itc").innerHTML = tc;
+  // ABS
+  const absNow=s.dcABS; let ab = fmt(absNow,0);
+  if (ready && lockF>0.12 && inR(absNow+help,car.abs)){ ab += ` <span class="warn">→ ${absNow+help}</span>`; tips.push("More ABS: front tyres still locking"); }
+  else if (ready && absUse>0.5 && lockF<0.03 && inR(absNow-help,car.abs)){ ab += ` <span class="c1">→ ${absNow-help}</span>`; tips.push("Less ABS: it's working hard and nothing locks, shorter stops possible"); }
+  $("iabs").innerHTML = ab;
+  $("incar").innerHTML = tips.length ? tips.join(" · ") : (ready ? `<span class="ok">Bias, TC and ABS look right</span>` : (ST.outLap ? "Out lap: watching from the first flying lap" : "In-car suggestions appear after a few braking zones"));
+  // radio: say a new in-car change once (not again until the advice changes)
+  const arrow = h => (h.match(/→ ([\d.]+)/)||[])[1], calls=[];
+  if (arrow(b)) calls.push(`brake bias to ${arrow(b)}`); if (arrow(tc)) calls.push(`T C to ${arrow(tc)}`); if (arrow(ab)) calls.push(`A B S to ${arrow(ab)}`);
+  const key = calls.join("|");
+  if (key && key!==ST.saidInCar){ const why=(tips[0]||"").split(":").slice(1).join(":").replace(/ at [\d., km]+$/,"").trim(); say(`Try ${calls.join(", and ")}${why?". "+why:""}.`, 2); }
+  ST.saidInCar = key;
+}
+// ---------- team radio ----------
+const say = (text, pri=1) => { if (window.se && window.se.radioSay) window.se.radioSay("bono", text, pri); };
+const PH = {entry:"on entry", mid:"mid-corner", exit:"on exit"};
+function balanceCall(){   // after each clean lap: say the balance only when it changes
+  if ((ST.lapsClean||0)<2) return; const L=ST.prev; if (!L) return;
+  let worst=null; for (const p of ["entry","mid","exit"]){ const a=L[p]; if (a.length<20) continue; const s=step(median(a)); if (s.c!==0 && (!worst || Math.abs(s.c)>Math.abs(worst.s.c))) worst={p, s}; }
+  const txt = !worst ? "Balance is good, car's neutral." : worst.s.c>0 ? `Car's ${worst.s.c>1?"":"slightly "}understeering ${PH[worst.p]}.` : `Car's ${worst.s.c<-1?"":"a bit "}loose ${PH[worst.p]}.`;
+  if (txt!==ST.saidBal){ if (ST.saidBal || worst) say(txt, 1); ST.saidBal=txt; }
+}
+function reportCall(){   // in the pits after a stint: a short tyre summary
+  const R=reportTyres(); if (!R) return; const ax={Front:["LF","RF"], Rear:["LR","RR"]}, parts=[];
+  for (const [nm,cs] of Object.entries(ax)){ const v=cs.map(c=>verdict(R.t[c], R.src!=="garage reading").replace(/<[^>]+>/g,"")); const issues=[...new Set(v.flatMap(x=>x.split(" · ")).filter(x=>!/OK/.test(x)))];
+    parts.push(`${nm}s: ${issues.length?issues.join(", "):"camber and pressures look good"}`); }
+  const W=tyreWin(R), win=[["Fronts",W.fv],["Rears",W.rv]].filter(([,v])=>Number.isFinite(v) && (v<W.lo-2 || v>W.hi+2)).map(([n,v])=>`${n} ${v<W.lo?"below":"above"} the working window by about ${Math.round(v<W.lo?W.lo-v:v-W.hi)} degrees`);
+  say(`Stint report. ${[...win, ...parts].join(". ")}.`, 2);
+}
+
+// ---------- car badge: your own logo image if you put one in the logos folder, else the brand name ----------
+const BRANDS = [[/^acura/,"Acura"],[/^mercedes/,"Mercedes-AMG"],[/^lamborghini/,"Lamborghini"],[/^porsche/,"Porsche"],[/^dallara/,"Dallara"],
+  [/^ferrari/,"Ferrari"],[/^bmw/,"BMW"],[/^audi/,"Audi"],[/^mclaren/,"McLaren"],[/^ford/,"Ford"],[/^amvantage|^astonmartin/,"Aston Martin"],
+  [/^chevy|^corvette/,"Chevrolet"],[/^cadillac/,"Cadillac"],[/^ligier/,"Ligier"],[/^lotus/,"Lotus"],[/^toyota/,"Toyota"],[/^honda/,"Honda"],[/^hyundai/,"Hyundai"]];
+let brandFor = "";
+function setBrand(){
+  const car = ST.meta?.car || ""; if (car===brandFor) return; brandFor = car;
+  const b = (BRANDS.find(([re])=>re.test(car))||[,""])[1], img=$("logo");
+  $("brand").textContent = b ? b.toUpperCase() : ""; $("brand").title = ST.meta?.carName || car;
+  const tries = [car, b.toLowerCase().replace(/[^a-z]/g,"")].filter(Boolean).map(n=>`/logos/${n}.png`); let i=0;
+  img.onload = ()=>{ img.style.display="block"; $("brand").style.display="none"; };
+  img.onerror = ()=>{ if (++i<tries.length) img.src=tries[i]; else { img.style.display="none"; $("brand").style.display=""; } };
+  if (tries.length) img.src = tries[0];
+}
+
+// ---------- driving view ----------
+function drawDrive(){
+  const s=ST.last, car=CARS[ST.meta?.car]||{};
+  $("title").textContent = "BONO";
+  const calibrated = !ST.outLap && (ST.ratios.length>150 || ST.Kstored);   // steering ratio measured now, or remembered from before   // out lap (cold tyres) + enough gentle corners for the steering baseline
+  const u = calibrated ? median(ST.recent.filter(Number.isFinite)) : NaN, st = Number.isFinite(u) ? step(u) : null;
+  $("big").textContent = st ? st.w + (NUMBERS? ` ${fmt(u)}°` : "") : calibrated ? "Straight" : ST.outLap ? "Out lap – calibrating" : "Calibrating…";
+  $("big").className = "big " + (st ? "c"+st.c : "");
+  const COLS = {"-2":"var(--os2)","-1":"var(--os1)","0":"var(--ok)","1":"var(--us1)","2":"var(--us2)"};
+  [...$("scale").children].forEach((el,i)=>{ const c=i-2, on = st && st.c===c; el.style.background = on ? COLS[c] : "rgba(255,255,255,.08)"; el.className = on ? "on" : ""; });
+  const L = (ST.prev && ST.prev.mid.length>20) ? ST.prev : ST.cur;
+  // (entry / mid / exit and slow / fast corner balance live in the app's Balance window)
+  // time lost to the fastest car in your class through the last corner (held 10 s)
+  const sgn2 = x => (x>=0?"+":"−")+Math.abs(x).toFixed(2), escH = x => String(x).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+  const L2 = ST.loss && Date.now()-ST.loss.t < 15000 ? ST.loss : null;
+  $("loss").innerHTML = !ST.secs ? `<span class="k">Vs fastest</span> <span class="tgt">starts after your first clean lap</span>`
+    : L2 ? (L2.none ? `<span class="k">${L2.name}</span> <span class="tgt">no other car timed here yet</span>`
+       : `<span class="k">${L2.name}</span> <span class="${L2.loss>0.05?"warn":L2.loss<-0.02?"ok":""}">${sgn2(L2.loss)} s</span> <span class="tgt">${L2.advice&&L2.advice.length ? `<b style="color:var(--ink)">${escH(L2.advice.join(", "))}</b>` : `to fastest · entry ${sgn2(L2.entry)} · exit ${sgn2(L2.exit)}`}${L2.who?" · "+escH(L2.who):""}</span>`)
+    : `<span class="k">Vs fastest</span> <span class="tgt">${Object.keys(ST.bestOther||{}).length} of ${ST.secs.length} corners timed on other cars</span>`;
+  // corner entry coaching: last judged corner, held for 8 s
+  const co = ST.coach && Date.now()-ST.coach.t < 15000 ? ST.coach : null;
+  $("coach").innerHTML = co ? `<span class="k">${co.name}</span> <span class="${co.c}">${co.w}</span>${co.d?` <span class="tgt">${co.d}</span>`:""}`
+    : `<span class="k">Vs your best</span> <span class="tgt">${ST.ref ? "brake and throttle points per corner" : "after your first clean lap"}</span>`;
+  if (!s) return;
+  $("info").textContent = `lap ${s.Lap}${ST.cur.slides?` · ${ST.cur.slides} slide${ST.cur.slides>1?"s":""}`:""}${L===ST.prev?" · last lap":""}`;
+  const sp = Number.isFinite(ST.cur.spl) ? ST.cur.spl : (ST.prev? ST.prev.spl : NaN);
+  drawInCar(s, car);
+}
+
+function draw(){
+  const s=ST.last;
+  const inCar   = s && s.IsOnTrack;                                   // sitting in the car (pit stall, pit lane or track)
+  const driving = inCar && !s.OnPitRoad;
+  const stopped = s && ((s.OnPitRoad && s.Speed<2) || s.PlayerCarInPitStall || !s.IsOnTrack);
+  const report  = ST.connected && stopped && ST.stint && ST.stint.laps>0;
+  document.body.classList.toggle("report", !!report && !edit);
+  document.body.classList.toggle("drive", !report || edit);
+  // visible whenever you're in the car, or in the garage with a stint report to show
+  document.body.classList.toggle("hidden", !(edit || (ST.connected && (inCar || report))));
+  if (report && !edit) drawReport(); else drawDrive();
+  if (!report && inCar && s.OnPitRoad && s.Speed<2){ $("big").textContent = "In pits"; $("big").className = "big"; }
+  // a new stint starts when you drive out again
+  if (driving && ST.stint && ST.stint.closed){ ST.stint = newStint(); ST.checking={what:"setup", t:Date.now(), lap0:ST.lapsClean||0}; ST.zones=[]; ST.spin=[]; }   // new stint: the lap count carries on; one clean lap on the (maybe changed) setup first
+  if (report){ if (!ST.stint.closed) setTimeout(reportCall, 4000); ST.stint.closed = true; }   // give the garage reading a moment, then the stint report
+}
+
+// ---------- polling the bridge ----------
+async function poll(){
+  try{
+    const st = await (await fetch("/live/status",{cache:"no-store"})).json();
+    ST.connected = st.connected;
+    if (st.gen>0 && (st.gen!==ST.gen || st.siUpdate!==ST.si)){
+      const r = await fetch("/live/meta",{cache:"no-store"});
+      if (r.ok){ const g=+r.headers.get("X-Gen"); ST.meta=parseMeta(await r.arrayBuffer()); ST.si=+r.headers.get("X-Si");
+        if (g!==ST.gen){ ST.secs=null; ST.loss=null; ST.bestOther={}; ST.det={}; ST.dc=null; ST.checking=null; ST.outLap=true; ST.corners=[]; ST.vert=[]; ST.zones=[]; ST.spin=[]; ST.exitSlides=[]; zone=null; ST.gen=g; ST.next=-120; ST.cur=newLap(); ST.prev=null; ST.lap=null; ST.recent=[]; ST.stint=null; corner=null; ST.ref=null; ST.best=Infinity; ST.lapT0=null; ST.log=[]; ST.coach=null; ST.refTrace=null; ST.refStored=false; ST.lapsClean=0; ST.Kstored=false; setBrand(); loadStoredRef(); loadStoredK(); } }
+    }
+    if (ST.meta && st.total>0){
+      const r = await fetch("/live/data?max=600&from="+ST.next,{cache:"no-store"});
+      if (+r.headers.get("X-Gen")===ST.gen){
+        const b=await r.arrayBuffer(); ST.next=+r.headers.get("X-Next");
+        const dv=new DataView(b), n=Math.floor(b.byteLength/ST.meta.bufLen);
+        for (let k=0;k<n;k++){ const s=decode(dv,k*ST.meta.bufLen,ST.meta.vars); addSample(s); if (ST.secs && (ST.sampleN=(ST.sampleN||0)+1)%3===0) timeCars(dv,k*ST.meta.bufLen,s.SessionTime); }
+      }
+    }
+  }catch(e){ ST.connected=false; }
+  draw();
+  setTimeout(poll, 100);
+}
+poll();
+</script>
+</body>
+</html>

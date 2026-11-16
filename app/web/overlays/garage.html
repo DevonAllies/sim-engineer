@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Garage</title>
+<style>
+:root{--ink:#eef0f4;--muted:#9aa3b2;--line:rgba(255,255,255,.09);--panel:rgba(14,16,21,.88);--accent:#ff6a4d;--ok:#5fd38d}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:transparent;overflow:hidden;height:100%}
+body{font:12px/1.3 system-ui,"Segoe UI",sans-serif;color:var(--ink);font-variant-numeric:tabular-nums;user-select:none}
+#root{position:relative;width:100%;height:100%;padding:9px 11px;background:var(--panel);border:1px solid var(--line);border-radius:10px;display:flex;flex-direction:column;gap:6px;transition:opacity .25s}
+body.hidden #root{opacity:0}
+body.edit #root{outline:2px dashed var(--accent);outline-offset:-2px;-webkit-app-region:drag;cursor:move}
+#editbar{display:none;position:absolute;left:0;right:0;bottom:0;font-size:10px;text-align:center;color:#fff;background:var(--accent);border-radius:0 0 10px 10px;padding:2px}
+body.edit #editbar{display:block}
+.top{display:flex;justify-content:space-between;align-items:baseline}
+.top b{font-size:11px;letter-spacing:.1em;color:var(--accent)}
+.k{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.steps{font-size:11px;color:var(--muted)}
+.steps b{color:var(--ink)}
+.grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;flex:1;min-height:0}
+.cell{background:rgba(255,255,255,.05);border-radius:6px;padding:4px 6px;overflow:hidden}
+.cell.has{box-shadow:0 0 0 1px var(--accent) inset}
+.cell .h{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:2px}
+.it{font-size:11px;line-height:1.25;margin-top:2px}
+.it .n{color:var(--muted)}
+.it .to{color:var(--accent);font-weight:700}
+.car{grid-column:1/-1}
+.none{color:var(--muted);text-align:center;padding:20px 0}
+</style>
+</head>
+<body class="hidden">
+<div id="root">
+  <div class="top"><b>GARAGE · CHANGES</b><span class="k" id="info"></span></div>
+  <div class="steps" id="steps"></div>
+  <div class="grid" id="grid"></div>
+  <div id="editbar">Garage · drag to move · drag the edge to resize</div>
+</div>
+<script>
+"use strict";
+const BASE_W=440, $=id=>document.getElementById(id);
+// text size and font come from the app (Overlays panel); the window itself can be any size
+let TEXT = 1;
+function fit(){ document.body.style.zoom = TEXT; } fit();
+if (window.se && window.se.onStyle) window.se.onStyle(s => { TEXT = s.text || 1; document.body.style.fontFamily = `"${s.font||"Segoe UI"}", system-ui, sans-serif`; fit(); });
+let edit=false, plan=null, where={connected:false, inGarage:false};
+if (window.se){ window.se.onEditMode(on=>{ edit=on; document.body.classList.toggle("edit",on); vis(); });
+  window.se.onPlan(p=>{ plan=p; draw(); }); window.se.getPlan().then(p=>{ plan=p; draw(); }); }
+const esc=s=>String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+function vis(){ document.body.classList.toggle("hidden", !(edit || (where.connected && where.inGarage))); }
+function draw(){
+  vis();
+  if (!plan || !plan.items){ $("grid").innerHTML=`<div class="none car">Open Setup Engineer: the changes you switch on there show up here.</div>`; $("steps").textContent=""; return; }
+  $("info").textContent = `${plan.items.length} change${plan.items.length===1?"":"s"}${plan.done?` · ${plan.done} done`:""}`;
+  $("steps").innerHTML = plan.items.length ? `Load <b>${esc(plan.load||"your setup")}</b> → make these changes → Save As <b>${esc(plan.saveAs||"")}</b>` : "";
+  const by={LF:[],F:[],RF:[],LR:[],R:[],RR:[],C:[]}; for (const it of plan.items) (by[it.where]||by.C).push(it);
+  const box=(k,t,cls="")=>`<div class="cell ${by[k].length?"has":""} ${cls}"><div class="h">${t}</div>${by[k].map(it=>`<div class="it" style="${it.done?"opacity:.4;text-decoration:line-through":""}"><span class="n">${esc(it.name)}</span> ${esc(it.from)} → <span class="to">${esc(it.to)}</span></div>`).join("")||'<div class="it n" style="color:var(--muted)">–</div>'}</div>`;
+  $("grid").innerHTML = !plan.items.length ? `<div class="none car">No changes switched on. Nothing to do in the garage.</div>`
+    : box("LF","LF")+box("F","Front")+box("RF","RF")+box("LR","LR")+box("R","Rear")+box("RR","RR")+(by.C.length?box("C","Car / in-car","car"):"");
+}
+// where is the car? (garage / pit stall = show, driving = hide)
+const TYPES={0:"getUint8",1:"getUint8",2:"getInt32",3:"getUint32",4:"getFloat32",5:"getFloat64"};
+const cstr=b=>{ let s=""; for (const x of b){ if(!x) break; s+=String.fromCharCode(x);} return s; };
+let meta=null, gen=null;
+async function poll(){
+  try{
+    const st=await (await fetch("/live/status",{cache:"no-store"})).json(); where.connected=st.connected;
+    if (st.gen>0 && st.gen!==gen){ const r=await fetch("/live/meta",{cache:"no-store"}); if (r.ok){ const b=await r.arrayBuffer(), dv=new DataView(b), i32=o=>dv.getInt32(o,true), vars={};
+      for (let i=0;i<i32(24);i++){ const o=i32(28)+i*144; vars[cstr(new Uint8Array(b,o+16,32))]={type:i32(o),off:i32(o+4)}; } meta={vars,bufLen:i32(36)}; gen=st.gen; } }
+    if (meta && st.total>0){ const r=await fetch("/live/data?from=-1&max=1",{cache:"no-store"}); const b=await r.arrayBuffer();
+      if (b.byteLength>=meta.bufLen){ const dv=new DataView(b), g=k=>{ const v=meta.vars[k]; return v? dv[TYPES[v.type]](v.off,true) : 0; };
+        where.inGarage = !g("IsOnTrack") || !!g("PlayerCarInPitStall"); } }
+  }catch(e){ where.connected=false; }
+  vis(); setTimeout(poll, 500);
+}
+draw(); poll();
+</script>
+</body>
+</html>

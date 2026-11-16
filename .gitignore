@@ -1,0 +1,23 @@
+# dependencies and build output
+node_modules/
+app/dist/
+*.exe
+*.blockmap
+*.tmp
+
+# car manuals (iRacing's PDFs: download them from iRacing, don't redistribute)
+*.pdf
+
+# telemetry and personal data (lives in Documents\Setup Engineer, never in the repo)
+*.ibt
+*.db
+*.sqlite
+learning.json
+*.csv
+*.json.gz
+
+# editor / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

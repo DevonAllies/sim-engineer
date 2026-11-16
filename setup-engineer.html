@@ -1,0 +1,1313 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Setup Engineer</title>
+<style>
+:root{
+  --bg:#f4f5f7;--panel:#ffffff;--ink:#16181d;--muted:#5d6472;--line:#dfe2e8;--accent:#d4462a;
+  --good:#1f8a4c;--warn:#b7791f;--bad:#c53030;--us:#2b6cb0;--os:#dd6b20;--neutral:#2f855a;
+  --chip:#eef0f4;--grid:#e6e8ee;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0f1115;--panel:#171a21;--ink:#e8eaef;--muted:#9aa2b1;--line:#2a2f3a;--accent:#ff6a4d;
+  --good:#48bb78;--warn:#ecc94b;--bad:#fc8181;--us:#63b3ed;--os:#f6ad55;--neutral:#68d391;
+  --chip:#222733;--grid:#252a35;}}
+:root[data-theme="dark"]{
+  --bg:#0f1115;--panel:#171a21;--ink:#e8eaef;--muted:#9aa2b1;--line:#2a2f3a;--accent:#ff6a4d;
+  --good:#48bb78;--warn:#ecc94b;--bad:#fc8181;--us:#63b3ed;--os:#f6ad55;--neutral:#68d391;
+  --chip:#222733;--grid:#252a35;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{padding:20px 16px 8px;max-width:1200px;margin:auto;display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap}
+header h1{margin:0;font-size:22px;letter-spacing:-.01em}
+header h1 span{color:var(--accent)}
+header p{margin:0;color:var(--muted)}
+main{max-width:1200px;margin:auto;padding:0 16px 60px}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin:14px 0}
+section h2{margin:0 0 10px;font-size:16px}
+section h2 small{font-weight:400;color:var(--muted);margin-left:6px}
+#drop{border:2px dashed var(--line);border-radius:10px;padding:28px 16px;text-align:center;cursor:pointer;color:var(--muted)}
+#drop.over{border-color:var(--accent);color:var(--ink)}
+#drop b{color:var(--ink)}
+.row{display:flex;gap:12px;flex-wrap:wrap}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+.stat{background:var(--chip);border-radius:8px;padding:10px 12px}
+.stat .k{color:var(--muted);font-size:12px}
+.stat .v{font-size:20px;font-weight:600;font-variant-numeric:tabular-nums}
+.stat .s{font-size:12px;color:var(--muted)}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:500;font-size:12px}
+.tablewrap{overflow-x:auto}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{background:var(--chip);border:1px solid var(--line);border-radius:999px;padding:4px 10px;font-size:13px;cursor:pointer}
+.chip.on{border-color:var(--accent);color:var(--accent);font-weight:600}
+.sugg{border:1px solid var(--line);border-left:4px solid var(--muted);border-radius:8px;padding:12px 14px;margin:10px 0}
+.sugg.p3{border-left-color:var(--bad)}.sugg.p2{border-left-color:var(--warn)}.sugg.p1{border-left-color:var(--good)}
+.sugg h3{margin:0 0 4px;font-size:15px}
+.sugg .chg{font-family:ui-monospace,Consolas,monospace;background:var(--chip);padding:6px 8px;border-radius:6px;margin:6px 0;white-space:pre-wrap}
+.sugg .why{color:var(--muted)}
+.tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;background:var(--chip);color:var(--muted);margin-right:6px;text-transform:uppercase;letter-spacing:.04em}
+canvas{width:100%;display:block}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:800px){.two{grid-template-columns:1fr}}
+.cell{text-align:center;border-radius:6px;padding:8px 4px;font-weight:600}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:12px;margin-top:6px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:middle}
+.tires{display:grid;grid-template-columns:1fr 1fr;gap:10px;max-width:520px}
+.tire{background:var(--chip);border-radius:8px;padding:10px}
+.tire .bars{display:flex;gap:4px;margin:6px 0}
+.tire .bars div{flex:1;border-radius:4px;padding:6px 0;text-align:center;font-weight:600;color:#111}
+button{font:inherit;background:var(--accent);color:#fff;border:0;border-radius:8px;padding:8px 14px;cursor:pointer}
+button.ghost{background:var(--chip);color:var(--ink);border:1px solid var(--line)}
+details summary{cursor:pointer;color:var(--muted)}
+.settings{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-top:10px}
+.settings label{font-size:12px;color:var(--muted);display:block}
+.settings input{width:100%;font:inherit;padding:6px 8px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+.muted{color:var(--muted)}
+.hidden{display:none}
+.diffup{color:var(--bad)}.diffdn{color:var(--good)}
+#status{color:var(--muted);margin-top:8px;min-height:20px}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle;background:var(--muted)}
+.dot.good{background:var(--good)}.dot.warn{background:var(--warn)}.dot.bad{background:var(--bad)}
+#livehint{max-width:1200px;margin:0 auto}
+.tabs{display:flex;gap:6px;margin-top:4px}
+.tab{background:var(--chip);color:var(--ink);border:1px solid var(--line)}
+.tab.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.v.sm{font-size:17px;word-break:break-word}
+.old{text-decoration:line-through;color:var(--muted)}
+.new{color:var(--accent);font-weight:700}
+.checklist td{vertical-align:middle}
+.checklist tr.done td{opacity:.45}
+.checklist tr.done .new{text-decoration:line-through}
+.sheet{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
+.sheettab{grid-column:1/-1;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:12px;margin-top:8px}
+.gcard{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--panel)}
+.gcard.has{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.gtitle{font-weight:600;margin-bottom:4px}
+.gcard table td{padding:3px 4px;font-size:13px;border-bottom:1px solid var(--line)}
+.gcard table td:last-child{text-align:right;white-space:nowrap}
+.gcard tr.chg td{background:color-mix(in srgb,var(--accent) 12%,transparent)}
+.badge{background:var(--accent);color:#fff;border-radius:999px;padding:0 7px;font-size:11px;margin-left:4px}
+.calcnote{font-size:12px;color:var(--muted);margin-top:6px}
+.sugg.off{opacity:.6}
+.racebar{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.segb{background:var(--chip);color:var(--ink);border-radius:0;padding:7px 14px}
+.segb.on{background:var(--accent);color:#fff}
+#racemin{width:70px;font:inherit;padding:4px 6px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+.dampgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.incl{float:right;font-weight:600;cursor:pointer}
+.opts{margin:6px 0}
+.opt{display:block;padding:4px 0;cursor:pointer}
+.opt.lim{opacity:.5;cursor:default}
+tr.chg td{color:var(--ink)}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Setup <span>Engineer</span></h1>
+    <p>Reads iRacing telemetry (.ibt), pulls the setup stored inside it, and suggests what to change.</p>
+  </div>
+</header>
+<main>
+<section>
+  <div id="drop"><b>Drop .ibt files here</b> or click to choose<br>
+    <span class="muted">Usually in Documents\iRacing\telemetry. Press Alt+L in the car to record. Files stay on your computer.</span></div>
+  <input type="file" id="file" accept=".ibt" multiple class="hidden">
+  <div id="recent" class="hidden" style="margin-top:12px">
+    <div class="row" style="justify-content:space-between;align-items:center"><b>Recent sessions</b><span class="muted" style="font-size:12px" id="recentdir"></span></div>
+    <div class="tablewrap" style="max-height:260px;overflow-y:auto;margin-top:6px"><table id="recenttable"></table></div>
+  </div>
+  <div id="status"></div>
+  <div class="chips" id="runs" style="margin-top:8px"></div>
+  <details style="margin-top:12px"><summary>Targets and assumptions</summary>
+    <div class="settings" id="settings"></div>
+    <p class="muted" style="margin:8px 0 0">Ride-height targets for the Acura NSX GT3 come from iRacing's own setup notes (40 mm front / 55 mm rear dynamic, ±2.5 mm). Other cars start blank: fill them in from that car's setup notes.</p>
+  </details>
+</section>
+<section id="livebox" class="hidden">
+  <h2>Live <small id="livestate"></small></h2>
+  <div class="grid" id="livetiles"></div>
+  <p class="muted" style="font-size:12px;margin:8px 0 0">Each time you leave the pits a new stint starts (shown as a run chip). Analysis updates every lap. When you drive into the pit lane or back to the garage, the stint ends and the tyre temperatures are read.</p>
+</section>
+<p id="livehint" class="muted" style="font-size:12px">For live mode and your recent sessions list, open <b>Setup Engineer.exe</b> instead of this file.</p>
+<div id="out"></div>
+</main>
+
+<script>
+"use strict";
+// ---------- car profiles (from iRacing's per-car setup notes) ----------
+const PROFILES = {
+  // Acura NSX GT3 EVO user manual: wheelbase 2642 mm, aero targets, adjustment ranges
+  acuransxevo22gt3: { wb: 2.642, track: 1.62, frontRH: 40, rearRH: 55, rhTol: 2.5,
+    limits: [
+      {test:(p,k)=>k==="arbblades"&&p.includes("front"), min:1, max:8},
+      {test:(p,k)=>k==="arbblades"&&p.includes("rear"), min:1, max:5},
+      {test:(p,k)=>p.includes("dampers"), min:1, max:16},
+      {test:(p,k)=>k.startsWith("tcsetting")||k.startsWith("abssetting"), min:2, max:7},
+      {test:(p,k)=>k==="startingpressure", min:159, max:400},
+    ],
+    minPress: 159, minSplitter: 50 },  // lowest starting pressure in the garage (all iRacing Acura setups sit here)
+  _default: { wb: 2.65, track: 1.62, frontRH: null, rearRH: null, rhTol: 2.5 }
+};
+const SETTINGS_DEF = [
+  ["wb","Wheelbase (m)"],["track","Rear track (m)"],["frontRH","Front dynamic RH target (mm)"],
+  ["rearRH","Rear dynamic RH target (mm)"],["rhTol","RH tolerance (± mm)"],
+  ["minPress","Minimum starting pressure (kPa)"],["minSplitter","Minimum front splitter height (mm, tech)"],["hotMin","Hot pressure min (kPa)"],["hotMax","Hot pressure max (kPa)"],["ratio","Steering ratio (blank = auto)"],
+];
+let userSettings = {hotMin:179, hotMax:190, ratio:""};
+
+const runs = []; let current = 0;
+const G = 9.81;
+// understeer-angle thresholds (deg, relative to gentle-cornering baseline)
+const US_LOOSE = -0.5, US_PUSH = 1.5, US_PUSH_BAD = 2.5;
+const $ = s => document.querySelector(s);
+
+// ---------- IBT parsing ----------
+const TYPES = {0:[1,"getUint8"],1:[1,"getUint8"],2:[4,"getInt32"],3:[4,"getUint32"],4:[4,"getFloat32"],5:[8,"getFloat64"]};
+const WANT = ["SessionTime","Lap","LapDistPct","LapDist","Speed","Throttle","Brake","SteeringWheelAngle","YawRate",
+ "LatAccel","LongAccel","Gear","RPM","OnPitRoad","IsOnTrack","PlayerTrackSurface","BrakeABSactive","Lat","Lon",
+ "LFrideHeight","RFrideHeight","LRrideHeight","RRrideHeight","CFSRrideHeight",
+ "LFspeed","RFspeed","LRspeed","RRspeed","LFshockVel","RFshockVel","LRshockVel","RRshockVel",
+ "LFshockDefl","RFshockDefl","LRshockDefl","RRshockDefl",
+ "LFpressure","RFpressure","LRpressure","RRpressure",
+ "LFtempCL","LFtempCM","LFtempCR","RFtempCL","RFtempCM","RFtempCR","LRtempCL","LRtempCM","LRtempCR","RRtempCL","RRtempCM","RRtempCR",
+ "LFtempL","LFtempM","LFtempR","RFtempL","RFtempM","RFtempR","LRtempL","LRtempM","LRtempR","RRtempL","RRtempM","RRtempR",
+ "dcBrakeBias","dcTractionControl","dcABS","FuelLevel","LapLastLapTime","LapBestLapTime","LapDeltaToBestLap","PlayerCarInPitStall"];
+
+function cstr(bytes){ let s=""; for(const b of bytes){ if(!b) break; s+=String.fromCharCode(b);} return s; }
+
+// header + variable list + session info (same layout in .ibt files and iRacing's live shared memory)
+function parseMeta(buf){
+  const dv = new DataView(buf), i32 = o => dv.getInt32(o,true);
+  const siLen=i32(16), siOff=i32(20), numVars=i32(24), varOff=i32(28), bufLen=i32(36);
+  if (numVars<=0 || numVars>5000 || bufLen<=0) throw new Error("Not an iRacing .ibt file");
+  const vars = {}, units = {};
+  for (let i=0;i<numVars;i++){
+    const o = varOff+i*144;
+    const nm = cstr(new Uint8Array(buf,o+16,32));
+    vars[nm] = {type:i32(o), off:i32(o+4), count:i32(o+8)};
+    units[nm] = cstr(new Uint8Array(buf,o+112,32));
+  }
+  const info = parseYaml(cstr(new Uint8Array(buf, siOff, siLen)));
+  return {vars, units, info, bufLen, tick:i32(8)||60};
+}
+function decodeRec(dv, p, vars){
+  const s = {};
+  for (const nm of WANT){ const v=vars[nm]; if (!v || v.count!==1) continue; s[nm] = dv[TYPES[v.type][1]](p+v.off,true); }
+  return s;
+}
+function parseIBT(buf, name){
+  const M = parseMeta(buf), dv = new DataView(buf), i32 = o => dv.getInt32(o,true);
+  const dataOff=i32(52), bufLen=M.bufLen;
+  let n = i32(140); const maxN = Math.floor((buf.byteLength-dataOff)/bufLen);
+  if (!(n>0) || n>maxN) n = maxN;
+  const ch = {};
+  for (const nm of WANT){
+    const v = M.vars[nm]; if (!v || v.count!==1) continue;
+    const fn = TYPES[v.type][1]; const out = new Float64Array(n);
+    let p = dataOff + v.off;
+    for (let r=0;r<n;r++,p+=bufLen) out[r] = dv[fn](p,true);
+    ch[nm] = out;
+  }
+  return {name, n, tick:M.tick, ch, units:M.units, info:M.info};
+}
+
+// tiny YAML reader for iRacing's session-info block
+function parseYaml(text){
+  const root={}, stack=[{indent:-1,obj:root}];
+  for (const raw of text.split(/\r?\n/)){
+    const t = raw.trim(); if (!t || t==="---" || t==="...") continue;
+    let ind = raw.search(/\S/), line = raw.slice(ind);
+    if (line.startsWith("- ")){
+      while (stack.length>1 && stack[stack.length-1].indent > ind) stack.pop();
+      const fr = stack[stack.length-1];
+      if (!Array.isArray(fr.obj)){ const arr=[]; if (fr.parent) fr.parent[fr.key]=arr; fr.obj=arr; }
+      const item={}; fr.obj.push(item);
+      stack.push({indent:ind+1,obj:item});
+      line=line.slice(2); ind+=2;
+    } else {
+      while (stack.length>1 && stack[stack.length-1].indent >= ind) stack.pop();
+    }
+    const m = line.match(/^([^:]+):\s?(.*)$/); if (!m) continue;
+    const top = stack[stack.length-1].obj, key=m[1].trim(); let val=m[2].trim();
+    if (Array.isArray(top)) continue;
+    if (val===""){ const o={}; top[key]=o; stack.push({indent:ind,obj:o,parent:top,key}); }
+    else { if (/^".*"$/.test(val)) val=val.slice(1,-1); top[key]=val; }
+  }
+  return root;
+}
+
+function flatten(obj, pre="", out=[]){
+  for (const [k,v] of Object.entries(obj||{})){
+    const p = pre? pre+"."+k : k;
+    if (v && typeof v==="object" && !Array.isArray(v)) flatten(v,p,out); else out.push({path:p,key:k,raw:String(v).trim()});
+  }
+  return out;
+}
+
+// ---------- stats ----------
+const sorted = a => Float64Array.from(a).sort();
+function pct(a,p){ if(!a.length) return NaN; const s=sorted(a); const i=(s.length-1)*p, lo=Math.floor(i), hi=Math.ceil(i); return s[lo]+(s[hi]-s[lo])*(i-lo); }
+const median = a => pct(a,.5);
+const mean = a => a.length? a.reduce((x,y)=>x+y,0)/a.length : NaN;
+const fmt = (v,d=1) => Number.isFinite(v)? v.toFixed(d) : "–";
+function fmtTime(s){ if(!Number.isFinite(s)) return "–"; const m=Math.floor(s/60); return m+":"+(s-m*60).toFixed(3).padStart(6,"0"); }
+
+// ---------- analysis ----------
+function settingsFor(run){
+  const base = PROFILES[run.carPath] || PROFILES._default;
+  return Object.assign({}, base, userSettings, run.overrides||{});
+}
+
+function analyze(run){
+  const ch=run.ch, n=run.n, S=settingsFor(run);
+  const A = {warnings:[]};
+  const has = k => { if (!ch[k]) return false; for (let j=0;j<n;j++) if (ch[k][j]!==0) return true; return false; };
+  const live = k => { if (!ch[k]) return false; let lo=Infinity, hi=-Infinity; for (let j=0;j<n;j++){ const v=ch[k][j]; if(v<lo) lo=v; if(v>hi) hi=v; } return hi-lo>0.5; };
+  A.endTyres = endTyres(run);
+  // laps
+  const laps=[]; let s0=0;
+  for (let i=1;i<=n;i++){
+    if (i===n || ch.Lap[i]!==ch.Lap[i-1]){
+      const e=i; let pit=false, off=0, onTrack=true;
+      for (let j=s0;j<e;j++){ if (ch.OnPitRoad&&ch.OnPitRoad[j]) pit=true; if (ch.PlayerTrackSurface&&ch.PlayerTrackSurface[j]===0) off++; if (ch.IsOnTrack&&!ch.IsOnTrack[j]) onTrack=false; }
+      const full = ch.LapDistPct[s0]<0.04 && ch.LapDistPct[e-1]>0.96;
+      const t = (i<n? ch.SessionTime[e] : ch.SessionTime[e-1]) - ch.SessionTime[s0];
+      laps.push({lap:ch.Lap[s0], s:s0, e, time:t, valid: full && !pit && onTrack && e-s0>run.tick*20, off:off/run.tick});
+      s0=i;
+    }
+  }
+  const valid = laps.filter(l=>l.valid);
+  if (!valid.length){ A.error="No complete timed laps found in this file (need at least one full lap off pit road)."; A.laps=laps; return A; }
+  const best = valid.reduce((a,b)=>a.time<b.time?a:b);
+  let rep = valid.filter(l=>l.time<=best.time*1.03 && l.off<0.5);
+  if (!rep.length) rep=[best];
+  laps.forEach(l=>{ l.best = l===best; l.rep = rep.includes(l); });
+  A.laps=laps; A.best=best; A.rep=rep;
+  const idx=[]; for (const l of rep) for (let j=l.s;j<l.e;j++) if (ch.Speed[j]>10) idx.push(j);
+  A.idx = idx;
+
+  // top speed
+  A.vmax = Math.max(...rep.map(l=>{ let m=0; for(let j=l.s;j<l.e;j++) m=Math.max(m,ch.Speed[j]); return m; }))*3.6;
+
+  // ---- steering / yaw calibration ----
+  const wb=S.wb;
+  let sgnSamples=[];
+  for (const j of idx) if (Math.abs(ch.LatAccel[j])>3) sgnSamples.push(ch.SteeringWheelAngle[j]*ch.YawRate[j]);
+  const ysgn = median(sgnSamples)>=0 ? 1 : -1;
+  let K = parseFloat(S.ratio);
+  if (!(K>0)){
+    const rs=[];
+    for (const j of idx){ const ay=Math.abs(ch.LatAccel[j]), V=ch.Speed[j], r=ch.YawRate[j]*ysgn, st=ch.SteeringWheelAngle[j];
+      if (ay>1.5 && ay<4 && V>15 && Math.abs(r)>0.05 && Math.abs(st)>0.03 && st*r>0) rs.push(st/(wb*r/V)); }
+    K = median(rs);
+  }
+  A.ratio=K; A.ysgn=ysgn;
+  if (!(K>6 && K<30)) A.warnings.push(`Estimated steering ratio ${fmt(K)}:1 looks odd, so treat balance numbers with caution (you can set it under Targets).`);
+
+  // which side is inside? find sign so that inside rear wheel is slower when coasting through corners
+  const wheels = has("LRspeed") && has("RRspeed") && has("LFspeed") && has("RFspeed");
+  let leftInsideWhenPos = true;
+  if (wheels){ const d=[]; for (const j of idx){ const r=ch.YawRate[j]*ysgn; if (Math.abs(ch.LatAccel[j])>5 && ch.Brake[j]<0.05 && ch.Throttle[j]<0.2) d.push(Math.sign(r)*(ch.LRspeed[j]-ch.RRspeed[j])); }
+    leftInsideWhenPos = median(d) < 0; }
+
+  // ---- per-sample balance ----
+  const us = new Float64Array(n).fill(NaN);
+  const phaseOf = j => ch.Brake[j]>0.05 ? "entry" : ch.Throttle[j]<0.4 ? "mid" : "exit";
+  const bandOf = v => v<125 ? "low" : v<175 ? "med" : "high";
+  const bins = {}; for (const p of ["entry","mid","exit"]) for (const b of ["low","med","high"]) bins[p+b]=[];
+  for (const j of idx){
+    const V=ch.Speed[j], ay=Math.abs(ch.LatAccel[j]); if (ay<6 || V<12) continue;
+    const r=ch.YawRate[j]*ysgn, st=ch.SteeringWheelAngle[j]; if (Math.abs(r)<0.03) continue;
+    const u = (st/K - wb*r/V)*Math.sign(r)*180/Math.PI;
+    us[j]=u; bins[phaseOf(j)+bandOf(V*3.6)].push(u);
+  }
+  A.us=us; A.bins={};
+  for (const [k,v] of Object.entries(bins)) A.bins[k] = {n:v.length, med:median(v)};
+  const pool = (ph,bd) => { const a=[]; for (const p of ph) for (const b of bd) a.push(...bins[p+b]); return {n:a.length, med:median(a)}; };
+  A.mechMid = pool(["mid"],["low","med"]);
+  A.mechAll = pool(["mid","exit"],["low"]);
+  A.highSpeed = pool(["mid","exit"],["high"]);
+  A.lowSpeed = pool(["mid","exit"],["low","med"]);
+  A.entry = pool(["entry"],["low","med","high"]);
+  A.mid = pool(["mid"],["low","med","high"]);
+  A.exit = pool(["exit"],["low","med","high"]);
+
+  // ---- oversteer moments: counter-steer or big negative understeer angle ----
+  const events=[]; let run0=-1;
+  const isOS = j => { const V=ch.Speed[j]; if (V<12 || Math.abs(ch.LatAccel[j])<4) return false;
+    const r=ch.YawRate[j]*ysgn, st=ch.SteeringWheelAngle[j];
+    return (Math.abs(r)>0.08 && st*r<0 && Math.abs(st)>0.04) || us[j]<-1.5; };
+  for (const l of rep){
+    for (let j=l.s;j<l.e;j++){
+      if (isOS(j)){ if (run0<0) run0=j; }
+      else if (run0>=0){ if (j-run0>=run.tick*0.12) events.push(mkEvent(run0,j)); run0=-1; }
+    }
+    run0=-1;
+  }
+  function mkEvent(a,b){
+    let sv=0; for (let j=Math.max(0,a-12);j<b;j++) sv=Math.max(sv,Math.abs(ch.LRshockVel?.[j]||0),Math.abs(ch.RRshockVel?.[j]||0));
+    const ph = ch.Brake[a]>0.05 ? "entry" : ch.Throttle[a]<0.4 ? "mid" : "exit";
+    return {a,b,dur:(b-a)/run.tick,phase:ph,v:ch.Speed[a]*3.6,pct:ch.LapDistPct[a],shock:sv};
+  }
+  A.events=events;
+  const perLap = ph => events.filter(e=>e.phase===ph).length/rep.length;
+  A.osEntry=perLap("entry"); A.osMid=perLap("mid"); A.osExit=perLap("exit");
+  A.osKerb = events.filter(e=>e.shock>0.3).length/rep.length;
+
+  // ---- ride heights ----
+  const rhOK = has("LFrideHeight") && has("LRrideHeight");
+  if (rhOK){
+    const fr=j=>(ch.LFrideHeight[j]+ch.RFrideHeight[j])*500, rr=j=>(ch.LRrideHeight[j]+ch.RRrideHeight[j])*500;
+    const fast=[], fastR=[], brk=[], brkF=[], hsC=[], hsCR=[], spl=[];
+    for (const j of idx){ const v=ch.Speed[j]*3.6, ay=Math.abs(ch.LatAccel[j]);
+      if (v>200 && ay<3 && ch.Brake[j]<0.03){ fast.push(fr(j)); fastR.push(rr(j)); }
+      if (v>140 && ay>8 && ch.Brake[j]<0.05){ hsC.push(fr(j)); hsCR.push(rr(j)); }
+      if (v>120 && ch.Brake[j]>0.5){ brk.push(rr(j)); brkF.push(fr(j)); }
+      if (ch.CFSRrideHeight) spl.push(ch.CFSRrideHeight[j]*1000);
+    }
+    A.rh = {front:median(fast), rear:median(fastR), nFast:fast.length,
+      hsFront:median(hsC), hsRear:median(hsCR), nHs:hsC.length,
+      brkRear:pct(brk,.9), brkFront:pct(brkF,.1), nBrk:brk.length,
+      splMin:pct(spl,.005), splLow: spl.filter(x=>x<3).length/run.tick/rep.length};
+  }
+
+  // ---- braking ----
+  if (wheels){
+    let n0=0, fl=0, rl=0;
+    for (const j of idx){ if (ch.Brake[j]<0.4 || ch.Speed[j]<20) continue; n0++;
+      if ((ch.LFspeed[j]+ch.RFspeed[j])/2/ch.Speed[j] < 0.88) fl++;
+      if ((ch.LRspeed[j]+ch.RRspeed[j])/2/ch.Speed[j] < 0.88) rl++; }
+    A.lockF = n0? fl/n0 : 0; A.lockR = n0? rl/n0 : 0;
+  }
+  if (ch.BrakeABSactive){ let n0=0,a=0; for (const j of idx){ if (ch.Brake[j]>0.3){ n0++; if (ch.BrakeABSactive[j]) a++; } } A.abs = n0? a/n0 : 0; }
+
+  // ---- traction ----
+  if (wheels){
+    let n0=0, spin=0, n1=0, inSpin=0; const tw=S.track;
+    for (const j of idx){ const V=ch.Speed[j]; if (ch.Throttle[j]<0.6 || V<8 || V>45) continue; n0++;
+      const ratio = (ch.LRspeed[j]+ch.RRspeed[j])/(ch.LFspeed[j]+ch.RFspeed[j]+1e-6)-1;
+      if (ratio>0.08) spin++;
+      const r=ch.YawRate[j]*ysgn;
+      if (Math.abs(ch.LatAccel[j])>5 && Math.abs(r)>0.1){ n1++;
+        const leftInside = (r>0)===leftInsideWhenPos;
+        const inn = leftInside? ch.LRspeed[j] : ch.RRspeed[j], out = leftInside? ch.RRspeed[j] : ch.LRspeed[j];
+        const R = V/Math.abs(r), expect=(R-tw/2)/(R+tw/2);
+        if (inn/out - expect > 0.06) inSpin++; }
+    }
+    A.spin = n0? spin/n0 : 0; A.inSpin = n1? inSpin/n1 : 0;
+  }
+
+  // ---- tyres (carcass temps, live) ----
+  const late = rep.length>3 ? rep.slice(Math.floor(rep.length/3)) : rep;
+  A.tires={};
+  for (const c of ["LF","RF","LR","RR"]){
+    const tLive = live(c+"tempCM"), pLive = live(c+"pressure");
+    if (!tLive && !pLive) continue;
+    const L=[],M=[],R=[],P=[];
+    for (const l of late) for (let j=l.s;j<l.e;j+=6){ if (tLive){ L.push(ch[c+"tempCL"][j]); M.push(ch[c+"tempCM"][j]); R.push(ch[c+"tempCR"][j]); } if (pLive) P.push(ch[c+"pressure"][j]); }
+    const left = c[0]==="L"; const l=mean(L), m=mean(M), r=mean(R);
+    A.tires[c] = {outer:left?l:r, mid:m, inner:left?r:l, press:mean(P), temps:tLive};
+  }
+  A.pressUnit = run.units.LFpressure||"kPa";
+
+  // ---- fuel ----
+  if (ch.FuelLevel){
+    const use = rep.map(l=>ch.FuelLevel[l.s]-ch.FuelLevel[l.e-1]).filter(x=>x>0.3 && x<20);
+    A.fuelPerLap = use.length? median(use) : NaN;
+  }
+  A.lapMed = median(rep.map(l=>l.time));
+
+  // ---- dampers: shock velocity histograms per corner ----
+  A.damp = {};
+  const KNEE = 0.040; // m/s split between low-speed (body motion) and high-speed (bumps, kerbs)
+  for (const c of Object.keys(CORNERS)){
+    const v = ch[c+"shockVel"], dfl = ch[c+"shockDefl"]; if (!v || !has(c+"shockVel")) continue;
+    // sign check: positive velocity should mean the shock is compressing (deflection rising)
+    let sg = 1; if (dfl){ let s=0; for (let i=1;i<idx.length-1;i+=3){ const j=idx[i]; s += v[j]*(dfl[j+1]-dfl[j-1]); } if (s<0) sg=-1; }
+    let lsB=0, lsR=0, hsB=0, hsR=0; const bump=[], reb=[], hist=new Array(61).fill(0);
+    for (const j of idx){ const x=v[j]*sg;
+      if (x>=0){ if (x<KNEE) lsB++; else { hsB++; bump.push(x); } } else { if (-x<KNEE) lsR++; else { hsR++; reb.push(-x); } }
+      const b=Math.round(x*1000/10)+30; if (b>=0 && b<=60) hist[b]++; }
+    const N=idx.length||1;
+    A.damp[c] = {lsB:lsB/N, lsR:lsR/N, hsB:hsB/N, hsR:hsR/N, p95B:pct(bump,.95)*1000, p95R:pct(reb,.95)*1000, p99:Math.max(pct(bump,.99),pct(reb,.99))*1000, hist};
+  }
+  if (A.rh && ch.CFSRrideHeight){
+    const sb=[]; for (const j of idx) if (ch.Brake[j]>0.3 && ch.Speed[j]>30) sb.push(ch.CFSRrideHeight[j]*1000);
+    A.rh.splBrk = pct(sb,.01);
+    // how the splitter height follows front/rear ride height: splitter = a*front + b*rear + c (least squares)
+    const pts=[]; let mF=0,mR=0,mS=0;
+    for (let i=0;i<idx.length;i+=5){ const j=idx[i]; const F=(ch.LFrideHeight[j]+ch.RFrideHeight[j])*500, R=(ch.LRrideHeight[j]+ch.RRrideHeight[j])*500, Sp=ch.CFSRrideHeight[j]*1000; pts.push([F,R,Sp]); mF+=F; mR+=R; mS+=Sp; }
+    const n0=pts.length; mF/=n0; mR/=n0; mS/=n0; let cFF=0,cRR=0,cFR=0,cFS=0,cRS=0;
+    for (const [F,R,Sp] of pts){ const f=F-mF, r=R-mR, s=Sp-mS; cFF+=f*f; cRR+=r*r; cFR+=f*r; cFS+=f*s; cRS+=r*s; }
+    const det=cFF*cRR-cFR*cFR, a=(cFS*cRR-cRS*cFR)/det, b=(cRS*cFF-cFS*cFR)/det;
+    A.splFit = (a>0.9 && a<2.2 && b>-1 && b<0.2) ? {a, b, src:"measured from this run"} : {a:1.32, b:-0.24, src:"default for the Acura"};
+  }
+  return A;
+}
+
+// ---------- end-of-stint tyre temperatures ----------
+// iRacing only measures tyre temps when the car is in the pits / garage. We read them at the end of a stint:
+// 1) the garage's LastTemps values in the session info (what the garage screen shows), else
+// 2) the pit-lane temperature channels at the end of the run, if they changed during it.
+const CORNERS = {LF:"leftfront",RF:"rightfront",LR:"leftrear",RR:"rightrear"};
+function yamlTyres(flat){
+  const y = {};
+  for (const [c,nm] of Object.entries(CORNERS)){
+    const e = flat.find(x=>x.key.toLowerCase().startsWith("lasttemps") && x.path.toLowerCase().includes(nm));
+    const hp = flat.find(x=>x.key.toLowerCase()==="lasthotpressure" && x.path.toLowerCase().includes(nm));
+    if (!e) continue;
+    const v = e.raw.split(",").map(parseFloat); if (v.length!==3 || v.some(isNaN)) continue;
+    const omi = /omi$/i.test(e.key);
+    y[c] = {outer:omi?v[0]:v[2], mid:v[1], inner:omi?v[2]:v[0], hot:hp?parseFloat(hp.raw):NaN};
+  }
+  return y;
+}
+function sampleAt(run, j){ const s={}; for (const k in run.ch) s[k]=run.ch[k][j]; return s; }
+function endTyres(run){
+  const y = yamlTyres(run.endFlat || run.setupFlat), vals = Object.values(y).flatMap(t=>[t.outer,t.mid,t.inner]);
+  const sig = JSON.stringify(y);
+  if (vals.length===12 && new Set(vals).size>1 && (!run.startTyreSig || run.startTyreSig!==sig))
+    return {src:"the garage reading", t:y};
+  if (!run.n) return null;
+  const ch = run.ch, n = run.n, suf = ch.LFtempM ? ["L","M","R"] : ["CL","CM","CR"];
+  const mk = get => { const t={};
+    for (const c of Object.keys(CORNERS)){ const v=suf.map(s=>get(c+"temp"+s)); if (v.some(x=>!Number.isFinite(x))) return null;
+      const left=c[0]==="L"; t[c]={outer:left?v[0]:v[2], mid:v[1], inner:left?v[2]:v[0], hot:get(c+"pressure")}; }
+    return t; };
+  const varied = t => t && new Set(Object.values(t).flatMap(x=>[x.outer,x.mid,x.inner]).map(Math.round)).size>1;
+  // 2) snapshot as the car came into the pit lane at the end of the stint
+  const snap = run.endChan || (ch.OnPitRoad && ch.OnPitRoad[n-1] && ch.Lap[n-1]>ch.Lap[0] ? sampleAt(run,n-1) : null);
+  if (snap){ const t=mk(k=>snap[k]); if (varied(t)) return {src:"the reading as you came into the pit lane", t}; }
+  // 3) live temps averaged over the last full lap of the stint
+  let target = ch.Lap[n-1] - 1, sum = {}, cnt = 0;
+  if (ch.LapDistPct[n-1]>0.97) target = ch.Lap[n-1];
+  for (let j=0;j<n;j++){ if (ch.Lap[j]!==target || ch.Speed[j]<10 || (ch.OnPitRoad && ch.OnPitRoad[j])) continue; cnt++;
+    for (const c of Object.keys(CORNERS)) for (const s of [...suf.map(x=>"temp"+x),"pressure"]){ const k=c+s; if (ch[k]) sum[k]=(sum[k]||0)+ch[k][j]; } }
+  if (cnt > run.tick*30){ const t=mk(k=>sum[k]!==undefined? sum[k]/cnt : NaN); if (varied(t)) return {src:`live tyre temps averaged over your last full lap (lap ${target})`, t}; }
+  return null;
+}
+
+// ---------- setup helpers ----------
+function findSet(run, test){ return run.setupFlat.find(e=>test(e.path.toLowerCase(), e.key.toLowerCase())); }
+const SET = {
+  frontArb: r=>findSet(r,(p,k)=>k.includes("arb")&&p.includes("front")),
+  rearArb:  r=>findSet(r,(p,k)=>k.includes("arb")&&p.includes("rear")),
+  wing:     r=>findSet(r,(p,k)=>k.includes("wingangle")&&!p.includes("aerobalancecalc")) || findSet(r,(p,k)=>k.includes("wingangle")),
+  preload:  r=>findSet(r,(p,k)=>k.includes("preload")),
+  faces:    r=>findSet(r,(p,k)=>k.includes("frictionfaces")||k.includes("clutchplates")),
+  bias:     r=>findSet(r,(p,k)=>k.includes("brakepressurebias")||k==="brakebias"),
+  tc:       r=>findSet(r,(p,k)=>k.startsWith("tcsetting")||k==="tractioncontrol"),
+  abs:      r=>findSet(r,(p,k)=>k.startsWith("abssetting")),
+  gears:    r=>findSet(r,(p,k)=>k==="gearstack"),
+  rh:  (r,c)=>findSet(r,(p,k)=>k==="rideheight"&&p.includes(c)),
+  spring:(r,c)=>findSet(r,(p,k)=>k==="springrate"&&p.includes(c)),
+  bump:(r,c)=>findSet(r,(p,k)=>k==="bumprubbergap"&&p.includes(c)),
+  camber:(r,c)=>findSet(r,(p,k)=>k==="camber"&&p.includes(c)),
+  press:(r,c)=>findSet(r,(p,k)=>k.includes("startingpressure")&&p.includes(c)),
+  damp:(r,end,k2)=>findSet(r,(p,k)=>p.includes(end+"damp")&&k.includes(k2)),
+};
+function numParts(raw){ const m=String(raw).trim().match(/^([+-]?)(\d+(?:\.\d+)?)(.*)$/); if(!m) return null;
+  return {v:parseFloat(m[1]+m[2]), dec:(m[2].split(".")[1]||"").length, plus:m[1]==="+", unit:m[3]}; }
+function limitsFor(run, e){ const P=PROFILES[run.carPath]; if (!P||!P.limits) return null;
+  const p=e.path.toLowerCase(), k=e.key.toLowerCase(); return P.limits.find(l=>l.test(p,k)) || null; }
+// work out the new garage value for one change (delta or set), respecting the car's adjustment range
+function resolve(run, c){
+  if (c.set!==undefined) return {raw:c.set, same:c.e.raw.trim()===c.set, clamped:false};
+  const n=numParts(c.e.raw); if (!n) return null;
+  let v=+(n.v+c.d).toFixed(4), clamped=false; const L=limitsFor(run,c.e);
+  if (L){ if (v<L.min){ v=L.min; clamped=true; } if (v>L.max){ v=L.max; clamped=true; } }
+  const sign = n.plus && v>=0 ? "+" : "";
+  return {raw:`${sign}${v.toFixed(n.dec)}${n.unit}`.trim(), same:Math.abs(v-n.v)<1e-9, clamped};
+}
+const pretty = k => k.replace(/([a-z])([A-Z])/g,"$1 $2").replace(/\bArb\b/g,"ARB").replace(/\bRh\b/g,"RH").replace(/\bTc\b/g,"TC").replace(/\bF Wtdist\b/,"Front weight");
+const cornerName = p => { const m=p.match(/(Left|Right)(Front|Rear)/); return m? (m[1][0]+m[2][0]) : ""; };
+const changeText = c => `${cornerName(c.e.path) ? cornerName(c.e.path)+" " : ""}${pretty(c.e.key)}: ${c.e.raw.trim()} → ${c.res.raw}`;
+const lbl = e => e ? e.path.replace(/^CarSetup\./,"").replace(/\./g," › ") : "";
+
+// iRacing's downforce-trim table for this car (Acura manual, Setup Tips)
+const TRIMS = [["jose carlos pace","High/Medium"],["interlagos","High/Medium"],["monza","Medium"],["brands hatch","High"],["barcelona","High"],
+  ["magny","High/Medium"],["spa","Medium"],["le mans","Medium"],["24 heures","Medium"],["daytona","Low"],["belle isle","High"],["detroit","High"],
+  ["fuji","High/Medium"],["hungaroring","High"],["indianapolis","Medium"],["lime rock","High"],["long beach","High"],["oschersleben","High"],
+  ["mount panorama","High/Medium"],["bathurst","High/Medium"],["nürburgring grand","High"],["nurburgring grand","High"],["okayama","High"],
+  ["road america","High/Medium"],["road atlanta","High/Medium"],["sebring","High"],["silverstone","High/Medium"],["sonoma","High"],
+  ["virginia","High/Medium"],["watkins glen","High/Medium"],["laguna seca","High"]];
+function trimFor(run, vmax){
+  const t=((run.info.WeekendInfo||{}).TrackDisplayName||"").toLowerCase();
+  const hit=TRIMS.find(([k])=>t.includes(k));
+  const bySpeed = vmax<250?"High":vmax<270?"Medium":"Low";
+  return {table: hit? hit[1] : null, speed: bySpeed};
+}
+
+// ---------- rules (Acura NSX GT3 manual + iRacing setup notes) ----------
+function suggest(run, A){
+  const S=settingsFor(run), out=[];
+  const C=(e,d)=>({e,d}), CS=(e,v)=>({e,set:v});
+  const O=(label,...ch)=>({label, ch:ch.flat().filter(c=>c&&c.e)});
+  const pair=(fn,a,b,d)=>[C(fn(run,a),d),C(fn(run,b),d)];
+  const front=(fn,d)=>pair(fn,"leftfront","rightfront",d), rear=(fn,d)=>pair(fn,"leftrear","rightrear",d);
+  // Tech rule: static Center Front Splitter Height must stay >= the minimum (50 mm for the Acura).
+  // Lowering the front or raising the rear drops the splitter; scale those ride-height steps so the garage value stays legal.
+  const splE=findSet(run,(p,k)=>k==="centerfrontsplitterheight"), splNow=splE?parseFloat(splE.raw):NaN, splMin=+S.minSplitter||0, fit=A.splFit;
+  const rhD = (o, end) => { const v=o.ch.filter(c=>c.d!==undefined && c.e.key.toLowerCase()==="rideheight" && c.e.path.toLowerCase().includes(end)).map(c=>c.d); return v.length? v.reduce((x,y)=>x+y,0)/v.length : 0; };
+  const splGuard = o => {
+    if (!splE || !splMin || !fit) return;
+    const drop = fit.a*rhD(o,"front") + fit.b*rhD(o,"rear");
+    if (splNow + drop >= splMin - 1e-6) return;
+    const s = drop<0 ? Math.max(0, splNow-splMin)/(-drop) : 1;
+    for (const c of o.ch) if (c.d!==undefined && c.e.key.toLowerCase()==="rideheight"){ const nd=Math.trunc(c.d*s*2)/2; c.d = Object.is(nd,-0)?0:nd; }
+    o.splLimited = true;
+    const sgn = v => (v>0?"+":v<0?"−":"±")+Math.abs(v);
+    o.label = o.label.replace(/(Front ride height )[+−-]?\s?[\d.]+( mm)/, (m,a,b)=>a+sgn(rhD(o,"front"))+b)
+                     .replace(/(Rear ride height )[+−-]?\s?[\d.]+( mm)/, (m,a,b)=>a+sgn(rhD(o,"rear"))+b);
+  };
+  const add=(pr,area,title,opts,why,evidence,conf="medium")=>{
+    opts=opts.filter(o=>o.ch.length); if (!opts.length) return;
+    for (const o of opts){ splGuard(o); for (const c of o.ch) c.res=resolve(run,c); o.ch=o.ch.filter(c=>c.res); o.limit=o.ch.every(c=>c.res.same);
+      if (o.splLimited) o.label += o.limit ? ` (blocked: splitter at the ${splMin} mm minimum)` : ` (reduced to keep the splitter ≥ ${splMin} mm)`; }
+    out.push({pr,area,title,opts,why,evidence,conf,key:area+"|"+opts.map(o=>o.label).join("/")});
+  };
+  const w=SET.wing(run), wv=w?parseFloat(w.raw):NaN;
+  // race type: sprint setups run a more aggressive balance (iRacing notes); endurance favours stability and tyre life
+  const M = RACE_MODES[RACE.type];
+  const US_LOOSE = M.loose, OS = M.osLim;
+
+  // Aero platform. The manual says the 40/55 mm targets are telemetry ride heights (mean of LF/RF and LR/RR).
+  if (A.rh && S.frontRH && A.rh.nFast>30){
+    const df=A.rh.front-S.frontRH, dr=A.rh.rear-S.rearRH, tol=S.rhTol;
+    const cap = x => Math.max(-3, Math.min(3, -Math.round(x*2)/2));
+    if (Math.abs(df)>tol){ const d=cap(df);
+      add(Math.abs(df)>2*tol?3:2,"Aero platform",`Front ride height at speed is ${fmt(A.rh.front)} mm (target ${S.frontRH} ±${tol})`,
+        d<0 ? [O(`Front ride height ${d} mm`, front(SET.rh,d)), O(`Front springs −1 step (sits lower at speed, static splitter unchanged)`, front(SET.spring,-20))]
+            : [O(`Front ride height +${d} mm`, front(SET.rh,d)), O(`Front springs +1 step (sits higher at speed)`, front(SET.spring,+20))],
+        `Manual: lowering the front adds front and overall downforce; raising it takes both away. Peak downforce is at ${S.frontRH} mm front / ${S.rearRH} mm rear with wing 11. Capped at 3 mm per run so you can feel the step.`,
+        `Mean of LF/RF ride height on straights above 200 km/h (${(A.rh.nFast/run.tick).toFixed(0)} s of data).`,"high"); }
+    const loose = A.osExit>OS || A.osEntry>OS || A.lowSpeed.med<US_LOOSE || A.highSpeed.med<US_LOOSE;
+    if (Math.abs(dr)>tol){ const d=cap(dr), lbl2=`Rear ride height ${d>0?"+":"−"}${Math.abs(d)} mm`;
+      add(d>0&&loose ? 2 : Math.abs(dr)>2*tol?3:2,"Aero platform",`Rear ride height at speed is ${fmt(A.rh.rear)} mm (target ${S.rearRH} ±${tol})${d>0&&loose?" – but the car is already loose":""}`,
+        d>0 ? [ ...(loose?[O(`${lbl2} and wing +1`, rear(SET.rh,d), C(w,+1))]:[]), O(lbl2, rear(SET.rh,d)),
+                O("Rear springs +1 step (sits higher at speed, static splitter unchanged)", rear(SET.spring,+20)) ]
+            : [O(lbl2, rear(SET.rh,d)), O("Rear springs −1 step (sits lower at speed)", rear(SET.spring,-20))],
+        `Manual: rear ride height is critical for both aero and mechanical balance. ${d>0?"Raising it toward the target adds overall downforce but moves balance forward (more front grip, rear lighter), so if the car is already loose pair it with wing +1.":"Lowering it moves balance rearward (more stable)."} The Acura works best with a relatively low rake.`,
+        `Mean of LR/RR ride height on straights above 200 km/h.`,"high"); }
+    if (A.rh.brkRear > S.rearRH + 2*tol && A.osEntry>0.3)
+      add(2,"Aero platform",`Rear rises to ${fmt(A.rh.brkRear)} mm under braking, with entry oversteer`,
+        [O("Rear low-speed rebound +2", C(SET.damp(run,"rear","lowspeedrebound"),+2)), O("Diff preload +10 Nm", C(SET.preload(run),+10))],
+        "Manual: if the rear rises above target under braking the balance shifts forward and downforce drops, which destabilises entry. More rear low-speed rebound slows the pitch change when you hit the brakes.",
+        `90th percentile rear ride height with brake > 50% above 120 km/h; ${fmt(A.osEntry,2)} entry slides per lap.`);
+  }
+  if (A.rh && Number.isFinite(A.rh.splMin) && A.rh.splLow>0.4)
+    add(2,"Aero platform",`Splitter close to the ground (${fmt(A.rh.splMin)} mm minimum)`,
+      [O("Front springs +1 step", front(SET.spring,+20)), O("Front bump rubber gap −2 mm", front(SET.bump,-2)), O("Front ride height +1 mm", front(SET.rh,+1))],
+      "Manual: stiffer springs keep ride height more constant (better platform); a smaller bump rubber gap engages sooner for more high-speed support.",
+      `${fmt(A.rh.splLow,1)} s per lap with the splitter under 3 mm.`);
+
+  // Downforce trim (manual's track table, then top-speed guide)
+  const tr=trimFor(run,A.vmax), trim = tr.table || tr.speed;
+  if (Number.isFinite(wv)){
+    if (/^High/.test(trim) && tr.speed==="High" && wv<11)
+      add(1,"Aero trim",`${tr.table?`iRacing lists this track as ${tr.table} downforce`:`Top speed ${fmt(A.vmax,0)} km/h`}: more wing`,
+        [O("Wing +1 and front RH −1 mm", C(w,+1), front(SET.rh,-1)), O("Wing +1 and rear RH +2 mm", C(w,+1), rear(SET.rh,+2))],
+        "Manual: each +1 wing needs front −1 mm or rear +2 mm to keep the same aero balance.",`Top speed ${fmt(A.vmax,0)} km/h on laps used.`,"low");
+    if (!/High$/.test(trim) && tr.speed!=="High" && wv>=11 && RACE.type!=="endurance")
+      add(1,"Aero trim",`Top speed ${fmt(A.vmax,0)} km/h${tr.table?` (iRacing lists this track as ${tr.table})`:""}: you could trim wing`,
+        [O("Wing −1 and front RH +1 mm", C(w,-1), front(SET.rh,+1)), O("Wing −1 and rear RH −2 mm", C(w,-1), rear(SET.rh,-2))],
+        "Manual: lower wing = more oversteer, less drag, higher straight-line speed. Only if the car is stable in fast corners.",`Top speed on laps used.`,"low");
+  }
+  const g=SET.gears(run);
+  if (g && /FIA/i.test(g.raw) && tr.speed==="High")
+    add(1,"Gearing",`Top speed only ${fmt(A.vmax,0)} km/h with the FIA gear stack`,[O("Gear stack → IMSA Short", CS(g,"IMSA Short"))],
+      "Manual: IMSA Short gives the best acceleration and suits most high-downforce tracks; FIA suits medium/low downforce tracks. Check you don't hit the limiter in top gear.",
+      "Top speed under 250 km/h.","low");
+
+  // Balance – fast vs slow corners (aero vs mechanical)
+  if (A.highSpeed.n>60 && A.lowSpeed.n>60){
+    const d = A.highSpeed.med - A.lowSpeed.med, fastSlides = A.events.filter(e=>e.v>175).length/A.rep.length;
+    if (d>1.0 && (A.lowSpeed.med<US_LOOSE || A.osMid>0.3))
+      add(3,"Balance",`Understeer in fast corners but oversteer in slow ones`,
+        [O("Rear springs +1 step and rear RH −1 mm", rear(SET.spring,+20), rear(SET.rh,-1))],
+        "Manual's own example: a stiffer rear spring lets you run a lower static rear (less weight transfer in slow corners) while keeping or raising the rear at high speed, moving aero balance forward.",
+        `Understeer ${fmt(A.highSpeed.med)}° fast vs ${fmt(A.lowSpeed.med)}° slow.`);
+    else if (d>1.0)
+      add(2,"Balance",`More understeer in fast corners than slow (${fmt(A.highSpeed.med)}° vs ${fmt(A.lowSpeed.med)}°)`,
+        [O("Front ride height −1 mm", front(SET.rh,-1)), O("Wing −1", C(w,-1)), O("Front + rear ARB +1 (both stiffer)", C(SET.frontArb(run),+1), C(SET.rearArb(run),+1))],
+        "The gap grows with speed, so it is aero balance. Manual: lower front = more front downforce; lower wing = more oversteer. Stiffer ARBs at both ends help fast sweepers.",
+        `Median understeer angle above vs below 175 km/h.`);
+    if (d<-1.0 || fastSlides>0.4)
+      add(3,"Balance",`Car is looser in fast corners than slow`,
+        [O("Wing +1", C(w,+1)), O("Rear ride height −2 mm", rear(SET.rh,-2)), O("Front ride height +1 mm", front(SET.rh,+1))],
+        "Aero balance is too far forward at speed (manual: a higher front-downforce % means more oversteer in mid/high-speed corners). Move it rearward.",
+        `${A.events.filter(e=>e.v>175).length} slides above 175 km/h over ${A.rep.length} laps; Δ ${fmt(d)}°.`);
+  }
+  // Mid-corner, slow/medium
+  if (A.mechMid.n>60){
+    if (A.mechMid.med>US_PUSH)
+      add(A.mechMid.med>US_PUSH_BAD?3:2,"Balance",`Mid-corner understeer in slow/medium corners (${fmt(A.mechMid.med)}°)`,
+        [O("Front ARB −1", C(SET.frontArb(run),-1)), O("Rear ARB +1", C(SET.rearArb(run),+1))],
+        "Manual: softer front ARB or stiffer rear ARB = more rotation without disturbing the aero platform.",
+        `Median understeer angle off brake, throttle < 40%, under 175 km/h (${(A.mechMid.n/run.tick).toFixed(0)} s).`);
+    else if (A.mechMid.med<US_LOOSE || A.osMid>OS)
+      add(2,"Balance",`Mid-corner is loose in slow/medium corners`,
+        [O("Rear ARB −1", C(SET.rearArb(run),-1)), O("Front ARB +1", C(SET.frontArb(run),+1))],
+        "Manual: softer rear ARB / stiffer front ARB = more understeer.",`Understeer ${fmt(A.mechMid.med)}°, ${fmt(A.osMid,2)} mid-corner slides per lap.`);
+  }
+  // Entry
+  const entryLoose = A.entry.n>60 && A.mid.n>60 && A.entry.med < A.mid.med-1.0;
+  if (A.osEntry>OS || entryLoose)
+    add(A.osEntry>1.2?3:2,"Corner entry",
+      A.osEntry>OS ? `Rear steps out on entry (${fmt(A.osEntry,1)} slides per lap)` : `Looser on the brakes than mid-corner (${fmt(A.entry.med)}° vs ${fmt(A.mid.med)}°)`,
+      [O("Diff preload +20 Nm", C(SET.preload(run),+20)), O("Brake bias +0.5% (forward)", C(SET.bias(run),+0.5)), O("Rear low-speed rebound +2", C(SET.damp(run,"rear","lowspeedrebound"),+2))],
+      "Manual: more preload = less lift-off oversteer and more entry stability (raise it for over-rotation between brake and throttle). Bias forward adds braking stability. More rear low-speed rebound slows the pitch change on braking.",
+      `${fmt(A.osEntry,1)} slide moments per lap on the brakes; understeer entry ${fmt(A.entry.med)}° vs mid ${fmt(A.mid.med)}°.`);
+  else if (A.entry.n>60 && A.mid.n>60 && A.entry.med > A.mid.med+1.2)
+    add(2,"Corner entry",`Entry understeer (${fmt(A.entry.med)}° on the brakes vs ${fmt(A.mid.med)}° mid)`,
+      [O("Diff preload −20 Nm", C(SET.preload(run),-20)), O("Brake bias −0.5% (rearward)", C(SET.bias(run),-0.5)), O("Front low-speed compression +1", C(SET.damp(run,"front","lowspeedcompression"),+1))],
+      "Manual: less preload = less off-throttle understeer; more front low-speed compression sharpens turn-in.",`Median understeer angle by phase.`);
+  // Exit
+  if (A.osExit>OS || A.spin>0.15){
+    const ex=[O("Diff friction faces −2", C(SET.faces(run),-2)), O("TC +1", C(SET.tc(run),+1)), O("Diff preload −10 Nm", C(SET.preload(run),-10)), O("Rear ARB −1", C(SET.rearArb(run),-1))];
+    if (RACE.type==="endurance") ex.unshift(ex.splice(1,1)[0]);   // endurance: TC first, it also saves the rear tyres
+    add(A.osExit>1.2?3:2,"Corner exit",`Oversteer / wheelspin on throttle (${fmt(A.osExit,1)} slides per lap)`, ex,
+      `Manual: fewer friction faces and less preload both reduce on-throttle oversteer. TC 2–7 is the dry range; more TC = less wheelspin and less rear tyre wear but can blunt exits${RACE.type==="endurance"?", which is why it comes first for an endurance race":""}.`,
+      `Rear wheelspin > 8% in ${fmt(A.spin*100,0)}% of throttle samples.`); }
+  else if (A.exit.n>60 && A.exit.med > A.mid.med+1.2)
+    add(2,"Corner exit",`Exit understeer (${fmt(A.exit.med)}° on throttle vs ${fmt(A.mid.med)}° mid)`,
+      [...(A.inSpin>0.1?[O("Diff preload +20 Nm", C(SET.preload(run),+20)), O("Diff friction faces +2", C(SET.faces(run),+2))]:[]),
+       O("Rear low-speed compression −1", C(SET.damp(run,"rear","lowspeedcompression"),-1)), O("Front low-speed rebound −1", C(SET.damp(run,"front","lowspeedrebound"),-1)), O("Rear ARB +1", C(SET.rearArb(run),+1))],
+      A.inSpin>0.1 ? "The inside rear is spinning up and losing drive. Manual: raise preload for poor slow-corner drive; more faces = less inside wheelspin." :
+        "Manual: more rear low-speed compression and more front low-speed rebound both add on-throttle understeer, so take a click out.",
+      `Inside rear spin in ${fmt(A.inSpin*100,0)}% of cornering throttle samples.`);
+  if (A.osKerb>0.4)
+    add(2,"Dampers",`Slides follow kerb strikes (${fmt(A.osKerb,1)} per lap)`,
+      [O("Rear high-speed compression −2", C(SET.damp(run,"rear","highspeedcompression"),-2)), O("Front + rear high-speed compression −1", C(SET.damp(run,"front","highspeedcompression"),-1), C(SET.damp(run,"rear","highspeedcompression"),-1))],
+      "Manual: at tracks with aggressive kerbs less high-speed compression gives more mechanical grip (at some cost to platform).",
+      "Slide moments with rear shock velocity > 0.3 m/s just before.","low");
+
+  // Brakes
+  if (A.lockF!==undefined){
+    if ((A.lockF>0.12 || (A.abs>0.35 && A.lockF>A.lockR*1.5)) && A.osEntry<0.5)
+      add(2,"Brakes",`Front tyres lock / ABS busy (${fmt(A.lockF*100,0)}% of hard braking)`,
+        [O("Brake bias −0.5% (rearward)", C(SET.bias(run),-0.5)), O("ABS +1", C(SET.abs(run),+1))],
+        "Manual: bias above 50% increases front lock-up tendency. ABS 2–7 is the dry range.",`ABS active ${fmt((A.abs||0)*100,0)}% of braking.`);
+    if (A.lockR>0.08)
+      add(3,"Brakes",`Rear tyres lock under braking (${fmt(A.lockR*100,0)}%)`,[O("Brake bias +1% (forward)", C(SET.bias(run),+1))],
+        "Rear lock-ups make entry unstable.","Rear wheel speed < 88% of car speed with brake > 40%.");
+  }
+
+  // Tyres – end of stint temps (manual: inner vs outer tunes camber, centre vs edges tunes pressure)
+  const TT = A.endTyres ? A.endTyres.t : Object.fromEntries(Object.entries(A.tires).filter(([,t])=>t.temps));
+  const tsrc = A.endTyres ? `End-of-stint temps from ${A.endTyres.src}` : "Live carcass temps, later laps";
+  // work out what each corner wants, then group left/right of an axle into one change
+  const want = {};
+  for (const [c,t] of Object.entries(TT)){
+    const spread=t.inner-t.outer, dm=t.mid-(t.inner+t.outer)/2;
+    want[c] = {t, camber: spread>M.camberHi?+0.2 : spread<4?-0.2 : 0, press: dm>3?-3 : dm<-3?+3 : 0, spread, dm};
+  }
+  const tline = c => `${c} I ${fmt(want[c].t.inner,0)} / M ${fmt(want[c].t.mid,0)} / O ${fmt(want[c].t.outer,0)} °C`;
+  const pressDone = new Set();
+  for (const [axle,L,R] of [["Front","LF","RF"],["Rear","LR","RR"]]){
+    const fr = axle==="Front";
+    // camber
+    const cs = [L,R].filter(c=>want[c] && want[c].camber);
+    const same = cs.length===2 && want[L].camber===want[R].camber;
+    for (const grp of same ? [[L,R]] : cs.map(c=>[c])){
+      const d=want[grp[0]].camber, who=grp.length===2?`${axle} tyres`:grp[0];
+      add(2,"Tyres", d>0 ? `${who}: inside more than ${M.camberHi}°C hotter than outside` : `${who}: inside less than 4°C hotter than outside`,
+        [O(`${who} camber ${d>0?"+0.2° (less negative)":"−0.2° (more negative)"}`, grp.map(c=>C(SET.camber(run,CORNERS[c]),d)))],
+        d>0 ? `Aim for the inside about 4–${M.camberHi}°C hotter than the outside${RACE.type==="endurance"?" (tighter for endurance: manual says excess camber cuts tyre life)":""}.${fr?" Manual: less front camber also helps braking.":""}`
+            : `More negative camber adds cornering grip.${fr?" Manual: more front camber costs some braking, so bias may need to go slightly rearward.":" Manual: keep slightly less camber at the rear than the front (traction)."}`,
+        `${tsrc}: ${grp.map(tline).join("; ")}.`);
+    }
+    // pressure from temperature profile
+    const ps = [L,R].filter(c=>want[c] && want[c].press);
+    const psame = ps.length===2 && want[L].press===want[R].press;
+    for (const grp of psame ? [[L,R]] : ps.map(c=>[c])){
+      const d=want[grp[0]].press, who=grp.length===2?`${axle} tyres`:grp[0]; grp.forEach(c=>pressDone.add(c));
+      add(2,"Tyres",`${who}: middle ${d<0?"hotter":"cooler"} than the edges`,[O(`${who} starting pressure ${d<0?"−":"+"}3 kPa`, grp.map(c=>C(SET.press(run,CORNERS[c]),d)))],
+        d<0 ? "Hot centre = over-inflated. Manual: lower pressure gives more grip and builds temperature faster." : "Cool centre with hot edges = under-inflated.",
+        `${tsrc}: ${grp.map(tline).join("; ")}.`);
+    }
+  }
+  // Starting pressure policy
+  //  qualifying / sprint: run the minimum the garage allows (most grip; manual: lower = more grip), unless a tyre shows under-inflation
+  //  endurance: aim for a hot-pressure window so the tyres don't overheat or wear over a long stint
+  const minP = +S.minPress || 0, hotP = c => Number.isFinite(A.tires[c]?.press) ? A.tires[c].press : TT[c]?.hot;
+  if (RACE.type!=="endurance" && minP){
+    const high = Object.keys(CORNERS).filter(c=>!pressDone.has(c) && !(want[c] && want[c].press>0)).map(c=>[c,SET.press(run,CORNERS[c])]).filter(([,e])=>e && parseFloat(e.raw)>minP+0.5);
+    if (high.length)
+      add(2,"Tyres",`Starting pressure above the minimum (${minP} kPa) on ${high.map(([c])=>c).join(", ")}`,
+        [O(`Starting pressures → ${minP} kPa`, high.map(([,e])=>CS(e, `${minP} kPa`)))],
+        `For a ${M.label} the lowest pressure is usually fastest in iRacing: more contact patch, more grip, and the tyres come in quicker. The trade-offs (rolling drag, heat build-up over a long run) matter less in a short race. Keep an eye on the middle-vs-edge temps; if a tyre's middle runs cold it is under-inflated and needs pressure back.`,
+        `Current starting pressures ${high.map(([c,e])=>`${c} ${e.raw}`).join(", ")}.`, "medium");
+  } else if (RACE.type==="endurance"){
+    const mid=(S.hotMin+S.hotMax)/2, hot=[];
+    for (const c of Object.keys(CORNERS)){ if (pressDone.has(c)) continue; const p=hotP(c);
+      if (Number.isFinite(p) && (p>S.hotMax || p<S.hotMin)) hot.push([c,p]); }
+    if (hot.length)
+      add(1,"Tyres",`Hot pressure outside ${S.hotMin}–${S.hotMax} ${A.pressUnit}: ${hot.map(([c,p])=>`${c} ${fmt(p,0)}`).join(", ")}`,
+        [O(`Starting pressures ${hot.map(([c,p])=>`${c} ${p<mid?"+":"−"}${Math.abs(Math.round(mid-p))}`).join(", ")} kPa`, hot.map(([c,p])=>C(SET.press(run,CORNERS[c]), Math.round(mid-p))))],
+        "For an endurance stint, pressures that run too low build heat and wear; too high loses grip. Manual: lower = more grip but more rolling drag and faster heat build. The window is editable under Targets.",
+        `Average hot pressure over later laps.`,"low");
+  }
+
+  // Fuel for the race type
+  const fuelE = findSet(run,(p,k)=>k==="fuellevel");
+  const di = run.info.DriverInfo||{}, tank = (parseFloat(di.DriverCarFuelMaxLtr)||0) * (parseFloat(di.DriverCarMaxFuelPct)||1);
+  if (fuelE && Number.isFinite(A.fuelPerLap) && Number.isFinite(A.lapMed)){
+    const laps = RACE.type==="qual" ? 3 : Math.ceil(RACE.minutes*60/A.lapMed) + 1;
+    let need = Math.ceil(laps*A.fuelPerLap*1.03 + A.fuelPerLap);   // +3% and one lap reserve
+    let stops = 0; if (tank && need>tank){ stops = Math.ceil(need/tank)-1; need = Math.floor(tank); }
+    const cur = parseFloat(fuelE.raw);
+    if (Math.abs(need-cur) >= 2){
+      const kg = (need-cur)*(parseFloat(di.DriverCarFuelKgPerLtr)||0.75);
+      add(2,"Fuel",`Fuel for ${M.label === "qualifying" ? "qualifying (3 laps)" : `a ${RACE.minutes}-minute ${M.label}`}: ${need} L${stops?` (${stops} stop${stops>1?"s":""} needed)`:""}`,
+        [O(`Fuel level → ${need} L`, CS(fuelE, `${need.toFixed(1)} L`))],
+        `${laps} laps × ${fmt(A.fuelPerLap,2)} L per lap + 3% + 1 lap reserve${tank?`, tank ${fmt(tank,0)} L`:""}. That is ${kg>0?"+":""}${fmt(kg,1)} kg, so the car will sit ${kg>0?"lower":"higher"}: after changing fuel the garage ride heights move, so set them back to the values on this sheet (and check it still passes tech).${RACE.type==="sprint"?" iRacing's sprint setups use about 50% fuel.":""}`,
+        `Fuel use measured over the laps used; median lap ${fmtTime(A.lapMed)}.`, "high");
+    }
+  }
+
+  // Dampers (shock velocity histograms + platform under braking)
+  const ax = (L,R,f) => { const a=A.damp?.[L], b=A.damp?.[R]; return a&&b ? (f(a)+f(b))/2 : NaN; };
+  for (const [end,L,R] of [["front","LF","RF"],["rear","LR","RR"]]){
+    const rb = ax(L,R,d=>d.p95B)/ax(L,R,d=>d.p95R), rough = ax(L,R,d=>d.p99), End = end[0].toUpperCase()+end.slice(1);
+    if (!Number.isFinite(rb)) continue;
+    if (rb>1.5)
+      add(1,"Dampers",`${End} shocks compress much faster than they extend (bump/rebound ratio ${fmt(rb,2)})`,
+        [O(`${End} high-speed rebound −1`, C(SET.damp(run,end,"highspeedrebound"),-1)), O(`${End} high-speed compression +1`, C(SET.damp(run,end,"highspeedcompression"),+1))],
+        "Over bumps the shock should extend about as quickly as it compresses. If rebound is much slower the wheel can't follow the road and the car packs down over a series of bumps (manual: too much rebound can unload the tyre).",
+        `95th-percentile shock speed bump vs rebound, ${L}/${R} average.`,"low");
+    else if (rb<0.85)
+      add(1,"Dampers",`${End} shocks extend faster than they compress (bump/rebound ratio ${fmt(rb,2)})`,
+        [O(`${End} high-speed rebound +1`, C(SET.damp(run,end,"highspeedrebound"),+1))],
+        "Rebound looks soft relative to compression, which lets the corner spring back and oscillate after kerbs (manual: high-speed rebound set wrong gives uncontrolled oscillations).",
+        `95th-percentile shock speed bump vs rebound, ${L}/${R} average.`,"low");
+    if (rough>700 && !(A.osKerb>0.4))
+      add(1,"Dampers",`${End} suspension sees big bump hits (${fmt(rough,0)} mm/s peaks)`,
+        [O(`${End} high-speed compression −1`, C(SET.damp(run,end,"highspeedcompression"),-1))],
+        "Manual: on rough tracks or with aggressive kerbs, less high-speed compression gives more mechanical grip (at some cost to platform control). On smooth tracks, more is better.",
+        `99th-percentile shock speed, ${L}/${R}.`,"low");
+  }
+  if (A.rh && Number.isFinite(A.rh.splBrk) && A.rh.splBrk<4)
+    add(2,"Dampers",`Splitter nearly touches down under braking (${fmt(A.rh.splBrk)} mm)`,
+      [O("Front low-speed compression +2", C(SET.damp(run,"front","lowspeedcompression"),+2)), O("Front bump rubber gap −2 mm", front(SET.bump,-2))],
+      "The nose dives too far on the brakes, which stalls the splitter and makes braking unstable. Manual: more low-speed compression controls the weight transfer; a smaller bump rubber gap catches the car sooner.",
+      "1st-percentile splitter height with brake > 30% above 108 km/h.");
+  out.sort((a,b)=>b.pr-a.pr);
+  return out;
+}
+
+// ---------- change plan: which suggestions are switched on, and the resulting garage values ----------
+function selections(run){
+  run.selMap = run.selMap || {};
+  let picked = 0; const sel = [];
+  run.sug.forEach((s,i)=>{
+    const firstOk = s.opts.findIndex(o=>!o.limit);
+    if (run.selMap[s.key]!==undefined){ sel[i]=run.selMap[s.key]; if (sel[i]>=0) picked++; return; }
+    if (s.area==="Fuel"){ sel[i]=firstOk; return; }                          // fuel always on, doesn't count as a handling change
+    sel[i] = (firstOk>=0 && s.pr>=2 && picked<3) ? (picked++, firstOk) : -1;   // default: top 3 changes (manual: change little at a time)
+  });
+  return sel;
+}
+function buildPlan(run){
+  const sel=selections(run), plan=new Map();
+  run.sug.forEach((s,i)=>{ const oi=sel[i]; if (oi==null || oi<0) return;
+    for (const c of s.opts[oi].ch){ if (c.res.same) continue;
+      const k=c.e.path;
+      if (plan.has(k)){ plan.get(k).why.push(s.title); plan.get(k).conflict=true; continue; }
+      plan.set(k,{e:c.e, to:c.res.raw, clamped:c.res.clamped, why:[s.title], area:s.area}); } });
+  return plan;
+}
+
+// ---------- rendering ----------
+function css(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+function usColor(u){
+  if (!Number.isFinite(u)) return css("--grid");
+  if (u<US_LOOSE) return css("--os"); if (u>US_PUSH) return css("--us"); return css("--neutral");
+}
+function canvasCtx(cv, h){
+  const dpr=window.devicePixelRatio||1, w=cv.clientWidth||600; cv.width=w*dpr; cv.height=h*dpr; cv.style.height=h+"px";
+  const c=cv.getContext("2d"); c.scale(dpr,dpr); return [c,w,h];
+}
+function plot(cv, {series, xr, yr, h=240, bands=[], xl="", yl=""}){
+  const [c,w]=canvasCtx(cv,h), m={l:44,r:10,t:10,b:28};
+  const X=x=>m.l+(x-xr[0])/(xr[1]-xr[0])*(w-m.l-m.r), Y=y=>h-m.b-(y-yr[0])/(yr[1]-yr[0])*(h-m.t-m.b);
+  c.font="11px system-ui"; c.fillStyle=css("--muted"); c.strokeStyle=css("--grid"); c.lineWidth=1;
+  for (const b of bands){ c.fillStyle=b.color; c.fillRect(m.l,Y(b.y1),w-m.l-m.r,Y(b.y0)-Y(b.y1)); }
+  c.fillStyle=css("--muted");
+  for (let i=0;i<=4;i++){ const y=yr[0]+(yr[1]-yr[0])*i/4; c.beginPath(); c.moveTo(m.l,Y(y)); c.lineTo(w-m.r,Y(y)); c.stroke(); c.fillText(y.toFixed(0),4,Y(y)+4); }
+  for (let i=0;i<=5;i++){ const x=xr[0]+(xr[1]-xr[0])*i/5; c.fillText(x.toFixed(0),X(x)-8,h-10); }
+  c.fillText(yl,m.l+4,m.t+10); c.textAlign="right"; c.fillText(xl,w-m.r,h-10); c.textAlign="left";
+  for (const s of series){
+    c.strokeStyle=c.fillStyle=s.color; c.lineWidth=s.width||1.5;
+    if (s.dots){ for (let i=0;i<s.x.length;i++) c.fillRect(X(s.x[i])-1,Y(s.y[i])-1,2,2); }
+    else { c.beginPath(); for (let i=0;i<s.x.length;i++){ const px=X(s.x[i]), py=Y(s.y[i]); i?c.lineTo(px,py):c.moveTo(px,py);} c.stroke(); }
+  }
+}
+function drawMap(cv, run, A){
+  const ch=run.ch, L=A.best; if (!ch.Lat || !ch.Lon) return;
+  const [c,w,h]=canvasCtx(cv,340);
+  let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9; const lat0=ch.Lat[L.s]*Math.PI/180;
+  const P=[]; for (let j=L.s;j<L.e;j++){ const x=ch.Lon[j]*Math.cos(lat0), y=ch.Lat[j]; P.push([x,y,j]); x0=Math.min(x0,x);x1=Math.max(x1,x);y0=Math.min(y0,y);y1=Math.max(y1,y); }
+  const sc=Math.min((w-20)/(x1-x0),(h-20)/(y1-y0)), ox=(w-(x1-x0)*sc)/2, oy=(h-(y1-y0)*sc)/2;
+  const T=([x,y])=>[ox+(x-x0)*sc, h-oy-(y-y0)*sc];
+  c.lineWidth=5; c.lineCap="round";
+  for (let i=1;i<P.length;i++){ const [a,b]=[T(P[i-1]),T(P[i])]; c.strokeStyle=usColor(A.us[P[i][2]]); c.beginPath(); c.moveTo(...a); c.lineTo(...b); c.stroke(); }
+  c.fillStyle=css("--bad");
+  for (const e of A.events){ // place events by lap-distance on best lap
+    let k=0,bd=1; for (let i=0;i<P.length;i+=3){ const d=Math.abs(ch.LapDistPct[P[i][2]]-e.pct); if (d<bd){bd=d;k=i;} }
+    const [x,y]=T(P[k]); c.beginPath(); c.arc(x,y,4,0,7); c.fill(); }
+  const [sx,sy]=T(P[0]); c.fillStyle=css("--ink"); c.fillRect(sx-2,sy-6,4,12);
+}
+
+function render(){
+  const out=$("#out"); out.innerHTML="";
+  if (!runs.length) return;
+  const run=runs[current], A=run.A=analyze(run), S=settingsFor(run);
+  renderRuns(); renderSettings();
+  run.ratio=A.ratio; run.ysgn=A.ysgn;
+  if (A.error){ out.innerHTML=`<section><h2>${esc(run.short)}</h2><p>${run.live && !run.ended ? "Live stint started. Analysis and suggestions appear after your first full lap." : A.error}</p></section>`; return; }
+  const sug=suggest(run,A); run.sug=sug;
+  const wi=run.info.WeekendInfo||{};
+  const bias=SET.bias(run), wing=SET.wing(run);
+  const head = `<section><h2>${run.carName} <small>${wi.TrackDisplayName||""} ${wi.TrackConfigName||""} · ${run.sessionType} · best ${fmtTime(A.best.time)} · ${A.rep.length} laps used</small></h2>
+    <div class="tabs"><button class="tab ${view==="changes"?"on":""}" data-v="changes">Changes to make</button><button class="tab ${view==="analysis"?"on":""}" data-v="analysis">Analysis</button></div></section>`;
+  if (view==="changes"){
+    out.innerHTML = head + changesHTML(run, A);
+    wireChanges(run);
+    wireTabs();
+    return;
+  }
+  out.insertAdjacentHTML("beforeend", head + `
+  <section><h2>${run.carName} <small>${wi.TrackDisplayName||""} ${wi.TrackConfigName||""} · ${run.sessionType} · track ${wi.TrackSurfaceTemp||"?"} / air ${wi.TrackAirTemp||"?"}</small></h2>
+   <div class="grid">
+    <div class="stat"><div class="k">Best lap</div><div class="v">${fmtTime(A.best.time)}</div><div class="s">lap ${A.best.lap} · ${A.rep.length} laps within 3% used</div></div>
+    <div class="stat"><div class="k">Top speed</div><div class="v">${fmt(A.vmax,0)} km/h</div><div class="s">iRacing trim guide: ${A.vmax<250?"High":A.vmax<270?"Medium":"Low"} downforce</div></div>
+    <div class="stat"><div class="k">Balance, slow corners</div><div class="v" style="color:${usColor(A.lowSpeed.med)}">${fmt(A.lowSpeed.med)}°</div><div class="s">${balWord(A.lowSpeed.med)}</div></div>
+    <div class="stat"><div class="k">Balance, fast corners</div><div class="v" style="color:${usColor(A.highSpeed.med)}">${fmt(A.highSpeed.med)}°</div><div class="s">${balWord(A.highSpeed.med)}</div></div>
+    <div class="stat"><div class="k">Slides per lap</div><div class="v">${fmt(A.events.length/A.rep.length,1)}</div><div class="s">entry ${fmt(A.osEntry,1)} · mid ${fmt(A.osMid,1)} · exit ${fmt(A.osExit,1)}</div></div>
+    <div class="stat"><div class="k">Wing / bias</div><div class="v">${wing?wing.raw:"–"}</div><div class="s">brake bias ${bias?bias.raw:"–"}</div></div>
+   </div>
+   ${A.warnings.map(w=>`<p class="muted">⚠ ${w}</p>`).join("")}
+  </section>
+  <section><h2>Balance <small>understeer angle in degrees (front wheel): higher = more understeer</small></h2>
+   <div class="two"><div><canvas id="map"></canvas>
+     <div class="legend"><span><i style="background:${css("--us")}"></i>understeer &gt; ${US_PUSH}°</span><span><i style="background:${css("--neutral")}"></i>neutral</span><span><i style="background:${css("--os")}"></i>loose &lt; ${US_LOOSE}°</span><span><i style="background:${css("--bad")};border-radius:50%"></i>slide</span></div>
+     <p class="muted" style="font-size:12px">Map is your best lap. Dots are slide moments from all laps used.</p></div>
+    <div class="tablewrap">${balanceTable(A)}
+     <p class="muted" style="font-size:12px">Entry = on the brakes, mid = coasting / part throttle, exit = throttle above 40%. Steering ratio ${fmt(A.ratio)}:1 (estimated from gentle cornering). Read the numbers relative to each other, and between runs, more than as absolutes.</p></div></div>
+  </section>
+  ${A.rh?`<section><h2>Aero platform <small>ride height vs speed, all laps used</small></h2>
+   <div class="grid" style="margin-bottom:10px">
+    <div class="stat"><div class="k">Front at speed</div><div class="v">${fmt(A.rh.front)} mm</div><div class="s">${S.frontRH?`target ${S.frontRH} ±${S.rhTol}`:"no target set"}</div></div>
+    <div class="stat"><div class="k">Rear at speed</div><div class="v">${fmt(A.rh.rear)} mm</div><div class="s">${S.rearRH?`target ${S.rearRH} ±${S.rhTol}`:"no target set"}</div></div>
+    <div class="stat"><div class="k">Fast corners F / R</div><div class="v">${fmt(A.rh.hsFront)} / ${fmt(A.rh.hsRear)}</div><div class="s">&gt;140 km/h, &gt;0.8 g</div></div>
+    <div class="stat"><div class="k">Heavy braking F / R</div><div class="v">${fmt(A.rh.brkFront)} / ${fmt(A.rh.brkRear)}</div><div class="s">front low / rear high</div></div>
+    <div class="stat"><div class="k">Splitter min</div><div class="v">${fmt(A.rh.splMin)} mm</div><div class="s">${fmt(A.rh.splLow,1)} s/lap under 3 mm</div></div>
+   </div><canvas id="rh"></canvas>
+   <div class="legend"><span><i style="background:${css("--us")}"></i>front (mean of LF/RF)</span><span><i style="background:${css("--os")}"></i>rear (mean of LR/RR)</span><span>Shaded = target windows</span></div>
+  </section>`:""}
+  ${Object.keys(A.damp||{}).length?`<section><h2>Dampers <small>shock speed histograms, all laps used · right = compression (bump), left = extension (rebound)</small></h2>
+   <div class="dampgrid">${["LF","RF","LR","RR"].filter(c=>A.damp[c]).map(c=>`<div><b>${c}</b><canvas id="dh${c}"></canvas></div>`).join("")}</div>
+   <div class="tablewrap" style="margin-top:10px"><table><tr><th></th><th>Low-speed bump</th><th>Low-speed rebound</th><th>High-speed bump</th><th>High-speed rebound</th><th>95% bump / rebound speed</th><th>Peak (99%)</th></tr>
+   ${["LF","RF","LR","RR"].filter(c=>A.damp[c]).map(c=>{const d=A.damp[c]; return `<tr><td>${c}</td><td>${fmt(d.lsB*100,0)}%</td><td>${fmt(d.lsR*100,0)}%</td><td>${fmt(d.hsB*100,0)}%</td><td>${fmt(d.hsR*100,0)}%</td><td>${fmt(d.p95B,0)} / ${fmt(d.p95R,0)} mm/s (${fmt(d.p95B/d.p95R,2)})</td><td>${fmt(d.p99,0)} mm/s</td></tr>`;}).join("")}</table></div>
+   <p class="muted" style="font-size:12px">Low speed (under 40 mm/s) is body movement from steering, braking and throttle: tune it with the handling (entry/exit) suggestions. High speed is bumps and kerbs. A roughly symmetric histogram (bump/rebound ratio about 0.9–1.4) means compression and rebound are in balance. Splitter minimum under braking: ${A.rh?fmt(A.rh.splBrk)+" mm":"–"}.</p>
+  </section>`:""}
+  <section><h2>Best lap trace</h2><canvas id="trace"></canvas>
+   <div class="legend"><span><i style="background:${css("--ink")}"></i>speed km/h</span><span><i style="background:${css("--good")}"></i>throttle %</span><span><i style="background:${css("--bad")}"></i>brake %</span></div></section>
+  <section><h2>Tyres, brakes, traction</h2><div class="two">
+   <div>${tiresHTML(A,S,run)}</div>
+   <div class="grid">
+    <div class="stat"><div class="k">ABS active in braking</div><div class="v">${fmt((A.abs||0)*100,0)}%</div></div>
+    <div class="stat"><div class="k">Front lock</div><div class="v">${fmt((A.lockF||0)*100,0)}%</div><div class="s">of hard braking</div></div>
+    <div class="stat"><div class="k">Rear lock</div><div class="v">${fmt((A.lockR||0)*100,0)}%</div></div>
+    <div class="stat"><div class="k">Rear wheelspin</div><div class="v">${fmt((A.spin||0)*100,0)}%</div><div class="s">of throttle &gt;60% samples</div></div>
+    <div class="stat"><div class="k">Inside rear spin</div><div class="v">${fmt((A.inSpin||0)*100,0)}%</div><div class="s">while cornering on power</div></div>
+   </div></div></section>
+  <section><h2>Laps</h2><div class="tablewrap">${lapsTable(A)}</div></section>
+  <section><h2>Setup in this run <small>read from the telemetry file</small></h2><div class="tablewrap">${setupTable(run)}</div></section>
+  ${runs.length>1?`<section><h2>Compare runs</h2><div class="tablewrap">${compareHTML()}</div></section>`:""}
+  `);
+  drawMap($("#map"),run,A);
+  if (A.rh) drawRH(run,A,S);
+  drawTrace(run,A);
+  for (const c of Object.keys(A.damp||{})) drawHist($("#dh"+c), A.damp[c].hist);
+  wireTabs();
+}
+function drawHist(cv, hist){
+  if (!cv) return; const [c,w,h]=canvasCtx(cv,140), max=Math.max(...hist,1), bw=(w-20)/hist.length;
+  c.font="10px system-ui"; c.fillStyle=css("--muted");
+  hist.forEach((v,i)=>{ const x=10+i*bw, bh=(v/max)*(h-24);
+    c.fillStyle = i<26||i>34 ? css("--os") : css("--us"); c.globalAlpha = i<30 ? 0.6 : 1; c.fillRect(x, h-16-bh, bw-1, bh); });
+  c.globalAlpha=1; c.fillStyle=css("--muted"); c.fillText("-300",4,h-3); c.fillText("0",w/2-3,h-3); c.fillText("+300 mm/s",w-52,h-3);
+}
+let view = "changes";
+// race type the setup is being built for
+const RACE_MODES = {
+  qual:      {label:"qualifying", loose:-1.0, osLim:0.8, camberHi:12, hint:"Low fuel, maximum grip. Minimum tyre pressures, more rotation allowed."},
+  sprint:    {label:"sprint race", loose:-0.8, osLim:0.6, camberHi:11, hint:"About 25–30 min (iRacing's sprint setups: ~50% fuel, more aggressive balance). Minimum pressures."},
+  endurance: {label:"endurance race", loose:-0.3, osLim:0.3, camberHi:9, hint:"1 hour+. Full tank, a more stable balance, tyre life first: TC before diff, tighter camber, hot-pressure window."},
+};
+let RACE = {type:"sprint", minutes:30};
+try { const s=JSON.parse(localStorage.getItem("se-race")||"null"); if (s && RACE_MODES[s.type]) RACE=s; } catch(e){}
+function saveRace(){ try { localStorage.setItem("se-race", JSON.stringify(RACE)); } catch(e){} }
+function wireTabs(){ document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{ view=b.dataset.v; render(); }); }
+
+// ---------- "Changes to make" view ----------
+const GROUP_ORDER = ["TiresAero","Chassis","Dampers"];
+const HIDE_ROWS = /UpdateCount|TreadRemaining/;
+function setupName(run){
+  const di=run.info.DriverInfo||{};
+  return {name: di.DriverSetupName||"", modified: di.DriverSetupIsModified==="1"};
+}
+function saveAsName(n){
+  const base=n.replace(/\.sto$/i,"");
+  const m=base.match(/^(.*?)[ _]v(\d+)$/i);
+  return (m? `${m[1]} v${+m[2]+1}` : `${base} v2`) + ".sto";
+}
+function changesHTML(run, A){
+  const plan=buildPlan(run), sel=selections(run), st=setupName(run), S=settingsFor(run);
+  run.doneMap = run.doneMap || {};
+  const items=[...plan.values()];
+  const done=items.filter(p=>run.doneMap[p.e.path+"="+p.to]).length;
+  // checklist in garage order
+  const order = run.setupFlat.map(e=>e.path);
+  items.sort((a,b)=>order.indexOf(a.e.path)-order.indexOf(b.e.path));
+  // predicted garage splitter height after all selected ride-height changes
+  const splE=findSet(run,(p,k)=>k==="centerfrontsplitterheight"), splMin=+S.minSplitter||0;
+  let splCard="";
+  if (splE && A.splFit){
+    const rhd = end => { const v=items.filter(p=>p.e.key.toLowerCase()==="rideheight" && p.e.path.toLowerCase().includes(end)).map(p=>parseFloat(p.to)-parseFloat(p.e.raw));
+      const all=run.setupFlat.filter(e=>e.key.toLowerCase()==="rideheight" && e.path.toLowerCase().includes(end)).length||2; return v.reduce((x,y)=>x+y,0)/all; };
+    const now=parseFloat(splE.raw), pred=now + A.splFit.a*rhd("front") + A.splFit.b*rhd("rear"), bad = splMin && pred < splMin-0.05;
+    run.splPred = Math.abs(pred-now)>0.05 ? pred : null;
+    splCard = `<div class="stat" style="${bad?"outline:2px solid var(--bad)":""}"><div class="k">Front splitter (tech min ${splMin||"–"} mm)</div>
+      <div class="v sm" style="color:${bad?"var(--bad)":"inherit"}">${fmt(now)}${run.splPred?` → ${fmt(pred)}`:""} mm</div>
+      <div class="s">${bad?"Below the minimum: will fail tech. Raise the front or use the spring options.":`${fmt(now-splMin)} mm of room · ${A.splFit.src}: front −1 mm = splitter −${fmt(A.splFit.a,2)} mm, rear +1 mm = −${fmt(-A.splFit.b,2)} mm`}</div></div>`;
+  }
+  const tab = p => p.split(".")[1]==="TiresAero"?"Tires & Aero":p.split(".")[1]==="Dampers"?"Dampers":"Chassis";
+  const check = items.length ? `<table class="checklist">${items.map(p=>{ const k=p.e.path+"="+p.to, on=!!run.doneMap[k];
+      return `<tr class="${on?"done":""}"><td><input type="checkbox" data-done="${esc(k)}" ${on?"checked":""}></td>
+        <td class="muted" style="white-space:nowrap">${tab(p.e.path)} › ${pretty(p.e.path.split(".")[2])}</td>
+        <td><b>${pretty(p.e.key)}</b></td><td style="white-space:nowrap"><span class="old">${esc(p.e.raw.trim())}</span> → <span class="new">${esc(p.to)}</span>${p.clamped?` <span class="tag">at limit</span>`:""}</td>
+        <td class="muted" style="font-size:12px">${p.why.map(esc).join("; ")}${p.conflict?" (also wanted by another change: first one kept)":""}</td></tr>`; }).join("")}</table>`
+    : `<p>No changes selected. ${run.sug.length?"Switch on a suggestion below.":"Nothing stands out: balance, platform and tyres are inside the target windows."}</p>`;
+  // garage sheet
+  const groups=[]; const gmap={};
+  for (const e of run.setupFlat){ if (HIDE_ROWS.test(e.path)) continue;
+    const parts=e.path.split("."), gk=parts[1]+"."+parts[2];
+    if (!gmap[gk]){ gmap[gk]={tab:parts[1], name:parts[2], rows:[]}; groups.push(gmap[gk]); }
+    gmap[gk].rows.push(e); }
+  groups.sort((a,b)=>GROUP_ORDER.indexOf(a.tab)-GROUP_ORDER.indexOf(b.tab));
+  let lastTab="";
+  const sheet = groups.map(g=>{
+    const n=g.rows.filter(e=>plan.has(e.path)).length;
+    let h="";
+    if (g.tab!==lastTab){ h+=`<div class="sheettab">${g.tab==="TiresAero"?"Tires & Aero":g.tab}</div>`; lastTab=g.tab; }
+    const calcNote = g.name==="AeroBalanceCalc" && A.rh ? `<div class="calcnote">Manual: type your telemetry ride heights in here. Front RH at speed <b>${fmt(A.rh.front,0)} mm</b>, rear RH at speed <b>${fmt(A.rh.rear,0)} mm</b>. The calculator is reference only.</div>` : "";
+    return h+`<div class="gcard ${n?"has":""}"><div class="gtitle">${pretty(g.name)}${n?` <span class="badge">${n}</span>`:""}</div>
+      <table>${g.rows.map(e=>{ const p=plan.get(e.path);
+        const isSpl = e.key==="CenterFrontSplitterHeight" && run.splPred!=null;
+        return `<tr class="${p||isSpl?"chg":""}"><td>${pretty(e.key)}${isSpl?" <span class='tag'>result</span>":""}</td><td>${p?`<span class="old">${esc(e.raw.trim())}</span> <span class="new">${esc(p.to)}</span>`
+          : isSpl?`<span class="old">${esc(e.raw.trim())}</span> <span class="new" style="${run.splPred<(+S.minSplitter||0)-0.05?"color:var(--bad)":""}">≈${fmt(run.splPred)} mm</span>`:esc(e.raw.trim())}</td></tr>`; }).join("")}</table>${calcNote}</div>`;
+  }).join("");
+  // suggestions with switches
+  const sugs = run.sug.length ? run.sug.map((s,i)=>`<div class="sugg p${s.pr} ${sel[i]>=0?"on":"off"}">
+     <label class="incl"><input type="checkbox" data-s="${i}" ${sel[i]>=0?"checked":""}> Use</label>
+     <span class="tag">${s.area}</span><span class="tag">${["","low","medium","high"][s.pr]} priority</span><span class="tag">${s.conf} confidence</span>
+     <h3>${s.title}</h3>
+     <div class="opts">${s.opts.map((o,oi)=>`<label class="opt ${o.limit?"lim":""}"><input type="radio" name="o${i}" data-s="${i}" data-o="${oi}" ${sel[i]===oi?"checked":""} ${o.limit?"disabled":""}>
+        <b>${o.label}</b>${o.limit?" <span class='tag'>already at the limit</span>":""}<span class="muted"> · ${o.ch.filter(c=>!c.res.same).map(changeText).map(esc).join(" · ")}</span></label>`).join("")}</div>
+     <div class="why">${s.why}</div><div class="muted" style="font-size:12px;margin-top:4px">Evidence: ${s.evidence}</div></div>`).join("")
+    : `<p>Nothing stands out.</p>`;
+  const fuelLine = Number.isFinite(A.fuelPerLap) ? `${fmt(A.fuelPerLap,2)} L/lap · lap ${fmtTime(A.lapMed)}` : "";
+  return `
+  <section class="plan">
+    <div class="racebar">
+      <span class="muted">Setting up for</span>
+      <div class="seg">${Object.entries(RACE_MODES).map(([k,m])=>`<button class="segb ${RACE.type===k?"on":""}" data-race="${k}">${k==="qual"?"Qualifying":k==="sprint"?"Sprint":"Endurance"}</button>`).join("")}</div>
+      ${RACE.type!=="qual"?`<label class="muted">Race length <input id="racemin" type="number" min="5" max="1440" step="5" value="${RACE.minutes}"> min</label>`:""}
+      <span class="muted" style="font-size:12px">${fuelLine}</span>
+    </div>
+    <p class="muted" style="font-size:12px;margin:6px 0 12px">${RACE_MODES[RACE.type].hint}</p>
+    <div class="grid">
+      <div class="stat"><div class="k">1. In the garage, load</div><div class="v sm">${esc(st.name||"your setup")}</div><div class="s">${st.modified?"you had changed it in the garage: the values below are what you actually drove":"the setup this run used"}</div></div>
+      <div class="stat"><div class="k">2. Change</div><div class="v sm">${items.length} setting${items.length===1?"":"s"}</div><div class="s">${done} of ${items.length} ticked off</div></div>
+      <div class="stat"><div class="k">3. Save As</div><div class="v sm">${esc(saveAsName(st.name||"my setup.sto"))}</div><div class="s">then drive 5+ laps and compare</div></div>
+      ${splCard}
+    </div>
+    <div class="tablewrap" style="margin-top:12px">${check}</div>
+    <div class="row" style="margin-top:10px">${items.length?`<button id="copyplan">Copy list</button>`:""}<span class="muted" style="font-size:12px;align-self:center">The manual recommends changing one thing at a time and testing. Up to three are switched on by default; switch the rest on or off below.</span></div>
+    <div id="stofiles"></div>
+  </section>
+  <section><h2>Garage sheet <small>same order as iRacing's garage · changed values highlighted</small></h2><div class="sheet">${sheet}</div></section>
+  <section><h2>Why <small>each suggestion, with the options from the manual</small></h2>${sugs}</section>`;
+}
+function wireChanges(run){
+  document.querySelectorAll("input[data-done]").forEach(cb=>cb.onchange=()=>{ run.doneMap[cb.dataset.done]=cb.checked; rerender(); });
+  document.querySelectorAll("[data-race]").forEach(b=>b.onclick=()=>{ RACE.type=b.dataset.race; if (RACE.type==="endurance" && RACE.minutes<60) RACE.minutes=60; if (RACE.type==="sprint" && RACE.minutes>=60) RACE.minutes=30; saveRace(); run.selMap={}; rerender(); });
+  const rm=$("#racemin"); if (rm) rm.onchange=()=>{ const v=parseInt(rm.value,10); if (v>0){ RACE.minutes=v; saveRace(); rerender(); } };
+  document.querySelectorAll('.incl input[type="checkbox"]').forEach(cb=>cb.onchange=()=>{ const s=run.sug[+cb.dataset.s];
+    run.selMap[s.key] = cb.checked ? Math.max(0, s.opts.findIndex(o=>!o.limit)) : -1; rerender(); });
+  document.querySelectorAll('.opts input[type="radio"]').forEach(r=>r.onchange=()=>{ const s=run.sug[+r.dataset.s]; run.selMap[s.key]=+r.dataset.o; rerender(); });
+  const cp=$("#copyplan"); if (cp) cp.onclick=()=>{ const st=setupName(run), plan=[...buildPlan(run).values()];
+    navigator.clipboard.writeText(`Load ${st.name}\n`+plan.map((p,i)=>`${i+1}. ${lbl(p.e)}: ${p.e.raw.trim()} → ${p.to}`).join("\n")+`\nSave As ${saveAsName(st.name||"my setup.sto")}`); cp.textContent="Copied"; };
+  loadStoList(run);
+}
+function rerender(){ const y=window.scrollY; render(); window.scrollTo(0,y); }
+async function loadStoList(run){
+  const el=$("#stofiles"); if (!el || !location.protocol.startsWith("http") || !run.carPath) return;
+  let d; try { const r=await fetch("/api/setups?car="+encodeURIComponent(run.carPath),{cache:"no-store"}); if (!r.ok) return; d=await r.json(); } catch(e){ return; }
+  const used=(setupName(run).name||"").toLowerCase();
+  const trk=((run.info.WeekendInfo||{}).TrackName||"").toLowerCase().split(" ")[0];
+  const files=d.files.filter(f=>f.rel.toLowerCase().endsWith(used) || (trk && f.rel.toLowerCase().includes(trk))).slice(0,12);
+  if (!files.length) return;
+  el.innerHTML = `<details style="margin-top:12px"><summary>Your .sto setup files for this car${trk?" and track":""} (${files.length})</summary>
+    <p class="muted" style="font-size:12px">iRacing encrypts .sto files, so the app reads the setup values from the telemetry instead. These are the files on disk: load one in the garage, apply the changes above and Save As.</p>
+    <table>${files.map(f=>`<tr class="${f.rel.toLowerCase().endsWith(used)?"chg":""}"><td>${esc(f.rel)}</td><td class="muted">${f.time}</td></tr>`).join("")}</table>
+    <p class="muted" style="font-size:12px">Folder: ${esc(d.folder)}</p></details>`;
+}
+const balWord = u => !Number.isFinite(u)?"not enough data": u>US_PUSH?"understeer": u<US_LOOSE?"loose / oversteer":"close to neutral";
+const esc = s => String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+function balanceTable(A){
+  const rows=[["low","Slow < 125 km/h"],["med","Medium 125–175"],["high","Fast > 175"]];
+  return `<table><tr><th></th><th>Entry</th><th>Mid</th><th>Exit</th></tr>${rows.map(([b,l])=>`<tr><td>${l}</td>${["entry","mid","exit"].map(p=>{const x=A.bins[p+b];
+   return x.n<30?`<td class="muted">–</td>`:`<td><div class="cell" style="background:${usColor(x.med)}33;color:${usColor(x.med)}">${fmt(x.med)}°</div><div class="muted" style="font-size:11px;text-align:center">${(x.n/60).toFixed(0)} s</div></td>`;}).join("")}</tr>`).join("")}</table>`;
+}
+function tyreGrid(T, unit){
+  const keys=["LF","RF","LR","RR"].filter(k=>T[k]);
+  const all=keys.flatMap(k=>[T[k].inner,T[k].mid,T[k].outer]), lo=Math.min(...all), hi=Math.max(...all);
+  const col=v=>`hsl(${220-(v-lo)/(hi-lo+1e-6)*220},70%,65%)`;
+  return `<div class="tires">${keys.map(k=>{const t=T[k]; const order = k[0]==="L"? [t.outer,t.mid,t.inner] : [t.inner,t.mid,t.outer];
+   return `<div class="tire"><b>${k}</b> <span class="muted" style="font-size:12px">${Number.isFinite(t.hot)?fmt(t.hot,0)+" "+unit+" hot":""}</span>
+    <div class="bars">${order.map(v=>`<div style="background:${col(v)}">${fmt(v,0)}</div>`).join("")}</div>
+    <div class="muted" style="font-size:11px">${k[0]==="L"?"outer · mid · inner":"inner · mid · outer"} °C</div></div>`;}).join("")}</div>`;
+}
+function tiresHTML(A,S,run){
+  let h = "";
+  const liveT = Object.fromEntries(Object.entries(A.tires).filter(([,t])=>t.temps).map(([c,t])=>[c,{...t,hot:t.press}]));
+  if (A.endTyres) h += `<h3 style="font-size:14px;margin:0 0 6px">End of stint</h3>` + tyreGrid(A.endTyres.t, A.pressUnit)
+    + `<p class="muted" style="font-size:12px">From ${A.endTyres.src}. Targets: inside 4–11°C hotter than outside; middle within ±3°C of the edge average.</p>`;
+  else if (Object.keys(liveT).length) h += tyreGrid(liveT, A.pressUnit) + `<p class="muted" style="font-size:12px">Live carcass temps, averaged over later laps.</p>`;
+  else h += `<p class="muted">${run.live && !run.ended ? "Tyre temps will be read when you drive into the pit lane or return to the garage at the end of this stint."
+      : "No tyre temperature reading in this run. iRacing only measures them in the pits, so end the stint by driving into the pit lane (or back to the garage)."}</p>`;
+  const pk = Object.keys(CORNERS).filter(k=>Number.isFinite(A.tires[k]?.press));
+  if (pk.length) h += `<div class="grid" style="margin-top:8px">${pk.map(k=>`<div class="stat"><div class="k">${k} hot pressure (avg)</div><div class="v">${fmt(A.tires[k].press,0)} ${A.pressUnit}</div></div>`).join("")}</div>
+    <p class="muted" style="font-size:12px">Pressure window ${S.hotMin}–${S.hotMax} ${A.pressUnit} is a general guideline; edit it under Targets.</p>`;
+  return h;
+}
+function lapsTable(A){
+  return `<table><tr><th>Lap</th><th>Time</th><th>Δ best</th><th>Used</th><th>Off-track</th></tr>${A.laps.filter(l=>l.valid).map(l=>`<tr><td>${l.lap}</td><td>${fmtTime(l.time)}${l.best?" ★":""}</td><td>${l.best?"":"+"+fmt(l.time-A.best.time,3)}</td><td>${l.rep?"✓":""}</td><td>${l.off>0?fmt(l.off,1)+" s":""}</td></tr>`).join("")}</table>`;
+}
+function setupTable(run){
+  const rows=run.setupFlat.filter(e=>!/LastHotPressure|LastTemps|TreadRemaining|UpdateCount/.test(e.path));
+  return `<table><tr><th>Setting</th><th>Value</th></tr>${rows.map(e=>`<tr><td>${lbl(e)}</td><td>${esc(e.raw)}</td></tr>`).join("")}</table>`;
+}
+function compareHTML(){
+  const R=runs.map(r=>{ if(!r.A) r.A=analyze(r); return r; });
+  const paths=[...new Set(R.flatMap(r=>r.setupFlat.map(e=>e.path)))].filter(p=>!/LastHotPressure|LastTemps|TreadRemaining|UpdateCount|CornerWeight/.test(p));
+  const diff=paths.filter(p=>new Set(R.map(r=>(r.setupFlat.find(e=>e.path===p)||{}).raw)).size>1);
+  const metric=(nm,f,d=1,unit="")=>`<tr><td>${nm}</td>${R.map(r=>`<td>${r.A.error?"–":fmt(f(r.A),d)+unit}</td>`).join("")}</tr>`;
+  return `<table><tr><th></th>${R.map((r,i)=>`<th>${i===current?"▶ ":""}${esc(r.short)}</th>`).join("")}</tr>
+   ${metric("Best lap (s)",A=>A.best.time,3)}${metric("Top speed",A=>A.vmax,0," km/h")}
+   ${metric("Balance slow (°)",A=>A.lowSpeed.med,2)}${metric("Balance fast (°)",A=>A.highSpeed.med,2)}
+   ${metric("Slides / lap",A=>A.events.length/A.rep.length,2)}${metric("Front RH at speed",A=>A.rh?.front,1," mm")}${metric("Rear RH at speed",A=>A.rh?.rear,1," mm")}
+   <tr><td colspan="${R.length+1}"><b>Setup differences</b> ${diff.length?"":"<span class='muted'>none</span>"}</td></tr>
+   ${diff.map(p=>`<tr><td>${p.replace(/^CarSetup\./,"").replace(/\./g," › ")}</td>${R.map(r=>`<td>${esc((r.setupFlat.find(e=>e.path===p)||{}).raw||"–")}</td>`).join("")}</tr>`).join("")}</table>`;
+}
+function drawRH(run,A,S){
+  const ch=run.ch, xs=[],yf=[],yr=[], step=Math.max(1,Math.floor(A.idx.length/5000));
+  for (let i=0;i<A.idx.length;i+=step){ const j=A.idx[i]; if (ch.Brake[j]>0.05) continue; xs.push(ch.Speed[j]*3.6); yf.push((ch.LFrideHeight[j]+ch.RFrideHeight[j])*500); yr.push((ch.LRrideHeight[j]+ch.RRrideHeight[j])*500); }
+  const all=[...yf,...yr], lo=Math.floor(pct(all,.01)/5)*5, hi=Math.ceil(pct(all,.99)/5)*5;
+  const bands=[]; if (S.frontRH) bands.push({y0:S.frontRH-S.rhTol,y1:S.frontRH+S.rhTol,color:css("--us")+"22"}); if (S.rearRH) bands.push({y0:S.rearRH-S.rhTol,y1:S.rearRH+S.rhTol,color:css("--os")+"22"});
+  plot($("#rh"),{xr:[50,Math.ceil(A.vmax/10)*10],yr:[Math.min(lo,(S.frontRH||99)-5),Math.max(hi,(S.rearRH||0)+5)],bands,xl:"km/h",yl:"mm",h:280,
+    series:[{x:xs,y:yf,color:css("--us"),dots:true},{x:xs,y:yr,color:css("--os"),dots:true}]});
+}
+function drawTrace(run,A){
+  const ch=run.ch,L=A.best, x=[],v=[],t=[],b=[];
+  for (let j=L.s;j<L.e;j+=2){ x.push(ch.LapDist? ch.LapDist[j] : ch.LapDistPct[j]*1000); v.push(ch.Speed[j]*3.6); t.push(ch.Throttle[j]*100); b.push(ch.Brake[j]*100); }
+  plot($("#trace"),{xr:[0,Math.max(...x)],yr:[0,Math.ceil(A.vmax/20)*20],xl:"m",yl:"",h:240,series:[
+    {x,y:t,color:css("--good")+"88",width:1},{x,y:b,color:css("--bad")+"aa",width:1},{x,y:v,color:css("--ink"),width:1.6}]});
+}
+function renderRuns(){
+  $("#runs").innerHTML = runs.map((r,i)=>`<span class="chip ${i===current?"on":""}" data-i="${i}" title="${esc(r.name)}">${esc(r.short)}</span>`).join("");
+  document.querySelectorAll("#runs .chip").forEach(c=>c.onclick=()=>{current=+c.dataset.i; LIVE.follow = !LIVE.run || runs[current]===LIVE.run; render();});
+}
+function renderSettings(){
+  const run=runs[current], S=settingsFor(run);
+  $("#settings").innerHTML = SETTINGS_DEF.map(([k,l])=>`<div><label>${l}</label><input data-k="${k}" value="${S[k]??""}"></div>`).join("");
+  document.querySelectorAll("#settings input").forEach(inp=>inp.onchange=()=>{ const k=inp.dataset.k, v=inp.value.trim();
+    const val = v===""? (k==="ratio"?"":null) : (k==="ratio"? v : parseFloat(v));
+    if (["hotMin","hotMax","ratio"].includes(k)) userSettings[k]=val; else { run.overrides=run.overrides||{}; run.overrides[k]=val; }
+    runs.forEach(r=>r.A=null); render(); });
+}
+
+// ---------- loading ----------
+function finishRun(r, name){
+  const di=r.info.DriverInfo||{}, me=(di.Drivers||[]).find(d=>d.CarIdx===di.DriverCarIdx)||{};
+  r.carPath=me.CarPath||""; r.carName=me.CarScreenName||r.carPath||"Car";
+  const sess=(r.info.SessionInfo?.Sessions||[]); r.sessionType=sess.length? sess[sess.length-1].SessionType : "";
+  r.setupFlat=flatten(r.info.CarSetup||{}, "CarSetup");
+  const m=name.match(/\d{4}-(\d\d)-(\d\d) (\d\d)-(\d\d)/);
+  const trk=(r.info.WeekendInfo||{}).TrackDisplayShortName||"";
+  r.short = m ? `${trk} ${m[2]}/${m[1]} ${m[3]}:${m[4]}`.trim() : name;
+  return r;
+}
+async function loadBuffer(buf, name){ runs.push(finishRun(parseIBT(buf,name), name)); }
+
+// ---------- live mode (needs live-bridge.ps1 / start-live.bat running) ----------
+const LIVE = {gen:null, si:null, next:0, meta:null, run:null, latest:null, prev:null, follow:true, renderAt:0, renderTimer:null, tyreSig:""};
+function pushSample(run, s){
+  if (run.n >= run.cap){
+    run.cap = Math.max(8192, run.cap*2);
+    for (const k of Object.keys(s)){ const a=new Float64Array(run.cap); if (run.ch[k]) a.set(run.ch[k].subarray(0,run.n)); run.ch[k]=a; }
+  }
+  for (const k in s) if (run.ch[k]) run.ch[k][run.n]=s[k];
+  run.n++;
+}
+function newStint(s){
+  const M=LIVE.meta, wi=M.info.WeekendInfo||{}, d=new Date();
+  const run = finishRun({name:"live", n:0, cap:0, tick:M.tick, ch:{}, units:M.units, info:M.info, live:true, lapsDone:0}, "");
+  run.short = `Live ${wi.TrackDisplayShortName||""} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+  run.startChan = s; run.startTyreSig = JSON.stringify(yamlTyres(run.setupFlat));
+  runs.push(run); LIVE.run = run;
+  if (LIVE.follow) current = runs.length-1;
+  return run;
+}
+function endStint(reason){
+  const run=LIVE.run; if (!run || run.ended) return;
+  run.ended = true; run.endReason = reason; run.A = null;
+  if (run.lapsDone<1){ const i=runs.indexOf(run); runs.splice(i,1); if (current>=runs.length) current=Math.max(0,runs.length-1); LIVE.run=null; }
+  else run.short += " ✓";
+  scheduleRender(true);
+}
+function ingest(buf){
+  const M=LIVE.meta, dv=new DataView(buf), cnt=Math.floor(buf.byteLength/M.bufLen);
+  let changed=false;
+  for (let k=0;k<cnt;k++){
+    const s=decodeRec(dv, k*M.bufLen, M.vars), prev=LIVE.prev;
+    LIVE.prev=s; LIVE.latest=s;
+    let run=LIVE.run;
+    if (!s.IsOnTrack){ if (run && !run.ended) endStint("back to garage"); continue; }
+    if (run && !run.ended && run.lapsDone>=1 && s.OnPitRoad && prev && !prev.OnPitRoad){ endStint("pit lane"); run.endChan=s; continue; }
+    if (run && run.ended){
+      if (s.OnPitRoad) continue;                      // still in the pits after the stint ended
+      run=null;                                       // left the pits: next stint
+    }
+    if (!run){ run=newStint(s); changed=true; }
+    if (run.n && s.Lap!==run.ch.Lap[run.n-1]){ run.lapsDone++; changed=true; }
+    pushSample(run,s);
+  }
+  const r=LIVE.run;
+  if (r) r.A=null;
+  liveTiles();
+  if (changed) scheduleRender(false);
+}
+function scheduleRender(now){
+  clearTimeout(LIVE.renderTimer);
+  const wait = now ? 50 : Math.max(50, 1500-(Date.now()-LIVE.renderAt));
+  LIVE.renderTimer = setTimeout(()=>{ LIVE.renderAt=Date.now(); const y=window.scrollY; render(); window.scrollTo(0,y); }, wait);
+}
+async function liveMeta(){
+  const r=await fetch("/live/meta",{cache:"no-store"}); if (!r.ok) return;
+  const g=+r.headers.get("X-Gen"), si=+r.headers.get("X-Si"), meta=parseMeta(await r.arrayBuffer());
+  if (g!==LIVE.gen){ if (LIVE.run && !LIVE.run.ended) endStint("session ended"); LIVE.gen=g; LIVE.next=0; LIVE.run=null; LIVE.prev=null; }
+  LIVE.meta=meta; LIVE.si=si;
+  if (LIVE.run && LIVE.run.ended){ LIVE.run.endFlat=flatten(meta.info.CarSetup||{}, "CarSetup"); LIVE.run.A=null; scheduleRender(false); }
+}
+async function livePoll(){
+  let st=null;
+  try{
+    st=await (await fetch("/live/status",{cache:"no-store"})).json();
+    if (st.gen>0 && (st.gen!==LIVE.gen || st.siUpdate!==LIVE.si)) await liveMeta();
+    if (LIVE.gen && LIVE.meta){
+      const r=await fetch("/live/data?from="+LIVE.next,{cache:"no-store"});
+      if (+r.headers.get("X-Gen")===LIVE.gen){ const b=await r.arrayBuffer(); LIVE.next=+r.headers.get("X-Next"); if (b.byteLength) ingest(b); }
+      // iRacing closed / replay finished with the car still out: end the stint so tyres get read
+      if (!st.connected && LIVE.run && !LIVE.run.ended && LIVE.next>=st.total) endStint("telemetry stopped");
+    }
+  }catch(e){ st=null; }
+  liveStatus(st);
+  setTimeout(livePoll, 250);
+}
+function liveStatus(st){
+  const el=$("#livestate"), r=LIVE.run;
+  const stint = r ? ` · stint ${r.lapsDone} lap${r.lapsDone===1?"":"s"}${r.ended?` (ended: ${r.endReason})`:""}` : "";
+  el.innerHTML = !st ? `<span class="dot bad"></span>Bridge not responding. Is the start-live window still open?`
+    : !st.connected && !LIVE.run ? `<span class="dot warn"></span>Waiting for iRacing. Get in the car and it connects by itself.`
+    : `<span class="dot good"></span>${st.mode==="replay"?"Replaying "+esc(st.replay):"Connected to iRacing"}${stint}`;
+}
+function liveTiles(){
+  const s=LIVE.latest, run=LIVE.run; if (!s) return;
+  let bal=NaN;
+  if (run && run.n>90 && !run.ended){
+    const S=settingsFor(run), K=parseFloat(S.ratio)||run.ratio||15, ys=run.ysgn||1, a=[];
+    for (let j=run.n-90;j<run.n;j++){ const V=run.ch.Speed[j], r=run.ch.YawRate[j]*ys, st=run.ch.SteeringWheelAngle[j];
+      if (Math.abs(run.ch.LatAccel[j])>6 && V>12 && Math.abs(r)>0.03) a.push((st/K - S.wb*r/V)*Math.sign(r)*180/Math.PI); }
+    if (a.length>10) bal=median(a);
+  }
+  const rh = k => s[k]!==undefined ? s[k]*1000 : NaN;
+  const tiles = [
+    ["Speed", fmt(s.Speed*3.6,0)+" km/h", "gear "+(s.Gear??"–")],
+    ["Lap", s.Lap??"–", "last "+fmtTime(s.LapLastLapTime>0?s.LapLastLapTime:NaN)],
+    ["Best", fmtTime(s.LapBestLapTime>0?s.LapBestLapTime:NaN), "Δ "+(Number.isFinite(s.LapDeltaToBestLap)?(s.LapDeltaToBestLap>0?"+":"")+s.LapDeltaToBestLap.toFixed(2):"–")],
+    ["Balance now", Number.isFinite(bal)?fmt(bal)+"°":"–", Number.isFinite(bal)?balWord(bal):"needs cornering", usColor(bal)],
+    ["Ride height F / R", `${fmt((rh("LFrideHeight")+rh("RFrideHeight"))/2)} / ${fmt((rh("LRrideHeight")+rh("RRrideHeight"))/2)}`, "mm"],
+    ["Bias · TC · ABS", `${fmt(s.dcBrakeBias,1)}%`, `TC ${fmt(s.dcTractionControl,0)} · ABS ${fmt(s.dcABS,0)}`],
+    ["Fuel", fmt(s.FuelLevel,1)+" L", s.OnPitRoad?"on pit road":""],
+  ];
+  $("#livetiles").innerHTML = tiles.map(([k,v,sub,c])=>`<div class="stat"><div class="k">${k}</div><div class="v"${c&&Number.isFinite(bal)?` style="color:${c}"`:""}>${v}</div><div class="s">${sub}</div></div>`).join("");
+}
+async function liveInit(){
+  if (!location.protocol.startsWith("http")) return;
+  try { const r=await fetch("/live/status",{cache:"no-store"}); if (!r.ok) return; await r.json(); } catch(e){ return; }
+  $("#livebox").classList.remove("hidden"); $("#livehint").classList.add("hidden");
+  livePoll();
+  loadRecent();
+}
+async function loadRecent(){
+  let d; try { const r=await fetch("/api/files",{cache:"no-store"}); if (!r.ok) return; d=await r.json(); } catch(e){ return; }
+  $("#recent").classList.remove("hidden");
+  $("#recentdir").textContent = d.files.length ? d.folder : `No .ibt files yet in ${d.folder}. Press Alt+L in the car to record.`;
+  const loaded = new Set(runs.map(r=>r.name));
+  $("#recenttable").innerHTML = `<tr><th>Car</th><th>Track</th><th>Date</th><th>Size</th><th></th></tr>` + d.files.map(f=>{
+    const m=f.name.match(/^(.+?)_(.+?) \d{4}-\d\d-\d\d \d\d-\d\d-\d\d\.ibt$/i) || [null,f.name,""];
+    return `<tr><td>${esc(m[1])}</td><td>${esc(m[2])}</td><td>${f.time}</td><td>${(f.size/1048576).toFixed(0)} MB</td>
+      <td><button class="${loaded.has(f.name)?"ghost":""}" data-f="${esc(f.name)}" style="padding:4px 12px">${loaded.has(f.name)?"Loaded":"Open"}</button></td></tr>`; }).join("");
+  document.querySelectorAll("#recenttable button").forEach(b=>b.onclick=async()=>{
+    const name=b.dataset.f; if (runs.some(r=>r.name===name)){ current=runs.findIndex(r=>r.name===name); LIVE.follow=false; render(); return; }
+    b.textContent="Loading…"; b.disabled=true; $("#status").textContent=`Reading ${name}…`;
+    try { const buf=await (await fetch("/api/file?name="+encodeURIComponent(name))).arrayBuffer(); await loadBuffer(buf,name);
+      current=runs.length-1; LIVE.follow=false; $("#status").textContent=""; render(); }
+    catch(e){ $("#status").textContent=`${name}: ${e.message}`; }
+    loadRecent();
+  });
+}
+liveInit();
+async function handleFiles(files){
+  for (const f of files){
+    $("#status").textContent=`Reading ${f.name}…`;
+    try{ await loadBuffer(await f.arrayBuffer(), f.name); current=runs.length-1; }
+    catch(e){ $("#status").textContent=`${f.name}: ${e.message}`; return; }
+  }
+  $("#status").textContent=`${runs.length} run${runs.length>1?"s":""} loaded. Load another run after a change to compare.`;
+  render();
+}
+const drop=$("#drop"), fi=$("#file");
+drop.onclick=()=>fi.click(); fi.onchange=()=>handleFiles([...fi.files]);
+["dragenter","dragover"].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add("over");}));
+["dragleave","drop"].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove("over");}));
+drop.addEventListener("drop",ev=>handleFiles([...ev.dataTransfer.files].filter(f=>/\.ibt$/i.test(f.name))));
+window.addEventListener("resize",()=>{ if(runs.length) render(); });
+// dev helper: ?load=url1|url2
+(async()=>{ const q=new URLSearchParams(location.search).get("load"); if(!q) return;
+  for (const u of q.split("|")){ $("#status").textContent="Fetching "+u; const b=await (await fetch(u)).arrayBuffer(); await loadBuffer(b, decodeURIComponent(u.split("/").pop())); }
+  current=runs.length-1; $("#status").textContent=`${runs.length} run(s) loaded.`; render(); })();
+</script>
+</body>
+</html>

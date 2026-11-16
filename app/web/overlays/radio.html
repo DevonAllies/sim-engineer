@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Radio</title></head>
+<body>
+<script>
+"use strict";
+// The team radio: Bono, Hanna and GP send their calls here, and they're spoken one at a time with the PC's voices.
+// Nothing is said while you're braking or loaded up in a corner (unless it's urgent, like "box"), old calls are dropped,
+// and the same call isn't repeated within a minute.
+let S = {on:true, quiet:false, beep:true, rate:1.05, who:{bono:{on:true,voice:"George",vol:1}, hanna:{on:true,voice:"Hazel",vol:1}, gp:{on:true,voice:"Susan",vol:1}}};
+const Q = [], recent = {};
+let speaking = false, LIVE = {Brake:0, LatAccel:0, gen:null, meta:null};
+if (window.se && window.se.onRadioSettings) window.se.onRadioSettings(s => { S = s; });
+if (window.se && window.se.onRadio) window.se.onRadio(m => {
+  if (!S.on || !m || !m.text) return;
+  const W = S.who[m.who]; if (!W || !W.on) return;
+  const pri = m.pri || 1;
+  if (S.quiet && pri < 2) return;                                  // quiet mode: only the important calls
+  const key = m.who + "|" + m.text; if (recent[key] && Date.now()-recent[key] < 60000 && m.force!==true) return;
+  recent[key] = Date.now();
+  if (pri >= 3) for (let i=Q.length-1;i>=0;i--) if (Q[i].who===m.who && Q[i].pri<3) Q.splice(i,1);   // urgent call replaces that person's waiting chatter
+  Q.push({...m, pri, at: Date.now()}); Q.sort((a,b)=>b.pri-a.pri || a.at-b.at);
+  pump();
+});
+function voiceFor(name){
+  const vs = speechSynthesis.getVoices(); if (!name) return null;
+  const n = name.toLowerCase();
+  return vs.find(v=>v.name.toLowerCase()===n) || vs.find(v=>v.name.toLowerCase().includes(n)) || null;
+}
+// a short radio "click" before each call (like a team radio)
+let AC = null;
+function beep(){ return new Promise(res=>{ if (!S.beep) return res(); try {
+  AC = AC || new AudioContext(); const t=AC.currentTime, o=AC.createOscillator(), g=AC.createGain();
+  o.type="square"; o.frequency.setValueAtTime(1400,t); o.frequency.setValueAtTime(1000,t+0.04);
+  g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.06,t+0.01); g.gain.exponentialRampToValueAtTime(0.0001,t+0.09);
+  o.connect(g).connect(AC.destination); o.start(t); o.stop(t+0.1); setTimeout(res,130); } catch(e){ res(); } }); }
+const busy = () => LIVE.connected && (LIVE.Brake > 0.12 || Math.abs(LIVE.LatAccel) > 9);   // braking zone or loaded in a corner
+async function pump(){
+  if (speaking || speechSynthesis.speaking || !Q.length) return;
+  const now = Date.now();
+  while (Q.length && now - Q[0].at > (Q[0].pri>=3 ? 20000 : Q[0].pri===2 ? 15000 : 9000)) Q.shift();   // too old to still be useful
+  if (!Q.length) return;
+  if (Q[0].pri < 3 && busy()){ setTimeout(pump, 150); return; }
+  const m = Q.shift(), W = S.who[m.who] || {};
+  speaking = true;
+  await beep();
+  const u = new SpeechSynthesisUtterance(m.text);
+  const v = voiceFor(W.voice); if (v){ u.voice = v; u.lang = v.lang; }
+  u.rate = Math.max(0.6, Math.min(1.6, (S.rate||1) * (W.rate||1))); u.volume = Math.max(0, Math.min(1, W.vol ?? 1));
+  u.onend = u.onerror = () => { speaking = false; setTimeout(pump, 350); };
+  speechSynthesis.speak(u);
+  setTimeout(()=>{ if (speaking && !speechSynthesis.speaking){ speaking=false; pump(); } }, 15000);   // safety
+}
+speechSynthesis.onvoiceschanged = () => {};
+// ---------- live: are you braking or cornering hard right now? ----------
+const TYPES = {0:"getUint8",1:"getUint8",2:"getInt32",3:"getUint32",4:"getFloat32",5:"getFloat64"};
+const cstr = b => { let s=""; for (const x of b){ if(!x) break; s+=String.fromCharCode(x);} return s; };
+function parseMeta(buf){ const dv=new DataView(buf), i32=o=>dv.getInt32(o,true); const numVars=i32(24), varOff=i32(28), bufLen=i32(36), vars={};
+  for (let i=0;i<numVars;i++){ const o=varOff+i*144; vars[cstr(new Uint8Array(buf,o+16,32))]={type:i32(o),off:i32(o+4),count:i32(o+8)}; } return {vars, bufLen}; }
+async function live(){
+  try {
+    const st = await (await fetch("/live/status",{cache:"no-store"})).json(); LIVE.connected = st.connected;
+    if (st.gen>0 && st.gen!==LIVE.gen){ const r=await fetch("/live/meta",{cache:"no-store"}); if (r.ok){ LIVE.meta=parseMeta(await r.arrayBuffer()); LIVE.gen=st.gen; } }
+    if (LIVE.meta && st.total>0){ const r=await fetch("/live/data?from=-1&max=1",{cache:"no-store"}); const b=await r.arrayBuffer();
+      if (b.byteLength>=LIVE.meta.bufLen){ const dv=new DataView(b), V=LIVE.meta.vars;
+        for (const k of ["Brake","LatAccel"]) if (V[k]) LIVE[k]=dv[TYPES[V[k].type]](V[k].off,true); } }
+  } catch(e){ LIVE.connected=false; }
+  setTimeout(live, 120);
+}
+live();
+</script>
+</body>
+</html>

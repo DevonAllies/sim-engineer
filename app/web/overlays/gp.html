@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GP</title>
+<style>
+:root{--ink:#eef0f4;--muted:#9aa3b2;--line:rgba(255,255,255,.09);--panel:rgba(14,16,21,.82);--accent:#6ab7ff;--ok:#5fd38d;--warn:#ffc06b;--bad:#ff5d5d;--brk:#ff6a6a;--thr:#5fd38d}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:transparent;overflow:hidden;height:100%}
+body{font:12px/1.25 system-ui,"Segoe UI",sans-serif;color:var(--ink);font-variant-numeric:tabular-nums;user-select:none}
+#root{position:relative;width:100%;height:100%;padding:9px 11px;background:var(--panel);border:1px solid var(--line);border-radius:10px;transition:opacity .25s;display:flex;flex-direction:column;gap:6px}
+body.hidden #root{opacity:0}
+body.edit #root{outline:2px dashed var(--accent);outline-offset:-2px;-webkit-app-region:drag;cursor:move}
+#editbar{display:none;position:absolute;left:0;right:0;bottom:0;font-size:10px;text-align:center;color:#fff;background:var(--accent);border-radius:0 0 10px 10px;padding:2px}
+body.edit #editbar{display:block}
+.k{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.top{display:flex;justify-content:space-between;align-items:baseline}
+.top b{font-size:11px;letter-spacing:.1em;color:var(--accent)}
+.tip{font-size:14px;font-weight:800;line-height:1.2;background:rgba(255,255,255,.05);border-radius:6px;padding:5px 7px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
+.line{font-size:10.5px;color:var(--muted);background:rgba(255,255,255,.05);border-radius:6px;padding:3px 7px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.line b{color:var(--ink)}
+.strip{display:flex;gap:2px;height:8px}
+.strip i{flex:1;border-radius:2px;background:rgba(255,255,255,.1)}
+.strip i.p{background:#b36bff}.strip i.g{background:var(--ok)}.strip i.y{background:var(--warn)}.strip i.now{outline:1px solid #fff}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+</style>
+</head>
+<body class="hidden">
+<div id="root">
+  <div class="top"><b>GP</b><span class="k" id="info">waiting for iRacing</span></div>
+  <div class="tip" id="tip">Drive a clean lap: I'll compare every corner with your best.</div>
+  <div class="line" id="focus"><span class="k">Focus</span> builds up over a few laps</div>
+  <div id="editbar">GP · driver coach · drag to move · drag the edge to resize</div>
+</div>
+<script>
+"use strict";
+// GP: driver coach (named after Gianpiero "GP" Lambiase).
+// Reads your brake, throttle and steering every 5 m and compares each corner with your best lap
+// (the reference Bono remembers for this car and track, or your best lap this session).
+// What he finds per corner is remembered across sessions, so the focus corner gets smarter the more you drive.
+const $ = id => document.getElementById(id);
+const fmt = (v,d=1) => Number.isFinite(v) ? v.toFixed(d) : "–";
+let TEXT = 1;
+function fit(){ document.body.style.zoom = TEXT; }
+fit();
+if (window.se && window.se.onStyle) window.se.onStyle(s => { TEXT = s.text || 1; document.body.style.fontFamily = `"${s.font||"Segoe UI"}", system-ui, sans-serif`; fit(); });
+let edit=false;
+if (window.se) window.se.onEditMode(on => { edit=on; document.body.classList.toggle("edit", on); });
+
+// ---------- data ----------
+const WANT = ["LatAccel","LongAccel","YawRate","LFspeed","RFspeed","LRspeed","RRspeed","PlayerTrackSurface","SessionTime","Speed","Brake","Throttle","SteeringWheelAngle","Lap","LapDist","LapDistPct","OnPitRoad","IsOnTrack","PlayerCarInPitStall"];
+const TYPES = {0:"getUint8",1:"getUint8",2:"getInt32",3:"getUint32",4:"getFloat32",5:"getFloat64"};
+const cstr = b => { let s=""; for (const x of b){ if(!x) break; s+=String.fromCharCode(x);} return s; };
+function parseMeta(buf){
+  const dv=new DataView(buf), i32=o=>dv.getInt32(o,true);
+  const siLen=i32(16), siOff=i32(20), numVars=i32(24), varOff=i32(28), bufLen=i32(36), vars={};
+  for (let i=0;i<numVars;i++){ const o=varOff+i*144; vars[cstr(new Uint8Array(buf,o+16,32))]={type:i32(o),off:i32(o+4),count:i32(o+8)}; }
+  const y=cstr(new Uint8Array(buf,siOff,siLen));
+  const idx=(y.match(/DriverCarIdx:\s*(\d+)/)||[])[1]; let car="";
+  if (idx!==undefined){ const m=y.match(new RegExp("\\n\\s*- CarIdx:\\s*"+idx+"\\s*\\n[\\s\\S]*?CarPath:\\s*(\\S+)")); if (m) car=m[1]; }
+  const trackId = ((y.match(/TrackID:\s*(\d+)/)||[])[1]) || ((y.match(/TrackName:\s*([^\n]+)/)||[])[1]||"").trim();
+  const trackL = (parseFloat((y.match(/TrackLength:\s*([\d.]+)/)||[])[1])||0)*1000;
+  const names={}; for (const m of y.matchAll(/- CarIdx:\s*(\d+)\s*\n\s*UserName:\s*([^\n]+)/g)) names[+m[1]]=m[2].trim();
+  // iRacing's sectors (split points)
+  const si=y.indexOf("SplitTimeInfo:"), sectors=si<0?[]:[...y.slice(si, si+4000).matchAll(/SectorStartPct:\s*([\d.]+)/g)].map(m=>parseFloat(m[1])).filter(v=>v>=0&&v<1).sort((a,b)=>a-b);
+  if (!sectors.length || sectors[0]>0.001) sectors.unshift(0);
+  return {vars, bufLen, car, trackId, trackL, names, sectors, me: idx!==undefined ? +idx : -1};
+}
+function decode(dv,p,vars){ const s={}; for (const k of WANT){ const v=vars[k]; if (v && v.count===1) s[k]=dv[TYPES[v.type]](p+v.off,true); } return s; }
+
+// ---------- per-lap input traces, every 5 m ----------
+const BIN = 5;
+const newLap = () => ({n:[], v:[], b:[], t:[], s:[], tm:[], g:[], fs:[], rs:[], lk:[], sp:[], valid:true, done:new Set(), res:[]});
+const ST = { envS:[], envL:null, envC:null, sgn:[0,0], K:null, Kstored:false, ratios:[], wb:2.65, gen:null, si:null, next:-120, meta:null, last:null, lap:null, lapT0:null, cur:newLap(), connected:false,
+  ref:null, refSrc:"", refBest:Infinity, best:Infinity, corners:null, names:null, hist:null, histDirty:false, msg:null, outLap:true };
+function addSample(s){
+  ST.last = s;
+  if (ST.lap!==null && s.Lap!==ST.lap) endLap(s);
+  ST.lap = s.Lap;
+  if (!s.IsOnTrack || s.OnPitRoad){ ST.cur.valid=false; if (s.OnPitRoad) ST.outLap=true; return; }
+  if (s.PlayerTrackSurface===0) ST.cur.valid=false;   // off track: skip this lap (not coached, not remembered), carry on next lap
+  if (ST.lapT0===null || !Number.isFinite(s.LapDist)) return;
+  const L=ST.cur, i=Math.floor(s.LapDist/BIN), kmh=s.Speed*3.6;
+  if (L.tm[i]===undefined) L.tm[i]=s.SessionTime-ST.lapT0;
+  L.n[i]=(L.n[i]||0)+1; L.v[i]=(L.v[i]||0)+kmh; L.b[i]=(L.b[i]||0)+s.Brake; L.t[i]=(L.t[i]||0)+s.Throttle; L.s[i]=(L.s[i]||0)+s.SteeringWheelAngle;
+  // grip: cornering + braking/accelerating g together, and the signs of the tyres sliding
+  const g=Math.hypot(s.LatAccel||0, s.LongAccel||0)/9.81; L.g[i]=(L.g[i]||0)+g;
+  const sl=slip(s); if (sl.f) L.fs[i]=(L.fs[i]||0)+1; if (sl.r) L.rs[i]=(L.rs[i]||0)+1; if (sl.l) L.lk[i]=(L.lk[i]||0)+1; if (sl.w) L.sp[i]=(L.sp[i]||0)+1;
+  if (!ST.outLap && !sl.any){ const k=Math.min(30,Math.floor(kmh/10)), E=ST.envS[k]||(ST.envS[k]=[]); E.push(g); if (E.length>3000) E.splice(0,1000); }
+  // a corner you've just left: compare it with the reference
+  if (ST.corners && L.valid && !ST.outLap) for (const c of ST.corners){ if (!L.done.has(c) && i>c.b+3 && i<c.b+40){ L.done.add(c); coachCorner(c); } }
+}
+function endLap(s){
+  const lt = ST.lapT0!==null ? s.SessionTime-ST.lapT0 : NaN, L=ST.cur;
+  if (L.valid && !ST.outLap && lt>20){
+    if (lt<ST.best){ ST.best=lt; ST.ref=fromLap(L); ST.refSrc="your best this session"; ST.corners=findCorners(ST.ref); }
+    saveHist();
+  }
+  if (ST.lapT0!==null && !s.OnPitRoad && s.IsOnTrack) ST.outLap=false;   // crossing the line on track ends the out lap
+  ST.lapT0 = s.SessionTime; ST.cur = newLap();
+}
+const fromLap = L => { const N=L.n.length, f=(a,d)=>Array.from({length:N},(_,i)=>L.n[i]? +(a[i]/L.n[i]).toFixed(d) : null);
+  return {speed:f(L.v,1), brake:f(L.b,3), throttle:f(L.t,3), steer:f(L.s,3), time:Array.from({length:N},(_,i)=>L.tm[i]===undefined?null:L.tm[i])}; };
+// ---------- sliding: front pushing, rear stepping out, locking, wheelspin ----------
+// front: the understeer angle (steering vs what the car's yaw needs), using the steering ratio Bono remembers for this car
+function slip(s){
+  const V=s.Speed, ay=Math.abs(s.LatAccel||0), r0=s.YawRate||0, st=s.SteeringWheelAngle||0, o={};
+  if (ay>3 && Math.abs(st)>0.02) ST.sgn[st*r0>=0?0:1]++;
+  const r=r0*(ST.sgn[0]>=ST.sgn[1]?1:-1);
+  // no remembered steering ratio yet: measure it from gentle cornering, like Bono does
+  if (!ST.Kstored && ay>1.5 && ay<4 && V>15 && Math.abs(r)>0.05 && Math.abs(st)>0.03 && st*r>0){ ST.ratios.push(st/(ST.wb*r/V)); if (ST.ratios.length>3000) ST.ratios.shift();
+    if (ST.ratios.length>150 && ST.ratios.length%50===0){ const a=ST.ratios.slice().sort((x,y)=>x-y), k=a[a.length>>1]; if (k>6 && k<30) ST.K=k; } }
+  if (ST.K && V>12 && ay>6 && Math.abs(r)>0.03){ const us=(st/ST.K - ST.wb*r/V)*Math.sign(r)*180/Math.PI; if (us>2.5) o.f=true; }
+  if (V>12 && ay>4 && Math.abs(r)>0.08 && st*r<0 && Math.abs(st)>0.04) o.r=true;
+  if (s.LFspeed>0 && V>15){ if (s.Brake>0.3 && ((s.LFspeed+s.RFspeed)/2/V<0.88 || (s.LRspeed+s.RRspeed)/2/V<0.88)) o.l=true;
+    if (s.Throttle>0.6 && (s.LRspeed+s.RRspeed)/(s.LFspeed+s.RFspeed+1e-6)-1>0.08) o.w=true; }
+  o.any = o.f||o.r||o.l||o.w; return o;
+}
+// the grip envelope: 98% of the most g the car made at each speed (this session's clean laps, plus what Bono remembers here)
+function envAt(kmh){
+  const k=Math.min(30,Math.floor(kmh/10)); if (ST.envC && ST.envC.t>Date.now()-5000) return ST.envC.e[k];
+  const e=[]; for (let j=0;j<=30;j++){ const a=ST.envS[j]; let v = a && a.length>60 ? a.slice().sort((x,y)=>x-y)[Math.floor(a.length*0.98)] : null;
+    if (ST.envL && ST.envL[j]!=null) v=Math.max(v??0, ST.envL[j]); e[j]=v; }
+  for (let j=0;j<=30;j++) if (e[j]==null){ let a=j-1; while (a>=0 && e[a]==null) a--; let b=j+1; while (b<=30 && e[b]==null) b++; e[j] = a>=0&&b<=30 ? (e[a]+e[b])/2 : a>=0 ? e[a] : b<=30 ? e[b] : null; }
+  ST.envC={t:Date.now(), e}; return e[k];
+}
+function saveEnv(){ if (!key() || !window.se || !window.se.learnKvPut) return; const e=[]; let any=false;
+  for (let j=0;j<=30;j++){ const a=ST.envS[j]; let v = a && a.length>60 ? +a.slice().sort((x,y)=>x-y)[Math.floor(a.length*0.98)].toFixed(3) : null; if (ST.envL && ST.envL[j]!=null) v=Math.max(v??0, ST.envL[j]); e[j]=v; if (v!=null) any=true; }
+  if (any) window.se.learnKvPut("gpenv", key(), {env:e, date:Date.now()}); }
+// value at a bin, filling small gaps from the bins before
+function at(arr, i){ for (let k=i;k>=0 && k>i-6;k--) if (arr[k]!=null && Number.isFinite(arr[k])) return arr[k]; return NaN; }
+const curGet = (L,i) => ({v:L.n[i]?L.v[i]/L.n[i]:NaN, b:L.n[i]?L.b[i]/L.n[i]:NaN, t:L.n[i]?L.t[i]/L.n[i]:NaN, s:L.n[i]?L.s[i]/L.n[i]:NaN});
+
+// ---------- corners, from the reference lap: brakes on (or a lift) → full throttle again ----------
+function findCorners(R){
+  const N=R.speed.length, b=i=>at(R.brake,i)||0, t=i=>at(R.throttle,i)||0, v=i=>at(R.speed,i)||0, out=[];
+  let i=4;
+  while (i<N-6){
+    const brakeStart = b(i)>0.1 && b(i-1)<=0.1, liftStart = !brakeStart && t(i)<0.7 && t(i-1)>=0.9 && b(i)<0.1;
+    if (!brakeStart && !liftStart){ i++; continue; }
+    let apex=i, full=-1;
+    for (let j=i;j<Math.min(N-2,i+170);j++){ if (v(j)<v(apex)) apex=j; if (j>apex && t(j)>0.95 && b(j)<0.05 && t(j+1)>0.95){ full=j; break; } }
+    if (full<0 || v(i)-v(apex) < (brakeStart?15:6)){ i++; continue; }
+    out.push({a:Math.max(0,i-6), brk:i, apex, full, b:Math.min(N-1, full+4), lift:liftStart});
+    i=full+1;
+  }
+  // names: Bono's corner numbers when his saved lap has them, else in order
+  out.forEach((c,k)=>{ let nm=`T${k+1}`; if (ST.names){ let best=null; ST.names.forEach((x,j)=>{ const d=Math.abs(x/BIN - c.brk); if (d<30 && (!best || d<best.d)) best={d,j}; }); if (best) nm=`T${best.j+1}`; } c.name=nm; });
+  return out;
+}
+
+// ---------- how you drove a corner ----------
+function measure(get, tm, c){
+  const R={}, rng=[]; for (let i=c.a;i<=c.b;i++) rng.push(i);
+  const V=i=>get(i).v, B=i=>get(i).b||0, T=i=>get(i).t||0, S=i=>get(i).s;
+  R.brkOn = rng.find(i=>B(i)>0.08); R.brkOn = R.brkOn===undefined ? NaN : R.brkOn;
+  R.peak = Number.isFinite(R.brkOn) ? Math.max(...rng.filter(i=>i>=R.brkOn && i<R.brkOn+12).map(B)) : 0;
+  let apex=c.a; for (const i of rng) if (V(i)<V(apex)) apex=i; R.apex=apex; R.vmin=V(apex);
+  const smax=Math.max(...rng.map(i=>Math.abs(S(i)||0)));
+  const ti = rng.find(i=>i>=(Number.isFinite(R.brkOn)?R.brkOn:c.a) && Math.abs(S(i)||0)>0.35*smax); R.turnIn = ti===undefined? apex : ti;
+  R.trail = B(R.turnIn);
+  { let s=0,n=0; for (let i=R.turnIn;i<=apex;i++){ s+=B(i); n++; } R.trailAvg = n? s/n : 0; }   // brake still on from turn-in to the apex
+  R.pick = rng.find(i=>i>=R.turnIn && T(i)>0.2 && B(i)<0.05); R.pick = R.pick===undefined? NaN : R.pick;
+  R.full = rng.find(i=>i>=(Number.isFinite(R.pick)?R.pick:apex) && T(i)>0.95); R.full = R.full===undefined? NaN : R.full;
+  R.coast=0; const endC = Number.isFinite(R.pick)?R.pick:apex;
+  for (const i of rng) if (i>=(Number.isFinite(R.brkOn)?R.brkOn:c.a) && i<=endC && B(i)<0.05 && T(i)<0.1) R.coast += BIN/Math.max(5,(V(i)||50)/3.6);
+  // throttle lifts after picking up, and steering corrections (the wheel changing direction) from turn-in to full throttle
+  R.dips=0; let hi=0, dipping=false;
+  for (const i of rng){ if (!Number.isFinite(R.pick) || i<R.pick) continue; const t=T(i); hi=Math.max(hi,t); if (hi>0.5 && t<hi-0.25 && !dipping){ R.dips++; dipping=true; } if (dipping && t>=hi-0.05) dipping=false; }
+  R.corr=0; let last=0; const endH = Number.isFinite(R.full)?R.full:c.b;
+  for (let i=R.turnIn+1;i<=endH;i++){ const d=(S(i)||0)-(S(i-1)||0); if (Math.abs(d)<0.012) continue; const sg=Math.sign(d); if (last && sg!==last) R.corr++; last=sg; }
+  R.time = at(tm,c.b) - at(tm,c.a);
+  return R;
+}
+function coachCorner(c){
+  const R=ST.ref; if (!R) return;
+  // the reference is your OPTIMAL lap: your fastest pass through this corner so far (any lap), else your best lap
+  const O=(ST.optC||(ST.optC={}))[c.name], RR=O||R;
+  const L=ST.cur, mine=measure(i=>curGet(L,i), L.tm, c), ref=measure(i=>({v:at(RR.speed,i), b:at(RR.brake,i), t:at(RR.throttle,i), s:at(RR.steer,i)}), RR.time, c);
+  const loss = mine.time - ref.time; if (!Number.isFinite(loss)) return;
+  if (loss<0 && L.valid){   // a new fastest pass here: it becomes the reference for this corner
+    const P={speed:[], brake:[], throttle:[], steer:[], time:[]}; for (let i=Math.max(0,c.a-6);i<=c.b;i++){ const g=curGet(L,i); P.speed[i]=g.v; P.brake[i]=g.b; P.throttle[i]=g.t; P.steer[i]=g.s; P.time[i]=L.tm[i]; }
+    ST.optC[c.name]=P; }
+  const m = d => Math.round(Math.abs(d)*BIN), tips=[];
+  const dB = mine.brkOn-ref.brkOn, dP = mine.pick-ref.pick, dF = mine.full-ref.full, dV = mine.vmin-ref.vmin;
+  // the most likely reasons, biggest first (each one is a habit GP can count over time)
+  if (loss>0.04){
+    if (Number.isFinite(dB) && dB<-1.6 && !(dV>2)) tips.push({k:"brakeLater", w:m(dB), txt:`brake ${m(dB)} m later`});
+    if (Number.isFinite(dB) && dB>1.6 && dV<-2) tips.push({k:"brakeEarlier", w:m(dB), txt:`brake ${m(dB)} m earlier: you overshoot and lose the apex`});
+    if (!c.lift && ref.peak-mine.peak>0.12) tips.push({k:"brakeHarder", w:(ref.peak-mine.peak)*60, txt:`hit the brake harder at first (${Math.round(mine.peak*100)}% vs ${Math.round(ref.peak*100)}%)`});
+    if (!c.lift && ref.trail>0.12 && mine.trail<0.05) tips.push({k:"trail", w:12, txt:"too little trail braking: keep a little brake on as you turn in"});
+    // too much trail braking: lots of brake while turning and the car complains (rear loose, ABS or front sliding between turn-in and apex)
+    { let rs=0, lk=0, fs=0; for (let i=mine.turnIn;i<=mine.apex;i++){ rs+=L.rs[i]||0; lk+=L.lk[i]||0; fs+=L.fs[i]||0; }
+      if (!c.lift && mine.trailAvg>0.25 && mine.trailAvg>ref.trailAvg+0.08 && (rs>3 || lk>5 || fs>9)) tips.push({k:"trailMuch", w:14, txt:`too much trail braking${rs>3?", the rear steps out":lk>5?", the wheels lock":", the front pushes"}: ease off the brake as you turn in`}); }
+    // turn-in point vs your best lap
+    const dT = mine.turnIn-ref.turnIn;
+    if (dT>1.6 && dV<-1) tips.push({k:"lateTurn", w:m(dT), txt:`turn in ${m(dT)} m earlier: you're turning in late`});
+    else if (dT<-1.6 && mine.corr>ref.corr) tips.push({k:"earlyTurn", w:m(dT), txt:`wait ${m(dT)} m longer before turning in: you're turning in early and correcting`});
+    if (mine.coast-ref.coast>0.12) tips.push({k:"coast", w:(mine.coast-ref.coast)*60, txt:`${fmt(mine.coast,1)} s coasting: go from brake to throttle without the gap`});
+    if (Number.isFinite(dP) && dP>1.6) tips.push({k:"pickup", w:m(dP), txt:`back on the throttle ${m(dP)} m earlier`});
+    if (Number.isFinite(dF) && dF>3) tips.push({k:"full", w:m(dF)*0.7, txt:`full throttle ${m(dF)} m earlier`});
+    if (mine.dips>ref.dips) tips.push({k:"smooth", w:10, txt:"one smooth throttle application: you lifted after picking up"});
+    if (mine.corr>=ref.corr+2) tips.push({k:"hands", w:(mine.corr-ref.corr)*4, txt:`${mine.corr} steering corrections (best lap ${ref.corr}): smoother, calmer hands`});
+    if (dV<-3 && !tips.some(t=>/brake|coast/.test(t.k))) tips.push({k:"apex", w:-dV, txt:`carry ${Math.round(-dV)} km/h more to the apex`});
+    tips.sort((a,b)=>b.w-a.w);
+  }
+  // under / at / over the limit in this corner
+  const from=Number.isFinite(mine.brkOn)?mine.brkOn:c.a, to=Number.isFinite(mine.full)?mine.full:c.b, use=[]; let fs=0, rs=0, lk=0, sp=0;
+  for (let i=from;i<=to;i++){ if (!L.n[i]) continue; const e=envAt(L.v[i]/L.n[i]); if (e>0) use.push(L.g[i]/L.n[i]/e); fs+=L.fs[i]||0; rs+=L.rs[i]||0; lk+=L.lk[i]||0; sp+=L.sp[i]||0; }
+  const u = use.length>4 ? use.sort((a,b)=>a-b)[Math.floor(use.length*0.9)] : NaN;
+  // a little sliding is normal right at the limit; "over" means clearly sliding (60 samples a second)
+  const over = fs>30 ? "front sliding" : rs>15 ? "rear sliding" : lk>15 ? "locking up" : sp>24 ? "wheelspin" : "";
+  const touch = !over && (fs>9 || rs>3 || lk>5 || sp>9);
+  const lim = !Number.isFinite(u) ? null : over ? {v:"over", why:over} : (u>=0.92 || touch) ? {v:"at"} : {v:"under", u};
+  const OVER_TIP = {"front sliding":"slower in, faster out: brake a touch earlier and use less steering", "rear sliding":"calmer: less trail brake into it, or a gentler throttle on exit",
+    "locking up":"ease the first hit on the brake", "wheelspin":"gentler on the throttle until the car is straighter"};
+  if (lim && lim.v==="over") tips.unshift({k:"over", w:99, txt:OVER_TIP[lim.why]});
+  else if (lim && lim.v==="under" && loss>0.04 && !tips.length) tips.push({k:"under", w:5, txt:"grip left here: carry more speed"});
+  const top = tips.slice(0,2);
+  const limTxt = !lim ? "" : lim.v==="over" ? ` <b class="bad">over the limit: ${lim.why}</b> ·` : lim.v==="at" ? ` <b class="ok">at the limit</b> ·` : ` <b style="color:var(--accent)">under the limit (${Math.round(lim.u*100)}%)</b> ·`;
+  const word = (loss>0.04 || (lim && lim.v==="over")) ? (top.length ? top.map(t=>t.txt).join(", then ") : "lost time: same inputs, check your line") : loss<-0.04 ? "your fastest pass here so far" : "matched your optimal";
+  // the same corner vs the session's fastest driver (timed by position a moment ago)
+  const K = ST.cls && ST.cls.name===c.name && Date.now()-ST.cls.t<8000 && ST.cls.best ? ST.cls : null;
+  const vsf = K ? (()=>{ const m=K.mine, b=K.best, ph=[["entry",m.entry-b.entry],["mid-corner",m.mid-b.mid],["exit",m.exit-b.exit]].sort((x,y)=>y[1]-x[1])[0];
+    return {d:m.total-b.total, who:(ST.meta.names||{})[K.who]||"the fastest", phase: m.total-b.total>0.04 && ph[1]>0.02 ? ph[0] : ""}; })() : null;
+  ST.msg = {name:c.name, loss, word, lim:limTxt, vsf, cls: loss>0.04?"warn":loss<-0.04?"ok":"",
+    detail:`brake ${Math.round(mine.peak*100)}% (best ${Math.round(ref.peak*100)}) · trail ${Math.round(mine.trail*100)}% (${Math.round(ref.trail*100)}) · coast ${fmt(mine.coast,1)} s (${fmt(ref.coast,1)}) · apex ${Math.round(mine.vmin)} km/h (${Math.round(ref.vmin)}) · ${mine.corr} corrections (${ref.corr})`, t:Date.now()};
+  // radio: one short line after a corner that cost real time (not every corner, and not more than every 12 s)
+  if ((loss>0.1 || (lim && lim.v==="over")) && top.length && Date.now()-(ST.lastSay||0)>12000){
+    const v=ST.msg.vsf, gap = v && v.d>0.05 ? ` ${Math.round(v.d*10)>=1?(Math.round(v.d*10)===1?"a tenth":Math.round(v.d*10)+" tenths"):"a few hundredths"} to the fastest${v.phase?", mostly on "+v.phase:""}.` : "";
+    ST.lastSay=Date.now(); say(`${spoken(c.name)}.${gap} ${spoken(top[0].txt)}.`, 1); }
+  // remember it: per corner, how much it costs you and which habit shows up most
+  const H = ST.hist || (ST.hist={corners:{}}), h = H.corners[c.name] || (H.corners[c.name]={laps:0, loss:0, issues:{}, brk:[]});
+  h.laps++; h.loss += Math.max(-0.5, Math.min(1.5, loss)); for (const t of top) h.issues[t.k]=(h.issues[t.k]||0)+1;
+  if (lim){ h.lim=h.lim||{}; h.lim[lim.v]=(h.lim[lim.v]||0)+1; }
+  if (Number.isFinite(mine.brkOn)){ h.brk.push(mine.brkOn*BIN); if (h.brk.length>12) h.brk.shift(); }
+  ST.histDirty = true;
+}
+const ISSUE = {brakeLater:"braking too early", brakeEarlier:"overshooting the braking point", brakeHarder:"not braking hard enough at first", trail:"releasing the brake before turn-in",
+  coast:"coasting between brake and throttle", pickup:"late back on the throttle", full:"late to full throttle", smooth:"lifting after picking up the throttle", hands:"steering corrections", apex:"low apex speed",
+  over:"going over the limit (tyres sliding)", under:"under the limit (grip left)", trailMuch:"too much trail braking", lateTurn:"turning in late", earlyTurn:"turning in early"};
+function focus(){
+  const H=ST.hist; if (!H) return null;
+  let best=null;
+  for (const [nm,h] of Object.entries(H.corners)){ if (h.laps<3) continue; const avg=h.loss/h.laps; if (!best || avg>best.avg) best={nm, avg, h}; }
+  if (!best || best.avg<0.03) return null;
+  const iss = Object.entries(best.h.issues).sort((a,b)=>b[1]-a[1])[0];
+  const b=best.h.brk, m=b.length? b.reduce((x,y)=>x+y,0)/b.length : NaN, sd = b.length>=4 ? Math.sqrt(b.reduce((x,y)=>x+(y-m)*(y-m),0)/(b.length-1)) : NaN;
+  return {nm:best.nm, avg:best.avg, laps:best.h.laps, issue: iss ? `${ISSUE[iss[0]]} (${iss[1]} of ${best.h.laps} laps)` : "", sd,
+    vsClass: best.h.vsClassN ? best.h.vsClass/best.h.vsClassN : NaN};
+}
+const key = () => ST.meta && ST.meta.car && ST.meta.trackId ? ST.meta.car+"|"+ST.meta.trackId : "";
+function saveHist(){ if (!ST.histDirty || !key() || !window.se || !window.se.learnKvPut) return; ST.histDirty=false; ST.hist.date=Date.now(); window.se.learnKvPut("gp", key(), ST.hist); }
+// Bono's memory: your saved best lap here (with your inputs) and GP's corner history
+function loadMemory(){
+  const k=key(), g=ST.gen; if (!k || !window.se) return;
+  if (window.se.learnRefGet) window.se.learnRefGet(k).then(r=>{
+    if (g!==ST.gen || !r) return;
+    if (Array.isArray(r.corners)) ST.names = r.corners.map(c=>Number.isFinite(c.brkAt)?c.brkAt:c.at);
+    if (r.inputs && r.inputs.speed && !ST.ref){ ST.ref={...r.inputs, time:r.trace||[]}; ST.refSrc="your saved best here"; ST.refBest=r.best; ST.corners=findCorners(ST.ref); }
+  }).catch(()=>{});
+  if (window.se.learnKvGet){
+    window.se.learnKvGet("gp", k).then(h=>{ if (g===ST.gen && h && h.corners) ST.hist=h; }).catch(()=>{});
+    window.se.learnKvGet("gpenv", k).then(v=>{ if (g===ST.gen && v && Array.isArray(v.env)) ST.envL=v.env; }).catch(()=>{});
+    if (ST.meta.car) window.se.learnKvGet("bono", "K|"+ST.meta.car).then(v=>{ if (g===ST.gen && v && v.K>6 && v.K<30){ ST.K=v.K; ST.Kstored=true; if (v.wb>2 && v.wb<3.5) ST.wb=v.wb; } }).catch(()=>{});
+  }
+}
+
+// ---------- every car in your class: iRacing's sectors, and each corner's entry / mid / exit ----------
+// Timed from track position 60x a second (the same method for you and for them, so it compares like with like).
+// Corner phases come from your best lap: entry = brakes on → turn-in, mid = turn-in → apex, exit = apex → full throttle.
+// Other cars send no pedal data, so their speeds are worked out from how fast they cover the track.
+const NMS = 25;
+const CL = { bnd:null, cars:{}, ms:{best:[], mine:[], last:[], who:[]}, sec:{best:[], mine:[], last:[], who:[]}, corner:{}, live:false, curMs:-1, ref:-1, refBest:NaN, tick:0, carSec:{} };
+function readArr(dv,p,v){ const fn=TYPES[v.type], sz=v.type===5?8:(v.type<=1?1:4), out=new Array(v.count); for (let i=0;i<v.count;i++) out[i]=dv[fn](p+v.off+i*sz,true); return out; }
+function cornerPoints(){   // fixed for the session once your first reference lap gives the corners
+  if (ST.cornerPts || !ST.ref || !ST.corners || !(ST.meta.trackL>0)) return;
+  const R=ST.ref, toP = i => i*BIN/ST.meta.trackL;
+  ST.cornerPts = ST.corners.map(c=>{ const m=measure(i=>({v:at(R.speed,i), b:at(R.brake,i), t:at(R.throttle,i), s:at(R.steer,i)}), R.time, c);
+    const brk=Number.isFinite(m.brkOn)?m.brkOn:c.brk, ti=Math.max(brk+1, m.turnIn), ap=Math.max(ti+1, m.apex), fu=Math.max(ap+1, Number.isFinite(m.full)?m.full:c.full);
+    return {name:c.name, p:[toP(brk), toP(ti), toP(ap), toP(fu)]}; }).filter(c=>c.p.every(x=>x>0 && x<1) && c.p[0]<c.p[3]);
+  buildBounds();
+}
+function buildBounds(){
+  const B=[];   // iRacing's own sectors only (no mini sectors: Le Mans or the Nordschleife would have hundreds)
+  (ST.meta.sectors||[0]).forEach((p,k)=>B.push({p, kind:"sec", k}));
+  (ST.cornerPts||[]).forEach((c,k)=>c.p.forEach((p,w)=>B.push({p, kind:"c", k, w})));
+  CL.bnd=B.sort((a,b)=>a.p-b.p);
+}
+function rec(kind, k, car, time){   // a sector finished by a car
+  const T=CL[kind], me=car===ST.meta.me;
+  if (!(time>0)) return;
+  if (kind==="sec"){ const cs=CL.carSec[car]||(CL.carSec[car]=[]); if (!(cs[k]<=time)) cs[k]=time; }
+  if (!(T.best[k]<=time)){ T.best[k]=time; T.who[k]=car; }
+  if (me){ T.last[k]=time; if (!(T.mine[k]<=time)) T.mine[k]=time; }
+}
+function classUpdate(dv, p, s){
+  const M=ST.meta, V=M.vars, L=M.trackL; if (!CL.bnd) buildBounds();
+  const t=s.SessionTime; let pct, pit=null, surf=null, cls=null;
+  if (V.CarIdxLapDistPct && V.CarIdxLapDistPct.count>1){ CL.live=true; pct=readArr(dv,p,V.CarIdxLapDistPct);
+    pit=V.CarIdxOnPitRoad?readArr(dv,p,V.CarIdxOnPitRoad):null; surf=V.CarIdxTrackSurface?readArr(dv,p,V.CarIdxTrackSurface):null; cls=V.CarIdxClass?readArr(dv,p,V.CarIdxClass):null;
+    // the session's fastest driver in your class, by iRacing's official best lap
+    if (V.CarIdxBestLapTime && (++CL.tick%30===0 || CL.ref<0)){ const bl=readArr(dv,p,V.CarIdxBestLapTime), me0=M.me; let r=-1;
+      bl.forEach((t,i)=>{ if (i===me0 || !(t>0) || (cls && me0>=0 && cls[i]!==cls[me0])) return; if (r<0 || t<bl[r]) r=i; });
+      if (r!==CL.ref){ CL.ref=r; for (const k of Object.keys(CL.corner)) CL.corner[k]={best:null, who:-1}; }   // a new fastest driver: compare with them from now on
+      CL.refBest = r>=0 ? bl[r] : NaN; } }
+  else { if (M.me<0) return; pct=[]; pct[M.me]=s.LapDistPct; }   // recordings: only your own car
+  const me=M.me;
+  for (let car=0; car<pct.length; car++){
+    const x=pct[car]; if (x===undefined) continue;
+    if (cls && me>=0 && cls[car]!==cls[me]) continue;
+    const D=CL.cars[car] || (CL.cars[car]={h:[], ms:null, sec:null, c:{}});
+    const bad = !(x>=0) || (pit&&pit[car]) || (surf&&surf[car]!==3) || (car===me && (s.OnPitRoad || !s.IsOnTrack || s.PlayerTrackSurface===0));
+    if (bad){ D.h=[]; D.ms=null; D.sec=null; D.c={}; continue; }
+    const h=D.h; h.push([t,x]); if (h.length>4) h.shift();
+    if (h.length<2) continue;
+    const [t0,x0]=h[h.length-2]; let d=x-x0; if (d<-0.5) d+=1;
+    if (d<0 || d>0.05 || t-t0<=0){ D.h=[[t,x]]; D.ms=null; D.sec=null; D.c={}; continue; }   // jumped (tow, reset): start again
+    const [ta,xa]=h[0]; let da=x-xa; if (da<-0.5) da+=1; const vk = L>0 && t>ta ? da*L/(t-ta)*3.6 : NaN;   // speed over the last few samples
+    for (const b of CL.bnd){
+      let q=b.p-x0; if (q<=0) q+=1; if (q>d) continue;
+      const tc=t0+(t-t0)*(q/d);
+      if (b.kind==="ms"){ if (D.ms && D.ms.k===(b.k-1+NMS)%NMS && tc-D.ms.t<120) rec("ms", D.ms.k, car, tc-D.ms.t); D.ms={k:b.k, t:tc}; if (car===me) CL.curMs=b.k; }
+      else if (b.kind==="sec"){ const n=CL.bnd.filter(z=>z.kind==="sec").length; if (D.sec && D.sec.k===(b.k-1+n)%n && tc-D.sec.t<600){ rec("sec", D.sec.k, car, tc-D.sec.t);
+          if (car===me){ CL.secDone={k:D.sec.k, t:Date.now()}; const st=tc-D.sec.t, ps=CL.purpleSaid||(CL.purpleSaid={});
+            if (purpleSector(D.sec.k, st) && !(ps[D.sec.k]<=st+0.001)){ ps[D.sec.k]=st; say(`Purple sector ${D.sec.k+1}.`, 1); } } }   // only when it's a new purple
+        D.sec={k:b.k, t:tc}; }
+      else { const c=D.c[b.k];
+        if (b.w===0) D.c[b.k]={t:[tc], v:[vk]};
+        else if (c && c.t.length===b.w && tc-c.t[0]<60){ c.t.push(tc); c.v.push(vk);
+          if (b.w===3) cornerDone(b.k, car, {entry:c.t[1]-c.t[0], mid:c.t[2]-c.t[1], exit:c.t[3]-c.t[2], total:c.t[3]-c.t[0], vIn:c.v[0], vApex:c.v[2], vOut:c.v[3]}); }
+        else delete D.c[b.k]; }
+    }
+  }
+}
+// purple = faster than every car in your class has gone through that sector this session, and only once we've seen the
+// fastest driver near their best (their best sectors add up to within 1% of their official best lap): otherwise we can't know
+function purpleSector(k, mine){
+  if (!CL.live || !(CL.ref>=0)) return false;
+  const rs=CL.carSec[CL.ref]||[], n=(ST.meta.sectors||[0]).length; let sum=0; for (let i=0;i<n;i++){ if (!(rs[i]>0)) return false; sum+=rs[i]; }
+  if (!(sum <= CL.refBest*1.01)) return false;
+  for (const [c,cs] of Object.entries(CL.carSec)) if (+c!==ST.meta.me && cs[k]>0 && cs[k]<=mine) return false;
+  return true;
+}
+function cornerDone(k, car, r){
+  const C=CL.corner[k] || (CL.corner[k]={best:null, who:-1});
+  if (car!==ST.meta.me){ if (car===CL.ref && (!C.best || r.total<C.best.total)){ C.best=r; C.who=car; } return; }   // the session's fastest driver only
+  ST.cls = {k, name:ST.cornerPts[k].name, mine:r, best:C.best, who:C.who, t:Date.now()};
+  const H=ST.hist || (ST.hist={corners:{}}), h=H.corners[ST.cls.name] || (H.corners[ST.cls.name]={laps:0, loss:0, issues:{}, brk:[]});
+  if (C.best){ h.vsClass=(h.vsClass||0)+(r.total-C.best.total); h.vsClassN=(h.vsClassN||0)+1; }
+}
+// (the full class breakdown: sectors, entry / mid / exit and speeds, lives in the app's GP window)
+const esc = x => String(x).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+// ---------- team radio ----------
+const say = (text, pri=1) => { if (window.se && window.se.radioSay) window.se.radioSay("gp", text, pri); };
+// turn the on-screen tip into something that sounds right out loud
+const spoken = t => String(t).replace(/^T(\d+)$/, "Turn $1").replace(/\([^)]*\)/g, "").replace(/(\d+) m\b/g, "$1 metres").replace(/(\d+(?:\.\d+)?) s\b/g, "$1 seconds").replace(/km\/h/g, "k p h")
+  .replace(/(\d+)%/g, "$1 percent").replace(/\s*:\s*/g, ", ").replace(/\s+/g, " ").trim();
+// ---------- display ----------
+function draw(){
+  const s=ST.last, driving = s && s.IsOnTrack && !s.OnPitRoad;
+  document.body.classList.toggle("hidden", !(edit || (ST.connected && driving)));
+  const optS=CL.sec.mine, optT=optS.length && optS.every(v=>v>0) && optS.length===(ST.meta&&ST.meta.sectors||[]).length ? optS.reduce((a,b)=>a+b,0) : NaN;
+  $("info").textContent = !ST.ref ? "waiting for a clean lap" : Number.isFinite(optT) && ST.best<1e9 ? `optimal ${Math.floor(optT/60)}:${(optT%60).toFixed(2).padStart(5,"0")} · best ${Math.floor(ST.best/60)}:${(ST.best%60).toFixed(2).padStart(5,"0")}${ST.outLap?" · out lap":""}` : `vs ${ST.refSrc}${ST.outLap?" · out lap":""}`;
+  const M = ST.msg && Date.now()-ST.msg.t < 15000 ? ST.msg : null;
+  // one line per corner: time vs the session's fastest driver (vs your own best if they haven't been timed there yet), the limit, one tip
+  const V = M && M.vsf ? `<span class="${M.vsf.d>0.04?"warn":M.vsf.d<-0.02?"ok":""}">${M.vsf.d>=0?"+":"−"}${Math.abs(M.vsf.d).toFixed(2)} s</span> <span class="k">vs ${esc(M.vsf.who)}${M.vsf.phase?", most on "+M.vsf.phase:""}</span>`
+    : M ? `<span class="${M.cls}">${M.loss>=0?"+":"−"}${Math.abs(M.loss).toFixed(2)} s</span> <span class="k">vs your optimal</span>` : "";
+  $("tip").innerHTML = M ? `<span class="k">${M.name}</span> ${V}${M.lim||""} ${M.word}`
+    : !ST.ref ? "Drive a clean lap: I'll coach every corner from then on." : ST.outLap ? "Out lap: tyres warming, coaching from the first flying lap." : `${(ST.corners||[]).length} corners: coaching after each one`;
+  const F=focus();
+  $("focus").innerHTML = F ? `<span class="k">Focus</span> <b>${F.nm}</b> +${F.avg.toFixed(2)} s vs your best${Number.isFinite(F.vsClass)?`, ${F.vsClass>=0?"+":"−"}${Math.abs(F.vsClass).toFixed(2)} s vs the fastest in class`:""}: ${F.issue}${Number.isFinite(F.sd)&&F.sd>8?` · braking point varies ±${Math.round(F.sd)} m`:""}`
+    : `<span class="k">Focus</span> builds up over a few laps${ST.hist?" (remembers past sessions)":""}`;
+}
+
+async function poll(){
+  try{
+    const st = await (await fetch("/live/status",{cache:"no-store"})).json();
+    ST.connected = st.connected;
+    if (st.gen>0 && (st.gen!==ST.gen || st.siUpdate!==ST.si)){
+      const r = await fetch("/live/meta",{cache:"no-store"});
+      if (r.ok){ const g=+r.headers.get("X-Gen"); ST.meta=parseMeta(await r.arrayBuffer()); ST.si=+r.headers.get("X-Si");
+        if (g!==ST.gen){ saveHist(); saveEnv(); Object.assign(ST,{optC:{}, gen:g, next:-120, lap:null, lapT0:null, cur:newLap(), ref:null, refSrc:"", best:Infinity, corners:null, names:null, hist:null, msg:null, outLap:true,
+          envS:[], envL:null, envC:null, sgn:[0,0], K:null, Kstored:false, ratios:[], wb:2.65, cornerPts:null, cls:null});
+          Object.assign(CL, {bnd:null, cars:{}, ms:{best:[], mine:[], last:[], who:[]}, sec:{best:[], mine:[], last:[], who:[]}, corner:{}, live:false, curMs:-1, ref:-1, refBest:NaN, tick:0, carSec:{}, purpleSaid:{}}); loadMemory(); } }
+    }
+    if (ST.meta && st.total>0){
+      const r = await fetch("/live/data?max=600&from="+ST.next,{cache:"no-store"});
+      if (+r.headers.get("X-Gen")===ST.gen){
+        const b=await r.arrayBuffer(); ST.next=+r.headers.get("X-Next");
+        const dv=new DataView(b), n=Math.floor(b.byteLength/ST.meta.bufLen);
+        for (let k=0;k<n;k++){ const p=k*ST.meta.bufLen, s=decode(dv,p,ST.meta.vars); addSample(s); classUpdate(dv,p,s); }
+        cornerPoints();
+      }
+    }
+  }catch(e){ ST.connected=false; }
+  draw();
+  setTimeout(poll, 200);
+}
+setInterval(saveHist, 30000);
+setInterval(saveEnv, 60000);
+poll();
+</script>
+</body>
+</html>

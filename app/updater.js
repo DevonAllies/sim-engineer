@@ -1,0 +1,36 @@
+// Auto-update from GitHub Releases (electron-updater).
+// Downloads in the background; installs only when the user clicks "Restart" or quits the app,
+// so an update never interrupts a session.
+const { app } = require('electron');
+const pkg = require('./package.json');
+
+let autoUpdater = null, status = { state: 'idle' }, send = () => {};
+
+function configured() {
+  const pub = (pkg.build && pkg.build.publish && pkg.build.publish[0]) || {};
+  return app.isPackaged && pub.owner && !/YOUR-GITHUB-NAME/.test(pub.owner);
+}
+
+function set(s) { status = s; send(s); }
+
+function init(sendFn) {
+  send = sendFn;
+  if (!configured()) { set({ state: 'off', reason: app.isPackaged ? 'Updates are not set up yet (no GitHub repository configured).' : 'Updates are off while running from source.' }); return; }
+  ({ autoUpdater } = require('electron-updater'));
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on('checking-for-update', () => set({ state: 'checking' }));
+  autoUpdater.on('update-available', (i) => set({ state: 'downloading', version: i.version, percent: 0 }));
+  autoUpdater.on('download-progress', (p) => set({ state: 'downloading', version: status.version, percent: Math.round(p.percent) }));
+  autoUpdater.on('update-downloaded', (i) => set({ state: 'ready', version: i.version }));
+  autoUpdater.on('update-not-available', () => set({ state: 'latest' }));
+  autoUpdater.on('error', (e) => set({ state: 'error', message: String(e && e.message || e).slice(0, 200) }));
+  check();
+  setInterval(check, 4 * 60 * 60 * 1000);
+}
+
+function check() { if (autoUpdater) autoUpdater.checkForUpdates().catch(() => {}); return status; }
+function install() { if (autoUpdater && status.state === 'ready') { app.isQuitting = true; autoUpdater.quitAndInstall(false, true); } }
+function current() { return status; }
+
+module.exports = { init, check, install, current };

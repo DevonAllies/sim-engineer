@@ -1,0 +1,68 @@
+// Safe bridge between the web pages and the Electron app (main window + overlays)
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('se', {
+  isApp: true,
+  version: () => ipcRenderer.invoke('app:version'),
+  // overlays
+  overlayList: () => ipcRenderer.invoke('overlay:list'),
+  overlaySet: (id, patch) => ipcRenderer.invoke('overlay:set', id, patch),
+  overlayReset: (id) => ipcRenderer.invoke('overlay:reset', id),
+  editMode: (on) => ipcRenderer.invoke('overlay:edit', on),
+  onEditMode: (cb) => ipcRenderer.on('edit-mode', (_e, on) => cb(on)),
+  onStyle: (cb) => ipcRenderer.on('overlay-style', (_e, s) => cb(s)),
+  onOverlaysChanged: (cb) => ipcRenderer.on('overlays-changed', () => cb()),
+  openLogos: () => ipcRenderer.invoke('logos:open'),
+  publishPlan: (p) => ipcRenderer.invoke('plan:publish', p),
+  getPlan: () => ipcRenderer.invoke('plan:get'),
+  toFront: () => ipcRenderer.invoke('win:front'),
+  pinTop: (on) => ipcRenderer.invoke('win:pin', on),
+  savePDF: (html, name) => ipcRenderer.invoke('pdf:save', html, name),
+  onPlan: (cb) => ipcRenderer.on('plan', (_e, p) => cb(p)),
+  // learning (stint history on this PC)
+  learnGet: () => ipcRenderer.invoke('learn:get'),
+  learnPut: (rec) => ipcRenderer.invoke('learn:put', rec),
+  learnForget: (car, track) => ipcRenderer.invoke('learn:forget', car, track),
+  learnRefGet: (k) => ipcRenderer.invoke('learn:refGet', k),
+  learnRefPut: (k, ref) => ipcRenderer.invoke('learn:refPut', k, ref),
+  learnFile: () => ipcRenderer.invoke('learn:file'),
+  learnInfo: () => ipcRenderer.invoke('learn:info'),
+  learnKvGet: (ns, k) => ipcRenderer.invoke('learn:kvGet', ns, k),
+  learnKvPut: (ns, k, v) => ipcRenderer.invoke('learn:kvPut', ns, k, v),
+  learnSummary: (car, track) => ipcRenderer.invoke('learn:summary', car, track),
+  learnScope: (scope, fresh) => ipcRenderer.invoke('learn:scope', scope, fresh),
+  learnPrune: () => ipcRenderer.invoke('learn:prune'),
+  learnChooseDir: () => ipcRenderer.invoke('learn:chooseDir'),
+  // your data folder (database, CSVs, reports, manuals) and how reports open
+  dataInfo: () => ipcRenderer.invoke('data:info'),
+  dataOpen: (which) => ipcRenderer.invoke('data:open', which),
+  dataLaps: (id) => ipcRenderer.invoke('data:laps', id),
+  carsPut: (list) => ipcRenderer.invoke('cars:put', list),
+  dataCsv: (on) => ipcRenderer.invoke('data:csv', on),
+  // team folder (shared Google Drive / OneDrive folder): lap files to compare with teammates
+  teamGet: () => ipcRenderer.invoke('team:get'),
+  teamSet: (patch) => ipcRenderer.invoke('team:set', patch),
+  teamChoose: () => ipcRenderer.invoke('team:choose'),
+  teamWrite: (rel, bytes) => ipcRenderer.invoke('team:write', rel, bytes),
+  teamList: (sub, ext) => ipcRenderer.invoke('team:list', sub, ext),
+  teamRead: (rel) => ipcRenderer.invoke('team:read', rel),
+  teamOpen: () => ipcRenderer.invoke('team:open'),
+  learnHistoric: (car, track, undo) => ipcRenderer.invoke('learn:historic', car, track, undo),
+  learnHistInfo: () => ipcRenderer.invoke('learn:histInfo'),
+  pdfApps: () => ipcRenderer.invoke('pdf:apps'),
+  pdfSetApp: (mode) => ipcRenderer.invoke('pdf:setApp', mode),
+  // radio (voices)
+  radioSay: (who, text, pri, force) => ipcRenderer.send('radio:say', { who, text, pri: pri || 1, force: !!force, at: Date.now() }),
+  onRadio: (cb) => ipcRenderer.on('radio', (_e, m) => cb(m)),
+  radioGet: () => ipcRenderer.invoke('radio:get'),
+  radioSet: (patch) => ipcRenderer.invoke('radio:set', patch),
+  onRadioSettings: (cb) => ipcRenderer.on('radio-settings', (_e, s) => cb(s)),
+  // settings
+  getSetting: (k) => ipcRenderer.invoke('settings:get', k),
+  setSetting: (k, v) => ipcRenderer.invoke('settings:set', k, v),
+  // updates
+  updateStatus: () => ipcRenderer.invoke('update:status'),
+  updateCheck: () => ipcRenderer.invoke('update:check'),
+  updateInstall: () => ipcRenderer.invoke('update:install'),
+  onUpdate: (cb) => ipcRenderer.on('update-status', (_e, s) => cb(s)),
+});

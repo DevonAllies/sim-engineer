@@ -1,0 +1,77 @@
+{
+  "name": "setup-engineer",
+  "productName": "Setup Engineer",
+  "version": "0.13.3",
+  "description": "iRacing setup engineer and overlays",
+  "main": "main.js",
+  "author": "Setup Engineer",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "bridge": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-bridge.ps1",
+    "dist": "npm run bridge && electron-builder --win nsis",
+    "release": "npm run bridge && electron-builder --win nsis --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9",
+    "sql.js": "^1.11.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.setupengineer.app",
+    "productName": "Setup Engineer",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "db.js",
+      "preload.js",
+      "updater.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "bridge/se-bridge.exe",
+        "to": "bridge/se-bridge.exe"
+      },
+      {
+        "from": "web",
+        "to": "web"
+      },
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": true,
+      "include": "build/installer.nsh",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Setup Engineer",
+      "runAfterFinish": true,
+      "artifactName": "Setup-Engineer-Setup-${version}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "YOUR-GITHUB-NAME",
+        "repo": "setup-engineer"
+      }
+    ]
+  },
+  "allowScripts": {
+    "electron@33.4.11": true
+  }
+}
