@@ -2079,7 +2079,7 @@ function render(){
       + hannaHTML(run, A) + wearModelHTML(run, A, S) + areaCards("fuel"),
     ffb: () => ffbHTML(run, A) + safe(()=>inputsHTML(run, A, S),"inputs"),
     guide: () => guideHTML(run),
-    learn: () => learnHTML(run) + safe(()=>setupModelHTML(run),"setupModel") + safe(()=>testNextHTML(run, A),"testNext"),
+    learn: () => safe(()=>testProgHTML(run),"testProg") + learnHTML(run) + safe(()=>setupModelHTML(run),"setupModel") + safe(()=>testNextHTML(run, A),"testNext"),
     dampers: () => (Object.keys(A.damp||{}).length?`<section><h2>Dampers <small>shock speed histograms, all laps used · right = compression (bump), left = extension (rebound)</small></h2>
    <div class="dampgrid">${["LF","RF","LR","RR"].filter(c=>A.damp[c]).map(c=>`<div><b>${c}</b><canvas id="dh${c}"></canvas></div>`).join("")}</div>
    <div class="tablewrap" style="margin-top:10px"><table><tr><th></th><th>Low-speed bump</th><th>Low-speed rebound</th><th>High-speed bump</th><th>High-speed rebound</th><th>95% bump / rebound speed</th><th>Peak (99%)</th></tr>
@@ -2095,7 +2095,7 @@ function render(){
   // cross-track car models: in their own tabs always; on Home too while this track is new to you (fewer than 3 stints here)
   { const d=W.dampers, a=W.aero, h=W.home;
     W.dampers=()=>d()+safe(()=>dampCrossHTML(run, A),"dampCross");
-    W.aero=()=>a()+safe(()=>aeroCrossHTML(run, A, S),"aeroCross");
+    W.aero=()=>a()+safe(()=>wingSweepHTML(run, A),"wingSweep")+safe(()=>aeroCrossHTML(run, A, S),"aeroCross");
     W.home=()=>{ const here=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===learnTrackOf(run) && r.laps>=MIN_LAPS && r.date>=LEARN_CUTOFF).length;
       return h() + (here<3 ? `<section><h2>New track: predictions from your other tracks <small>${here} stint${here===1?"":"s"} of ${MIN_LAPS}+ laps here so far</small></h2><p class="muted" style="margin:0">What this car does everywhere else, applied here: the ride heights to start from, how hard the dampers will work, and the setup from the most similar track.</p></section>`
         + safe(()=>aeroCrossHTML(run, A, S),"aeroCross") + safe(()=>dampCrossHTML(run, A),"dampCross") : ""); }; }
@@ -2106,6 +2106,11 @@ function render(){
   { const es=$("#endupit"); if (es) es.onchange=()=>{ RACE.pitLoss=+es.value||60; PREFS.set("race", RACE); rerender(); }; }
   document.querySelectorAll(".mrange").forEach(s=>s.onchange=()=>{ const R=modelRange(); R[s.dataset.k]=s.value; try { PREFS.set("modelRange", R); } catch(e){}
     runs.forEach(r=>{ if (r.A) r.A.tw=null; }); rerender(); });   // the measured tyre window follows the range too
+  // test programme (Learning tab): start, re-baseline, stop, tick steps by hand
+  { const st=$("#tpstart"); if (st) st.onclick=()=>{ tpSet(run, {created:runDate(run), base:tpSetup(run), manual:{}}); rerender(); };
+    const rb=$("#tprebase"); if (rb) rb.onclick=()=>{ if (!confirm("Use this stint's setup as the new baseline? Steps are matched against it from now on.")) return; const P=tpGet(run)||{}; tpSet(run, Object.assign(P, {base:tpSetup(run)})); rerender(); };
+    const rs=$("#tpreset"); if (rs) rs.onclick=()=>{ if (!confirm("Stop this test programme? Your stints stay; only the checklist goes.")) return; tpSet(run, null); rerender(); };
+    document.querySelectorAll(".tpcheck").forEach(c=>c.onchange=()=>{ const P=tpGet(run); if (!P) return; P.manual=P.manual||{}; P.manual[c.dataset.id]=c.checked; tpSet(run, P); rerender(); }); }
   for (const [id,key] of [["lctarget","lcTarget"],["tyreloss","tyreLoss"],["racestart","startH"]]){ const el=$("#"+id); if (el) el.onchange=()=>{ RACE[key]=el.value===""?"":+el.value; PREFS.set("race", RACE); rerender(); }; }
   if (view==="aero" && A.rh) drawRH(run,A,S);
   if (view==="laps") drawTrace(run,A);
@@ -5084,6 +5089,100 @@ function dampCrossHTML(run, A){
    <div class="tablewrap"><table style="font-size:12px"><tr><th></th><th>Fast-damper share now</th><th>Predicted here</th><th>Your usual</th><th>Per unit of roughness</th>${["hsc","hsr","lsc","lsr"].map(k=>`<th>Per click ${DK_LABEL[k]}</th>`).join("")}<th>Suggestion</th></tr>${block("F")}${block("R")}</table></div>
    ${X.kerb?`<p style="margin:6px 0;font-size:13px">Kerb and bump slides: ${fmt(X.kerb.now,1)} per lap now, ${fmt(X.kerb.pred,1)} predicted for this track's roughness with your current rear high-speed clicks.</p>`:""}
    <p class="muted" style="font-size:12px">Fast-damper share = how much of the lap the dampers spend at high shaft speed (bumps and kerbs). A share well above your usual means the tyres are being bounced off the road there: more high-speed bump calms it (at some cost to grip over the kerbs). Bold = the effect is clearly bigger than its ±, grey = not sure yet. Each click effect is learned with the track's roughness taken out, so a bumpy track isn't blamed on a click.</p></section>`;
+}
+// ================= test programme: one change at a time from a baseline, ticked off automatically as stints come in =================
+const TP_LAPS=5;
+const tpKey = run => `testprog|${run.carPath}|${learnTrackOf(run)}`;
+function tpGet(run){ try { return PREFS.get(tpKey(run))||null; } catch(e){ return null; } }
+function tpSet(run, P){ try { PREFS.set(tpKey(run), P); } catch(e){} }
+const tpSetup = run => Object.fromEntries(run.setupFlat.filter(e=>!LEARN_SKIP.test(e.path) && Number.isFinite(learnNum(e.raw))).map(e=>[e.path.replace(/^CarSetup\./,""), e.raw.trim()]));
+// what differs from the baseline (left and right together; static ride height and perch offsets don't count: you put those back after a spring change)
+function tpChanged(base, setup){ const a=smVals(base), b=smVals(setup), out=[];
+  for (const k of new Set([...Object.keys(a),...Object.keys(b)])){ if (/RideHeight$/i.test(k)) continue; const x=a[k], y=b[k]; if (Number.isFinite(x)&&Number.isFinite(y)&&Math.abs(x-y)>1e-6) out.push({k, from:x, to:y}); }
+  return out; }
+// the steps, built from the settings this car actually has
+function tpSteps(run){
+  const S=[], ent=(re)=>run.setupFlat.filter(e=>re.test(e.path)), first=a=>a[0];
+  const spring=ax=>ent(new RegExp(`(Left|Right)${ax}.*SpringRate$|\\.${ax}[A-Za-z]*\\.SpringRate$`,"i")), arbE=ax=>ax==="Front"?SET.frontArb(run):SET.rearArb(run);
+  const lim=e=>{ const L=e&&limitsFor(run,e), en=e&&enumFor(run,e); return en ? {min:en.values[0], max:en.values[en.values.length-1]} : L&&Number.isFinite(L.min)&&Number.isFinite(L.max) ? {min:L.min, max:L.max} : null; };
+  S.push({id:"base", block:"Baseline", label:"Baseline: your normal setup", how:"Drive your normal setup. Everything else is measured against this stint.", kind:"base"});
+  for (const ax of ["Front","Rear"]){ const e=first(spring(ax)); if (!e) continue; const L=lim(e), re=new RegExp(`${ax}[A-Za-z]*\\.SpringRate$`,"i");
+    for (const end of ["min","max"]) S.push({id:`spr${ax}${end}`, block:"Springs", label:`${ax} springs ${end==="min"?"softest":"stiffest"}`, re, kind:end,
+      how:`Both ${ax.toLowerCase()} springs to ${L?`<b>${L[end]}</b>`:`the ${end==="min"?"softest":"stiffest"} the garage allows`} (now ${esc(e.raw.trim())}). Then use the spring perch offsets to put the static ride heights back to the baseline. Nothing else.`, lim:L?L[end]:null}); }
+  if (S.some(s=>/^spr/.test(s.id))){
+    S.push({id:"base2", block:"Springs", label:"Baseline check", how:"Back to the baseline setup: shows how much the track and you improved meanwhile, so it isn't blamed on the springs.", kind:"base"});
+    S.push({id:"sprApp", block:"Springs", label:"The app's spring suggestion", how:"Use the spring change the app suggests now (Changes / Suspension), with the ride heights put back to the baseline. This tests the prediction where you'll actually race.", kind:"between", re:/SpringRate$/i}); }
+  const DN=[["highspeedcompression","high-speed bump","HighSpeedComp|HsComp|HSComp|HighSpeedBump"],["highspeedrebound","high-speed rebound","HighSpeedReb|HsReb|HSReb"],["lowspeedcompression","low-speed bump","LowSpeedComp|LsComp|LSComp|LowSpeedBump"],["lowspeedrebound","low-speed rebound","LowSpeedReb|LsReb|LSReb"]];
+  let anyD=false; for (const [kind,label,pat] of DN) for (const [end,End] of [["front","Front"],["rear","Rear"]]){ const e=findDamp(run,end,kind); if (!e) continue; anyD=true;
+    S.push({id:`d${end}${kind}`, block:"Dampers", label:`${End} ${label} +3`, re:new RegExp(`${End}.*(${pat})`,"i"), kind:"more", amount:3, e0:e[0],
+      how:`${End} ${label} 3 clicks stiffer (now ${esc(e[0].raw.trim())}${dirFor(run,e[0])<0?"; on this car a lower number is stiffer":""}), both sides. Nothing else.`}); }
+  if (anyD) S.push({id:"base3", block:"Dampers", label:"Baseline check", how:"Back to the baseline setup.", kind:"base"});
+  for (const ax of ["Front","Rear"]){ const e=arbE(ax); if (!e) continue; S.push({id:`arb${ax}`, block:"Anti-roll bars", label:`${ax} anti-roll bar one step stiffer`, re:new RegExp(`${ax}[A-Za-z]*\\.(Arb|ArbBlades|ArbSetting|ArbSize|AntiRollBar)|${ax}Brakes[A-Za-z]*\\.Arb`,"i"), kind:"more", amount:1, e0:e, how:`${ax} bar one step stiffer (now ${esc(e.raw.trim())}). Nothing else.`}); }
+  // the wing at this track: the lowest, a bit lower, a bit higher, the highest (each track gets its own programme, so its own wing sweep)
+  { const e=SET.wing(run); if (e){ const L=lim(e);
+      for (const [id,kind,label,how] of [["wingMin","wmin","Wing at its lowest",`Rear wing to ${L?`<b>${L.min}</b>`:"the lowest the garage allows"}`],["wingLess","wless","Wing 2 steps lower","Rear wing 2 steps down"],["wingMore","wmore","Wing 2 steps higher","Rear wing 2 steps up"],["wingMax","wmax","Wing at its highest",`Rear wing to ${L?`<b>${L.max}</b>`:"the highest the garage allows"}`]])
+        S.push({id, block:"Wing (this track)", label, re:/Wing/i, kind, e0:e, lim:L?(kind==="wmin"?L.min:kind==="wmax"?L.max:null):null, how:`${how} (now ${esc(e.raw.trim())}). Nothing else; keep the static ride heights the same and check the splitter stays legal. Shows what each wing angle gives here in downforce, top speed and balance (Aero → wing sweep).`}); } }
+  return S.map(s=>Object.assign(s,{laps:TP_LAPS})); }
+// which of your stints (since the programme started, this car and track, dry) did each step: only that setting changed from the baseline
+function tpStatus(run, P){
+  const steps=tpSteps(run), recs=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===learnTrackOf(run) && !r.wet && r.date>=P.created-60e3 && r.setup).sort((a,b)=>a.date-b.date);
+  const used=new Set(), firstChange=recs.find(r=>tpChanged(P.base, r.setup).length);
+  // wing-only stints: the lowest and highest wing run (when the garage limits aren't known, the extremes you actually ran count as min / max)
+  const wingOnly=recs.map(r=>({r, ch:tpChanged(P.base, r.setup)})).filter(x=>x.ch.length && x.ch.every(c=>/Wing/i.test(c.k)));
+  // with the limits unknown, the lowest (highest) angle is "the lowest" only once you've run two different angles below (above) the baseline; a single one is "lower"
+  const lows=[...new Set(wingOnly.filter(x=>x.ch[0].to<x.ch[0].from).map(x=>x.ch[0].to))], highs=[...new Set(wingOnly.filter(x=>x.ch[0].to>x.ch[0].from).map(x=>x.ch[0].to))];
+  const wLo=lows.length>=2?Math.min(...lows):NaN, wHi=highs.length>=2?Math.max(...highs):NaN;
+  for (const s of steps){ s.stints=[];
+    for (const r of recs){ const ch=tpChanged(P.base, r.setup);
+      let ok=false;
+      if (s.kind==="base") ok=!ch.length && (s.id==="base" || (firstChange && r.date>firstChange.date));
+      else if (ch.length && ch.every(c=>s.re.test(c.k))){ const c=ch[0];
+        if (s.kind==="min") ok=Number.isFinite(learnNum(s.lim)) ? ch.every(c=>Math.abs(c.to-learnNum(s.lim))<1e-6) : ch.every(c=>c.to<c.from);
+        else if (s.kind==="max") ok=Number.isFinite(learnNum(s.lim)) ? ch.every(c=>Math.abs(c.to-learnNum(s.lim))<1e-6) : ch.every(c=>c.to>c.from);
+        else if (/^w/.test(s.kind)){ const to=c.to, from=c.from, L=learnNum(s.lim), isMin=Number.isFinite(L)&&s.kind==="wmin"?Math.abs(to-L)<1e-6:Math.abs(to-wLo)<1e-6&&to<from, isMax=Number.isFinite(L)&&s.kind==="wmax"?Math.abs(to-L)<1e-6:Math.abs(to-wHi)<1e-6&&to>from;
+          ok = s.kind==="wmin" ? isMin : s.kind==="wmax" ? isMax : s.kind==="wless" ? to<from && !isMin : to>from && !isMax; }
+        else if (s.kind==="between") ok=!steps.filter(q=>q.kind==="min"||q.kind==="max").some(q=>q.stints&&q.stints.some(x=>x.id===r.id));
+        else { const d=s.e0?dirFor(run,s.e0):1, need=Math.max(1,s.amount-1); ok=ch.every(c=>(c.to-c.from)*d*(s.kind==="less"?-1:1)>=need-1e-6); } }
+      if (ok && !used.has(r.id+s.id)){ s.stints.push(r); used.add(r.id+s.id); } }
+    s.done=s.stints.reduce((a,r)=>a+(r.laps||0),0);
+    const m=(P.manual||{})[s.id]; s.complete = m===true || (m!==false && s.done>=s.laps); s.manual=m; }
+  return steps; }
+function testProgHTML(run){
+  const P=tpGet(run), trk=((run.info.WeekendInfo||{}).TrackDisplayName)||"this track";
+  if (!P) return `<section><h2>Test programme <small>one change at a time from a baseline, so the app learns this car properly</small></h2>
+    <p style="margin:4px 0">A list of stints to drive: a baseline, then each spring, damper, anti-roll bar and wing change on its own, with exactly what to set and how many clean laps. Each step ticks itself off when a stint with only that change comes in.</p>
+    <button id="tpstart">Start a test programme for the ${esc(run.carName)} at ${esc(trk)}, with this stint's setup as the baseline</button></section>`;
+  const steps=tpStatus(run,P), next=steps.find(s=>!s.complete), doneN=steps.filter(s=>s.complete).length, dt=d=>new Date(d).toLocaleString([], {weekday:"short", day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit"});
+  let blk="";
+  return `<section><h2>Test programme <small>${esc(run.carName)} at ${esc(trk)} · ${doneN} of ${steps.length} done · started ${dt(P.created)}</small></h2>
+   ${next?`<div class="sugg p3" style="margin:0 0 10px"><h3>Next: ${esc(next.label)}</h3><p style="margin:4px 0 0">${next.how} Drive <b>${next.laps} clean laps</b>${next.done?` (${next.done} so far)`:""}.</p></div>`:`<div class="sugg p3" style="margin:0 0 10px"><h3>Programme complete</h3><p style="margin:4px 0 0">Every step is done: the models in this tab now know each of these settings on this car. "What to test next" below shows anything still uncertain.</p></div>`}
+   <div class="tablewrap"><table style="font-size:12px"><tr><th></th><th>Step</th><th>What to set</th><th>Clean laps</th><th>Stints found</th></tr>
+    ${steps.map(s=>{ const head=s.block!==blk?`<tr><td colspan="5" style="background:rgba(127,127,127,.08);font-weight:700">${esc(s.block)}</td></tr>`:""; blk=s.block;
+      return head+`<tr${s===next?' style="background:rgba(80,140,255,.12)"':""}><td><input type="checkbox" class="tpcheck" data-id="${s.id}" ${s.complete?"checked":""} title="${s.manual===undefined?"ticked automatically when the laps are in; click to set it yourself":"set by you; click to change"}"></td>
+        <td><b>${esc(s.label)}</b>${s.manual!==undefined?` <span class="muted" style="font-size:11px">(by hand)</span>`:""}</td><td style="min-width:260px">${s.how}</td>
+        <td style="white-space:nowrap">${s.done>=s.laps?`<span class="ok">${s.done} / ${s.laps}</span>`:`${s.done} / ${s.laps}`}</td>
+        <td style="font-size:11px">${s.stints.length?s.stints.map(r=>`${dt(r.date)} (${r.laps} laps)`).join("<br>"):'<span class="muted">none yet</span>'}</td></tr>`; }).join("")}</table></div>
+   <p class="muted" style="font-size:12px">A step counts a stint when only that setting changed from the baseline (static ride heights and perch offsets may differ: you put those back after a spring change), at this track, in the dry, since the programme started. ${TP_LAPS} clean laps each; a stint under ${TP_LAPS} laps still counts towards the total. If a setting at an extreme is undriveable, three laps tell the story: tick it by hand. Use the same tyres and a similar fuel load throughout.</p>
+   <div class="row" style="gap:8px;margin-top:6px"><button class="ghost" id="tprebase" style="padding:3px 10px">Use this stint's setup as the baseline</button><button class="ghost" id="tpreset" style="padding:3px 10px">Stop this programme</button></div></section>`;
+}
+// --- wing sweep at this track: every wing angle you've run here, and what it gave (downforce, top speed, balance, lap time) ---
+function wingSweepHTML(run, A){
+  const trk=learnTrackOf(run), recs=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===trk && !r.wet && r.date>=LEARN_CUTOFF && r.aero && Number.isFinite(r.aero.w) && r.laps>=3);
+  const g={}; for (const r of recs) (g[r.aero.w]=g[r.aero.w]||[]).push(r);
+  const keys=Object.keys(g).map(Number).sort((a,b)=>a-b);
+  if (keys.length<2) return `<section><h2>Wing sweep at this track</h2><p class="muted">${keys.length?`Only one wing angle run here so far (${keys[0]}).`:"No stints with the wing recorded here yet."} Drive the wing steps of the test programme (Learning (dev)), or any stints at other wing angles, and this shows what each angle gives at this track: downforce, top speed, balance and lap time.</p></section>`;
+  const v200=r=>{ const v=Number.isFinite(r.aero.vF)?r.aero.vF:Number.isFinite(r.aero.vmax)?r.aero.vmax*0.86:NaN; return Number.isFinite(r.aero.df)&&v>100 ? r.aero.df*(200/v)**2 : NaN; };   // downforce scaled to 200 km/h, so stints at different straight speeds compare
+  const M=(L,f)=>{ const v=L.map(f).filter(Number.isFinite); return v.length?median(v):NaN; };
+  const rows=keys.map(w=>{ const L=g[w]; return {w, n:L.length, laps:L.reduce((a,r)=>a+r.laps,0), df:M(L,v200), fp:M(L,r=>r.aero.fpct), vmax:M(L,r=>r.aero.vmax), fast:M(L,r=>r.bal&&r.bal.fast), slow:M(L,r=>r.bal&&r.bal.slow), med:M(L,r=>r.med)}; });
+  const best=rows.filter(r=>Number.isFinite(r.med)).reduce((a,b)=>!a||b.med<a.med?b:a,null);
+  const fit=k=>{ const P=rows.filter(r=>Number.isFinite(r[k])); if (P.length<2) return NaN; const c=fitLS(P.map(r=>[r.w]), P.map(r=>r[k])); return c?c[1]:NaN; };
+  const dDf=fit("df"), dV=fit("vmax"), dFast=fit("fast"), kg=n=>Number.isFinite(n)?Math.round(n/9.81)+" kg":"–";
+  return `<section><h2>Wing sweep at this track <small>every wing angle you've run here (${recs.length} stints): what it gives</small></h2>
+   <div class="tablewrap"><table style="font-size:12px"><tr><th>Wing</th><th>Stints (laps)</th><th>Downforce at 200 km/h</th><th>Front load share</th><th>Top speed</th><th>Balance fast · slow</th><th>Typical lap</th></tr>
+    ${rows.map(r=>`<tr${r===best?' style="font-weight:700"':""}><td>${r.w}${r===best?' <span class="tag">quickest</span>':""}</td><td>${r.n} (${r.laps})</td><td>${kg(r.df)}</td><td>${fmt(r.fp,1)}%</td><td>${fmt(r.vmax,0)} km/h</td>
+      <td><span style="color:${usColor(r.fast)}">${fmt(r.fast,1)}°</span> · <span style="color:${usColor(r.slow)}">${fmt(r.slow,1)}°</span></td><td>${fmtTime(r.med)}${best&&r!==best&&Number.isFinite(r.med)?` <span class="muted">+${(r.med-best.med).toFixed(2)}</span>`:""}</td></tr>`).join("")}</table></div>
+   <p style="margin:6px 0;font-size:13px">${[Number.isFinite(dDf)?`each wing step ${dDf>=0?"adds":"removes"} about <b>${kg(Math.abs(dDf))}</b> of downforce at 200 km/h`:"", Number.isFinite(dV)?`${dV<=0?"costs":"gains"} <b>${Math.abs(dV).toFixed(1)} km/h</b> of top speed`:"", Number.isFinite(dFast)&&Math.abs(dFast)>=0.05?`and moves the fast-corner balance ${dFast>0?"towards understeer":"towards oversteer"} by ${Math.abs(dFast).toFixed(2)}°`:""].filter(Boolean).join(", ").replace(/^./,c=>c.toUpperCase())||"Not enough spread yet to put a number on one wing step."}${best?`. Quickest here so far: wing ${best.w}.`:""}</p>
+   <p class="muted" style="font-size:12px">Downforce is worked out from how far the springs and bump rubbers compress above 200 km/h, scaled to 200 km/h so stints with different straight speeds compare. It's the total on the tyres, not iRacing's aero map. The best wing is a trade between this track's straights (top speed) and its fast corners (downforce), so it differs from track to track: each track keeps its own sweep. Other changes between these stints also move the numbers (the setting history in Compare shows them).</p></section>`;
 }
 // --- 5) what to test next: the change that teaches the model most, given what's bothering the car ---
 function testNextHTML(run, A){
