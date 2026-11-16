@@ -102,7 +102,7 @@ details summary{cursor:pointer;color:var(--muted)}
 .layout{display:grid;grid-template-columns:200px minmax(0,1fr);gap:14px;align-items:start;margin-top:14px}
 .layout .content > section:first-child{margin-top:0}
 .side{position:sticky;top:10px;display:flex;flex-direction:column;gap:4px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px;
-  max-height:calc(100vh - 20px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}   /* the tab list scrolls on its own, the page keeps its place */
+  max-height:calc(100vh - 20px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}   /* the tab list scrolls on its own, the page keeps its place; fitSide() sizes it to what's visible */
 .side > *{flex-shrink:0}
 .side .tab{text-align:left;width:100%;display:flex;justify-content:space-between;align-items:center;border-radius:7px}
 .side .tab[disabled]{opacity:.35;cursor:default}
@@ -2000,6 +2000,15 @@ const areaSug = (run,k) => run.sug.filter(s=>AREAS[k].includes(s.area));
 // ---------- sidebar: App panels (always) + Session windows (when a session is selected) ----------
 const PANELS = [["live","Live"],["drivers","Drivers"],["recordings","Recordings"],["overlays","Overlays"],["settings","Settings"]];
 let LIVE_OK=false, APP_OK=false, APPVER="";
+// the tab list is as tall as the part of the window it can actually use: below the header at the top of the page,
+// and above the end of the page at the bottom, so its last tab (Dev) is always reachable by scrolling the list
+function fitSide(){ const s=document.querySelector(".side"), L=document.querySelector(".layout"); if (!s || !L) return;
+  if (getComputedStyle(s).position!=="sticky"){ s.style.maxHeight=""; return; }
+  const r=L.getBoundingClientRect(), top=Math.max(10, r.top), bottom=Math.min(innerHeight-10, r.bottom);
+  s.style.maxHeight=Math.max(160, bottom-top)+"px"; }
+let fitQ=0; const fitSoon=()=>{ fitSide(); if (fitQ) return; fitQ=setTimeout(()=>{ fitQ=0; fitSide(); }, 60); };   // now, and again once the page has laid out
+addEventListener("scroll", fitSoon, {passive:true}); addEventListener("resize", fitSoon);
+new MutationObserver(fitSoon).observe(document.documentElement, {childList:true, subtree:true});
 function renderNav(){
   const run = runs[current];
   const badge = k => { if (!run || !run.sug || !AREAS[k]) return ""; const n=areaSug(run,k).filter(s=>s.pr>=2).length; return n? ` <span class="badge">${n}</span>` : ""; };
