@@ -160,6 +160,7 @@ Not in the repo: `node_modules`, installers, `.ibt` telemetry, the database, and
 
 | Version | Changes |
 |---|---|
+| 0.14.6 | App shows lap averages only (aero ride heights, tyre temps); "lap-by-lap tables" tick box adds them to the PDF. |
 | 0.14.5 | ARB grid sensitivity from the all-stints model once it is sure of the bars. |
 | 0.14.4 | Cross-track aero platform model (static ride heights for the window at any track's speed) and damper model (fast-damper share by roughness and clicks); new-track predictions on Home; lap-by-lap tyre temperatures hidden (still stored). |
 | 0.14.3 | Setting history (every value of a setting, where, when and what it did); reference lap from all stints (kept automatically, compared in GP); optimal and realistic lap across all stints; tyre temperature model learns across tracks using each lap's load; tread temps per stint; recordings re-read once more. |
