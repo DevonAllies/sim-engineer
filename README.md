@@ -160,6 +160,7 @@ Not in the repo: `node_modules`, installers, `.ibt` telemetry, the database, and
 
 | Version | Changes |
 |---|---|
+| 0.15.0 | Schedule panel from the iRacing season schedule PDF (your series this / next week, endurance rounds, special events, BoP); test programme points to next week's track. |
 | 0.14.10 | Tab list sized to the visible window so the last group (Dev) is always reachable. |
 | 0.14.9 | Test programme in Learning (dev): baseline, springs min/max, dampers, bars and wing (per track), one change at a time, auto-ticked from your stints with laps needed; wing sweep per track in Aero. |
 | 0.14.8 | "Your inputs" (GP and FFB tabs): steering, brake and throttle too smooth or too aggressive, judged by what the car did, with tyre-heat and force feedback advice; Learning moved to a Dev tab group. |

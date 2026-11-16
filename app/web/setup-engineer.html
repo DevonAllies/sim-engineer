@@ -193,6 +193,7 @@ tr.chg td{color:var(--ink)}
       <div class="grid" id="livetiles"></div>
       <p class="muted" style="font-size:12px;margin:8px 0 0">Each time you leave the pits a new stint starts and appears under Session. The analysis updates every lap. When you drive into the pit lane or back to the garage, the stint ends and the tyre temperatures are read.</p>
     </section>
+    <section id="p-schedule" class="panel hidden"><div id="schedbox"><p class="muted">Loading the schedule…</p></div></section>
     <section id="p-settings" class="panel hidden">
       <h2>Settings <small>targets and assumptions</small></h2>
       <div class="settings" id="settings"></div>
@@ -1998,7 +1999,47 @@ const TAB_GROUPS = [
 const AREAS = { tyres:["Tyres","Tyre wear"], aero:["Aero platform","Aero trim","Gearing"], balance:["Balance","Corner entry","Corner exit"], brakes:["Brakes"], dampers:["Dampers","Track"], fuel:["Fuel"] };
 const areaSug = (run,k) => run.sug.filter(s=>AREAS[k].includes(s.area));
 // ---------- sidebar: App panels (always) + Session windows (when a session is selected) ----------
-const PANELS = [["live","Live"],["drivers","Drivers"],["recordings","Recordings"],["overlays","Overlays"],["settings","Settings"]];
+const PANELS = [["live","Live"],["drivers","Drivers"],["recordings","Recordings"],["schedule","Schedule"],["overlays","Overlays"],["settings","Settings"]];
+// ---------- the iRacing season schedule (parsed from iRacing's season schedule PDF into schedule.json: app/scripts/parse-schedule.js) ----------
+let SCHED=null, SCHED_LOAD=null;
+function schedLoad(){ if (SCHED || SCHED_LOAD) return SCHED_LOAD; SCHED_LOAD=fetch("schedule.json",{cache:"no-store"}).then(r=>r.ok?r.json():null).then(j=>{ SCHED=j||{series:[]}; if (view==="schedule") renderSchedule(); if (view==="learn" && runs.length) render(); return SCHED; }).catch(()=>{ SCHED={series:[]}; }); return SCHED_LOAD; }
+const SCHED_DEFAULT=[/^GT Sprint Series/, /^GT3 Challenge Fixed/, /^IMSA iRacing Series - Fixed/, /^IMSA iRacing Series by/, /^LMP2 Challenge/, /^Prototype Challenge/, /^GT Endurance Series/, /^IMSA Endurance Series/];
+const BOP_CODE={acuransxevo22gt3:"NSXE22", lamborghinievogt3:"LGT3", mercedesamgevogt3:"MGT3E", porsche992rgt3:"992R", dallarap217:"P217"};
+// special events (iRacing's special events calendar): the ones with GT3, LMP2, GTP or the Porsche Cup first
+const SPECIAL=[
+  {name:"992 Endurance Cup", dates:"27–29 Nov 2026", start:"2026-11-27", track:"Spa-Francorchamps", length:"12 hours", cars:"Porsche 911 Cup (992.2), single class", fit:true},
+  {name:"Production Car Challenge @ VIR", dates:"18–19 Dec 2026", start:"2026-12-18", track:"VIRginia International Raceway – Grand Course", length:"4 hours (solo or team)", cars:"MX-5, BMW M2 CS, Clio, GR86"},
+  {name:"Daytona 24 (expected)", dates:"mid-January 2027 (not announced yet)", start:"2027-01-15", track:"Daytona International Speedway – Road Course", length:"24 hours", cars:"GTP, LMP2, GT3 (multiclass) – usually", fit:true, tbc:true}];
+function schedWeek(s, t){ const ts=t||Date.now(); let cur=null, next=null; for (const w of s.weeks){ const st=Date.parse(w.start+"T00:00:00Z"); if (st<=ts) cur=w; else if (!next) next=w; } return {cur, next}; }
+function schedMine(){ let sel=null; try { sel=PREFS.get("schedSeries"); } catch(e){} const all=(SCHED&&SCHED.series)||[]; return Array.isArray(sel) ? all.filter(s=>sel.includes(s.name)) : all.filter(s=>SCHED_DEFAULT.some(re=>re.test(s.name))); }
+// tracks for next week in your series (the test programme points you there)
+function schedNextTracks(){ if (!SCHED) { schedLoad(); return []; } const o={}; for (const s of schedMine()){ const {next}=schedWeek(s); if (next) (o[next.track]=o[next.track]||[]).push(s.name.replace(/ - 2026.*| by .*| 2026.*/,"")); } return Object.entries(o).map(([track,series])=>({track, series})); }
+function renderSchedule(){
+  const box=$("#schedbox"); if (!box) return; if (!SCHED){ schedLoad(); return; }
+  const all=SCHED.series||[], mine=schedMine(), carCodes=[...new Set(runs.map(r=>BOP_CODE[r.carPath]).filter(Boolean))], myCode=carCodes[0]||"NSXE22";
+  const d=s=>new Date(s+"T12:00:00Z").toLocaleDateString([], {day:"2-digit", month:"short"});
+  const stints=track=>Object.values(LEARN||{}).filter(r=>r.trackName && track.toLowerCase().startsWith(r.trackName.toLowerCase().split(" ")[0]) ).length;
+  const row=s=>{ const {cur,next}=schedWeek(s), w=cur||s.weeks[0];
+    const bop=x=>x&&x.bop&&x.bop[myCode]?` <span class="muted" style="font-size:11px">${myCode}: ${esc(x.bop[myCode])}</span>`:"";
+    return `<tr><td><b>${esc(s.name.replace(/ - 2026 Season 4| 2026 Season 4| - 2026 Season/,""))}</b><div class="muted" style="font-size:11px">${esc(s.every||"")}</div></td>
+      <td>${cur?`<b>${esc(cur.track)}</b><div class="muted" style="font-size:11px">week ${cur.week} from ${d(cur.start)} · ${esc(cur.length||"")}${cur.simTime?` · sim ${esc(cur.simTime.slice(11))}`:""}</div>${bop(cur)}`:"–"}</td>
+      <td>${next?`<b>${esc(next.track)}</b><div class="muted" style="font-size:11px">week ${next.week} from ${d(next.start)} · ${esc(next.length||"")}</div>${bop(next)}`:'<span class="muted">season ends</span>'}</td></tr>`; };
+  const endu=mine.filter(s=>/Endurance|Creventic|Global Endurance/i.test(s.name));
+  const nt=schedNextTracks();
+  const sportsAll=all.filter(s=>s.discipline==="SPORTS CAR");
+  box.innerHTML = `<h2>Schedule <small>${esc(SCHED.source||"")} · iRacing weeks start on Tuesday (00:00 UTC)</small></h2>
+   ${nt.length?`<div class="sugg p3" style="margin:0 0 10px"><h3>Test for next week</h3><p style="margin:4px 0 0">${nt.map(x=>`<b>${esc(x.track)}</b> (${esc(x.series.join(", "))})`).join(" · ")}. Open a stint there (Test Drive or a practice) and start the test programme for that track (Learning (dev)).</p></div>`:""}
+   <div class="tablewrap"><table style="font-size:13px"><tr><th>Series</th><th>This week</th><th>Next week</th></tr>${mine.map(row).join("")||`<tr><td colspan="3" class="muted">Pick your series below.</td></tr>`}</table></div>
+   ${endu.length?`<h3 style="margin:14px 0 4px">Endurance rounds</h3><div class="tablewrap"><table style="font-size:12px"><tr><th>Series</th><th>Coming up</th></tr>${endu.map(s=>`<tr><td><b>${esc(s.name.replace(/ - 2026.*| 2026.*/,""))}</b><div class="muted" style="font-size:11px">${esc(s.every||"")}</div></td><td>${s.weeks.filter(w=>Date.parse(w.start+"T23:59:59Z")>=Date.now()-6*864e5).map(w=>`${d(w.start)}: <b>${esc(w.track)}</b> (${esc(w.length||"")})`).join("<br>")||'<span class="muted">none left this season</span>'}</td></tr>`).join("")}</table></div>`:""}
+   <h3 style="margin:14px 0 4px">Special events</h3><div class="tablewrap"><table style="font-size:12px"><tr><th>Event</th><th>When</th><th>Track</th><th>Length</th><th>Cars</th></tr>
+    ${SPECIAL.filter(e=>Date.parse(e.start)>=Date.now()-3*864e5).map(e=>`<tr${e.fit?' style="font-weight:600"':""}><td>${esc(e.name)}</td><td>${esc(e.dates)}</td><td>${esc(e.track)}</td><td>${esc(e.length)}</td><td>${esc(e.cars)}</td></tr>`).join("")}</table></div>
+   <p class="muted" style="font-size:12px">Special events from iRacing's special events calendar (no more GT3 / LMP2 / GTP specials in 2026; the Daytona 24 is usually mid-January but isn't on iRacing's 2027 calendar yet). Bold = your kind of car.</p>
+   <details style="margin-top:10px"><summary><b>Your series</b> <span class="muted">(pick which ones show above)</span></summary>
+    <div style="columns:2;font-size:12px;margin-top:6px">${sportsAll.map(s=>`<label style="display:block"><input type="checkbox" class="schedpick" value="${esc(s.name)}" ${mine.includes(s)?"checked":""}> ${esc(s.name.replace(/ - 2026 Season 4| 2026 Season 4/,""))}</label>`).join("")}</div></details>
+   <details style="margin-top:8px"><summary><b>Full season</b> for your series</summary>${mine.map(s=>`<h4 style="margin:10px 0 2px">${esc(s.name)}</h4><div class="muted" style="font-size:11px">${esc(s.cars)}</div><ol style="margin:4px 0 0 20px;font-size:12px">${s.weeks.map(w=>`<li value="${w.week}">${d(w.start)}: ${esc(w.track)} · ${esc(w.length||"")}${w.bop&&w.bop[myCode]?` · ${myCode}: ${esc(w.bop[myCode])}`:""}</li>`).join("")}</ol>`).join("")}</details>
+   <p class="muted" style="font-size:12px;margin-top:8px">New season: put iRacing's season schedule PDF in the app folder and run <code>app/scripts/parse-schedule.js</code> (or ask your engineer) to refresh this.</p>`;
+  box.querySelectorAll(".schedpick").forEach(c=>c.onchange=()=>{ const sel=[...box.querySelectorAll(".schedpick:checked")].map(x=>x.value); try { PREFS.set("schedSeries", sel); } catch(e){} renderSchedule(); });
+}
 let LIVE_OK=false, APP_OK=false, APPVER="";
 // the tab list is as tall as the part of the window it can actually use: below the header at the top of the page,
 // and above the end of the page at the bottom, so its last tab (Dev) is always reachable by scrolling the list
@@ -2027,6 +2068,7 @@ function showPanels(){
   $("#p-drivers").classList.toggle("hidden", !(view==="drivers" && LIVE_OK));
   if (view==="drivers") drawTiming(true);
   $("#p-settings").classList.toggle("hidden", view!=="settings");
+  { const p=$("#p-schedule"); if (p){ p.classList.toggle("hidden", view!=="schedule"); if (view==="schedule") renderSchedule(); } }
   $("#sessbar").classList.toggle("hidden", !isA || runs.length<2);
 }
 function render(){
@@ -5158,12 +5200,14 @@ function tpStatus(run, P){
   return steps; }
 function testProgHTML(run){
   const P=tpGet(run), trk=((run.info.WeekendInfo||{}).TrackDisplayName)||"this track";
-  if (!P) return `<section><h2>Test programme <small>one change at a time from a baseline, so the app learns this car properly</small></h2>
+  const nt=schedNextTracks(), here=((run.info.WeekendInfo||{}).TrackDisplayName||"").toLowerCase(), nextHere=nt.some(x=>here && x.track.toLowerCase().startsWith(here.split(" ")[0]));
+  const nextNote = nt.length ? `<p class="muted" style="margin:4px 0;font-size:12px">${nextHere?`<b class="ok">This is next week's track</b> in ${esc(nt.find(x=>x.track.toLowerCase().startsWith(here.split(" ")[0])).series.join(", "))}.`:`Next week (Schedule): ${nt.map(x=>`<b>${esc(x.track)}</b> (${esc(x.series.join(", "))})`).join(" · ")}. A programme is kept per track: open a stint there to test for next week.`}</p>` : "";
+  if (!P) return `<section><h2>Test programme <small>one change at a time from a baseline, so the app learns this car properly</small></h2>${nextNote}
     <p style="margin:4px 0">A list of stints to drive: a baseline, then each spring, damper, anti-roll bar and wing change on its own, with exactly what to set and how many clean laps. Each step ticks itself off when a stint with only that change comes in.</p>
     <button id="tpstart">Start a test programme for the ${esc(run.carName)} at ${esc(trk)}, with this stint's setup as the baseline</button></section>`;
   const steps=tpStatus(run,P), next=steps.find(s=>!s.complete), doneN=steps.filter(s=>s.complete).length, dt=d=>new Date(d).toLocaleString([], {weekday:"short", day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit"});
   let blk="";
-  return `<section><h2>Test programme <small>${esc(run.carName)} at ${esc(trk)} · ${doneN} of ${steps.length} done · started ${dt(P.created)}</small></h2>
+  return `<section><h2>Test programme <small>${esc(run.carName)} at ${esc(trk)} · ${doneN} of ${steps.length} done · started ${dt(P.created)}</small></h2>${nextNote}
    ${next?`<div class="sugg p3" style="margin:0 0 10px"><h3>Next: ${esc(next.label)}</h3><p style="margin:4px 0 0">${next.how} Drive <b>${next.laps} clean laps</b>${next.done?` (${next.done} so far)`:""}.</p></div>`:`<div class="sugg p3" style="margin:0 0 10px"><h3>Programme complete</h3><p style="margin:4px 0 0">Every step is done: the models in this tab now know each of these settings on this car. "What to test next" below shows anything still uncertain.</p></div>`}
    <div class="tablewrap"><table style="font-size:12px"><tr><th></th><th>Step</th><th>What to set</th><th>Clean laps</th><th>Stints found</th></tr>
     ${steps.map(s=>{ const head=s.block!==blk?`<tr><td colspan="5" style="background:rgba(127,127,127,.08);font-weight:700">${esc(s.block)}</td></tr>`:""; blk=s.block;
