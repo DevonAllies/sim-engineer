@@ -87,6 +87,9 @@ Overlays can be moved and resized in edit mode.
 - **Temperature over the race (Hanna, races of 90 min+):** track and air temperature through the race from the sim time of day, with the starting pressure for each tyre change and the lap-time and balance shift.
 - **Starting setup at a new track (Home):** your best setup at the most similar track you've driven (straights, slow / fast corners, braking, kerbs, top speed).
 - **Realistic target lap (GP):** each sector at the time you beat on one lap in three.
+- **Tyre heat sources (Tyres):** second by second, how much of each axle's tyre heat comes from braking, cornering load, sliding and wheel slip; how to drive for more (or less) heat, and the setup levers with their measured effect (brake bias, pressure, toe, bars, camber).
+- **Grip against tyre temperature (Tyres):** grip at the limit per lap against tyre temperature: what cold tyres cost, and the **measured tyre window** (where the car keeps 98.5% of its peak grip), which replaces the generic window once there are 20+ laps over 15°C+.
+- **Wet and dry:** track wetness and tyre compound are recorded; tyre models, windows and the setup model learn wet and dry separately.
 - **Odd laps:** laps clearly slower than your typical (traffic, a moment) are left out of the analysis and listed.
 
 ### Data, reports and history
@@ -157,6 +160,7 @@ Not in the repo: `node_modules`, installers, `.ibt` telemetry, the database, and
 
 | Version | Changes |
 |---|---|
+| 0.14.1 | Tyre heat sources with driving and setup advice, grip against tyre temperature, measured tyre window, wet / dry learned separately. |
 | 0.14.0 | Models: all-stints setup model with track conditions, what to test next, measured fuel effect, tyre temperature model, lift-and-coast planner, race strategy, temperature over the race, starting setup from the most similar track, realistic target lap, odd lap / stint detection. |
 | 0.13.7 | Tab list scrolls on its own, independent of the page. |
 | 0.13.6 | Rake against speed: measured vs aero-only (acceleration squat removed). |

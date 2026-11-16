@@ -430,7 +430,8 @@ const WANT = ["SessionTime","Lap","LapDistPct","LapDist","Speed","Throttle","Bra
  "LFtempCL","LFtempCM","LFtempCR","RFtempCL","RFtempCM","RFtempCR","LRtempCL","LRtempCM","LRtempCR","RRtempCL","RRtempCM","RRtempCR",
  "LFtempL","LFtempM","LFtempR","RFtempL","RFtempM","RFtempR","LRtempL","LRtempM","LRtempR","RRtempL","RRtempM","RRtempR",
  "LFwearL","LFwearM","LFwearR","RFwearL","RFwearM","RFwearR","LRwearL","LRwearM","LRwearR","RRwearL","RRwearM","RRwearR",
- "dcBrakeBias","dcTractionControl","dcABS","FuelLevel","LapLastLapTime","LapBestLapTime","LapDeltaToBestLap","PlayerCarInPitStall"];
+ "dcBrakeBias","dcTractionControl","dcABS","FuelLevel","LapLastLapTime","LapBestLapTime","LapDeltaToBestLap","PlayerCarInPitStall",
+ "TrackWetness","Precipitation","WeatherDeclaredWet","PlayerTireCompound","AirTemp","TrackTempCrew"];   // wet or dry, and which tyres: models learn each separately
 
 function cstr(bytes){ let s=""; for(const b of bytes){ if(!b) break; s+=String.fromCharCode(b);} return s; }
 
@@ -959,14 +960,17 @@ function garageFresh(run){
 function learnedOffset(run){ if (!LEARN) return null; const v=Object.values(LEARN).filter(r=>r.car===run.carPath && Number.isFinite(r.tOff)).map(r=>r.tOff); return v.length ? median(v) : null; }
 function tyreWindow(run, A, S){
   const T=A.endTyres; if (!T) return null;
-  const lo=+S.tyreLo||80, hi=+S.tyreHi||95;
+  let lo=+S.tyreLo||80, hi=+S.tyreHi||95;
   let off=0, how="garage reading";
   if (T.avg){ const g=garageFresh(run);
     if (g){ const d=Object.keys(g).filter(c=>T.t[c]).map(c=>((g[c].inner+g[c].mid+g[c].outer)-(T.t[c].inner+T.t[c].mid+T.t[c].outer))/3); off=median(d); A.tOff=off; how="garage-equivalent, gap measured this stint"; }
     else { const L=learnedOffset(run); off = L!=null ? L : 22; how = L!=null ? "garage-equivalent, gap remembered from your stints" : "garage-equivalent, estimated (+22°C)"; } }
+  // the window this car's tyres actually work in, measured from grip against temperature (your laps, same dry / wet conditions): replaces the generic one once it's sure
+  let measured=null; try { measured=measuredWindow(run, A, off); } catch(e){}
+  const generic={lo, hi}; if (measured && measured.sure){ lo=measured.lo; hi=measured.hi; }
   const tyres={}; for (const [c,t] of Object.entries(T.t)){ const eq=(t.inner+t.mid+t.outer)/3+off; tyres[c]={eq, state: eq<lo-2?"cold":eq>hi+2?"hot":"ok"}; }
   const ax = cs => { const v=cs.filter(c=>tyres[c]).map(c=>tyres[c].eq); return v.length ? v.reduce((a,b)=>a+b,0)/v.length : NaN; };
-  return {lo, hi, off, how, tyres, front:ax(["LF","RF"]), rear:ax(["LR","RR"])};
+  return {lo, hi, off, how, tyres, front:ax(["LF","RF"]), rear:ax(["LR","RR"]), measured, generic};
 }
 function endTyres(run, rep){
   const y = yamlTyres(run.endFlat || run.setupFlat), vals = Object.values(y).flatMap(t=>[t.outer,t.mid,t.inner]);
@@ -2035,7 +2039,7 @@ function render(){
     graphs: () => { try { return graphsHTML(run, A, S); } catch(e){ console.error(e); return `<section><h2>Graphs</h2><p class="muted">Couldn't draw the graphs for this stint (${esc(e.message)}).</p></section>`; } },
     tyres: () => `<section><h2>Tyres <small>temperatures, pressures, camber and wear</small></h2><div class="two"><div>${tiresHTML(A,S,run)}</div><div>${wearHTML(A)}
         <div class="grid" style="margin-top:10px"><div class="stat"><div class="k">Rear wheelspin</div><div class="v">${fmt((A.spin||0)*100,0)}%</div><div class="s">of throttle &gt;60% samples</div></div>
-        <div class="stat"><div class="k">Inside rear spin</div><div class="v">${fmt((A.inSpin||0)*100,0)}%</div><div class="s">while cornering on power</div></div></div></div></div></section>` + tyreModelHTML(run, A, S) + racePressureHTML(run, A, S) + safe(()=>tyreThermalHTML(run, A, S),"thermal") + areaCards("tyres"),
+        <div class="stat"><div class="k">Inside rear spin</div><div class="v">${fmt((A.inSpin||0)*100,0)}%</div><div class="s">while cornering on power</div></div></div></div></div></section>` + tyreModelHTML(run, A, S) + racePressureHTML(run, A, S) + safe(()=>tyreThermalHTML(run, A, S),"thermal") + safe(()=>gripTempHTML(run, A, S),"griptemp") + safe(()=>tyreHeatHTML(run, A, S),"heat") + areaCards("tyres"),
     aero: () => aeroHTML(run, A, S) + optimalRakeHTML(run, A, S) + rakePhasesHTML(run, A, S) + aeroMapHTML(run, A) + aeroOptionsHTML(run, A, S) + bumpHTML(run, A) + bottomHTML(run, A) + downforceHTML(run, A) + areaCards("aero"),
     balance: () => safeBalanceFeel(run, A) + `<section><h2>Balance <small>understeer angle in degrees (front wheel): higher = more understeer</small></h2>
    ${balanceReady(run,A)?"":`<div class="sugg p2" style="margin:0 0 10px"><h3>First read only</h3><p style="margin:4px 0 0">${balanceWait(run,A)}</p></div>`}
@@ -2897,7 +2901,7 @@ function racePressure(run, A, S){
   const wi=run.info.WeekendInfo||{}, tNow=parseFloat(wi.TrackSurfaceTemp), aNow=parseFloat(wi.TrackAirTemp);
   const tRace=Number.isFinite(+RACE.trackT)&&RACE.trackT!==""?+RACE.trackT:tNow, aRace=Number.isFinite(+RACE.airT)&&RACE.airT!==""?+RACE.airT:aNow;
   if (!Number.isFinite(S.hotMin)||!Number.isFinite(S.hotMax)||!Number.isFinite(tRace)||!Number.isFinite(aRace)) return null;
-  const pts=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.laps>=3 && r.tyreT && Number.isFinite(r.tyreT.pF) && Number.isFinite(r.tyreT.sPF) && Number.isFinite(r.trackT) && Number.isFinite(r.airT) && r.date>=LEARN_CUTOFF)
+  const pts=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.laps>=3 && sameSurface(r,run) && r.tyreT && Number.isFinite(r.tyreT.pF) && Number.isFinite(r.tyreT.sPF) && Number.isFinite(r.trackT) && Number.isFinite(r.airT) && r.date>=LEARN_CUTOFF)
     .map(r=>({track:r.trackT, air:r.airT, start:r.tyreT.sPF, hot:r.tyreT.pF, same:r.track===learnTrackOf(run), Teff:(r.tyreT.pF+ATM)*(r.airT+273.15)/(r.tyreT.sPF+ATM)-273.15}));
   // this stint too, if it isn't remembered yet
   const sp=parseFloat((SET.press(run,"leftfront")||{}).raw), T=A.endTyres&&A.endTyres.t, hot=T&&T.LF&&T.RF&&Number.isFinite(T.LF.hot)&&Number.isFinite(T.RF.hot)?(T.LF.hot+T.RF.hot)/2:NaN;
@@ -3743,6 +3747,7 @@ function learnRecord(run, A, opts){
   try { rec.lc=liftCoastOf(run, A); } catch(e){}
   // for the models: the sim's time of day (track temperature over a race), the track's character (starting setup at a new track)
   { const tod=todHour(wi); if (Number.isFinite(tod)) rec.tod=tod; }
+  { const W=wetOf(run); rec.wet=W.wet; rec.compound=W.compound; if (W.wetness) rec.wetness=W.wetness; }   // wet and dry are learned separately
   try { const P=trackProfile(run, A); rec.prof={w:Object.fromEntries(Object.entries(P.w).map(([k,v])=>[k,+v.toFixed(3)])), vmax:num(P.vmax), corners:P.corners}; } catch(e){}   // lift and coast: where and how long you coast before each braking zone, and what it saves in fuel
   if (dry) return rec;
   run.learnedId=rec.id; learnStore.put(rec);
@@ -3757,11 +3762,12 @@ function lapRowsOf(run, A){
     const per={}; for (const p of (A.endTyres&&A.endTyres.perLap)||[]) per[p.lap]=p.t;
     const off=A.tw&&Number.isFinite(A.tw.off)?A.tw.off:0, ax=(t,cs)=>{ const v=cs.filter(c=>t[c]).map(c=>(t[c].inner+t[c].mid+t[c].outer)/3); return v.length? +(v.reduce((a,b)=>a+b,0)/v.length+off).toFixed(1) : null; };
     const tAt=(l,p)=>{ for (let j=l.s+1;j<l.e;j++) if (ch.LapDistPct[j]>=p && ch.LapDistPct[j-1]<p) return ch.SessionTime[j]; return NaN; };
-    const lap0=Math.min(...(A.laps||[]).map(l=>l.lap));
+    const lap0=Math.min(...(A.laps||[]).map(l=>l.lap)), GT={}; try { for (const p of gripTemp(run,A)||[]) GT[p.lap]=p; } catch(e){}   // each lap's grip and tyre temperature (grip-temperature curve, measured window)
     return (A.laps||[]).filter(l=>l.full || l.time>20).map(l=>{
       const row={lap:l.lap, time:+l.time.toFixed(3), clean:!!(l.valid && l.off<0.5), used:!!l.rep, best:!!l.best, offTrack_s:+(l.off||0).toFixed(2), full:!!l.full, age:l.lap-lap0, odd:!!l.odd};   // age = laps on these tyres in this stint
       if (ch.FuelLevel){ const f=ch.FuelLevel[l.s]-ch.FuelLevel[l.e-1]; if (f>0 && f<20) row.fuel=+f.toFixed(3); row.fuelL=+ch.FuelLevel[l.s].toFixed(2); }   // fuel in the tank at the start of the lap (the fuel-weight model)
       const t=per[l.lap]; if (t){ row.tyreF=ax(t,["LF","RF"]); row.tyreR=ax(t,["LR","RR"]); }
+      const gt=GT[l.lap]; if (gt){ row.g=+gt.g.toFixed(3); row.tAll=+gt.T.toFixed(1); }
       if (l.full && secs.length>1){ const b=[...secs.slice(1).map(p=>tAt(l,p))], st=ch.SessionTime[l.s], s=[];
         let prev=st; for (const x of b){ if (!Number.isFinite(x)){ s.length=0; break; } s.push(+(x-prev).toFixed(3)); prev=x; }
         if (s.length){ s.push(+(st+l.time-prev).toFixed(3)); row.sectors=s; row.s1=s[0]; row.s2=s[1]; row.s3=s.length>2?s.slice(2).reduce((a,b)=>a+b,0):undefined; } }
@@ -4733,7 +4739,7 @@ const SM_DERIVED=/(^|\.)(CenterFrontSplitterHeight|FWtdist|CrossWeight|NoseWeigh
 function smVals(setup){ const o={}; for (const [p,raw] of Object.entries(setup||{})){ const v=learnNum(raw); if (!Number.isFinite(v)) continue; const k=learnNorm(p); if (SM_DERIVED.test(k)) continue; (o[k]=o[k]||[]).push(v); } for (const k in o) o[k]=mean(o[k]); return o; }
 function setupModel(car){
   const ck=car+"|"+LEARN_VER; if (SM_CACHE[ck]!==undefined) return SM_CACHE[ck];
-  let R=Object.values(LEARN||{}).filter(r=>r.car===car && r.laps>=MIN_LAPS && r.date>=LEARN_CUTOFF && Number.isFinite(r.med) && r.setup && r.bal);
+  let R=Object.values(LEARN||{}).filter(r=>r.car===car && r.laps>=MIN_LAPS && r.date>=LEARN_CUTOFF && Number.isFinite(r.med) && r.setup && r.bal && !r.wet);   // dry stints: the wet has its own balance
   if (R.length<4) return SM_CACHE[ck]=null;
   const V=R.map(r=>smVals(r.setup));
   const keys=[...new Set(V.flatMap(o=>Object.keys(o)))].filter(k=>{ const v=V.map(o=>o[k]).filter(Number.isFinite); return v.length>=R.length*0.8 && new Set(v.map(x=>+x.toFixed(4))).size>=2; });
@@ -4815,7 +4821,8 @@ function lapRowsFor(recs){
   const miss=recs.filter(r=>LROWS[r.id]===undefined);
   if (miss.length && window.se && window.se.dataLaps && !LROWS_PEND){ LROWS_PEND=true;
     (async()=>{ for (const r of miss.slice(0,120)){ try { LROWS[r.id]=(await window.se.dataLaps(r.id))||[]; } catch(e){ LROWS[r.id]=[]; } }
-      LROWS_PEND=false; MODEL_VER++; if (runs.length && ["tyres","hanna","graphs","learn"].includes(view)) rerender(); })(); }
+      LROWS_PEND=false; MODEL_VER++; runs.forEach(r=>{ if (r.A && r.A.tw && r.A.tw.measured && !r.A.tw.measured.sure) r.A.tw=null; });   // more laps loaded: the tyre window may now be measurable
+      if (runs.length && ["tyres","hanna","graphs","learn"].includes(view)) rerender(); })(); }
   return recs.map(r=>({r, rows:LROWS[r.id]})).filter(x=>Array.isArray(x.rows)); }
 const thisStintRows = (run, A) => { try { return {r:{id:"this", trackT:parseFloat((run.info.WeekendInfo||{}).TrackSurfaceTemp), airT:parseFloat((run.info.WeekendInfo||{}).TrackAirTemp), med:median(A.rep.map(l=>l.time))}, rows:lapRowsOf(run,A)}; } catch(e){ return null; } };
 // --- 3) the fuel effect, measured: lap time against fuel load, tyre age and track temperature over all your stints here ---
@@ -4845,7 +4852,7 @@ const fuelK = (run, A) => { try { const F=fuelModel(run,A); return F&&F.ok ? {k:
 // --- 4) tyre temperature model: each lap the tyre heats toward a track-temperature-dependent balance point ---
 // T(next lap) − T = α·(T∞ − T), with T∞ = a + b·track temperature; fitted per axle over every lap of your stints in this car
 function tyreThermal(run, A){
-  const recs=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.date>=LEARN_CUTOFF && r.laps>=3 && Number.isFinite(r.trackT));
+  const recs=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.date>=LEARN_CUTOFF && r.laps>=3 && Number.isFinite(r.trackT) && sameSurface(r,run));
   const D=lapRowsFor(recs); if (!(LEARN||{})[run.learnedId]){ const t=thisStintRows(run,A); if (t && Number.isFinite(t.r.trackT)) D.push(t); }
   const out={n:D.length};
   for (const ax of ["F","R"]){ const X=[], y=[];
@@ -4873,6 +4880,138 @@ function tyreThermalHTML(run, A, S){
        bands:Number.isFinite(S.hotMin)?[{y0:S.hotMin, y1:S.hotMax, color:"#2a9d55", op:0.12}]:[], series:[{pts:pr, color:"#4a8fd8", width:2, label:"front"}]})]:[])])}
    <p style="margin:6px 0">${[w(F,"Front"), w(R,"Rear")].filter(Boolean).join(". ")}.</p>
    <p class="muted" style="font-size:12px">How: each lap the tyre closes a share of the gap to the temperature it settles at, and that settling temperature rises with the track temperature. Both are fitted on every lap of your stints in this car (${(M.F||M.R).n} lap-to-lap steps, α ${fmt((M.F||M.R).alpha,2)} per lap${(M.F||M.R).bEst?"; only one track temperature in your data so far, so +0.6°C per °C of track is assumed":`, +${fmt((M.F||M.R).b,2)}°C per °C of track`}). Tyres start at the air temperature (no blankets). The pressure line uses the race starting pressure from the gas law above. Pressure and camber changes also move the temperature; this predicts the setup you're running.</p></section>`;
+}
+// --- wet or dry, and which tyre compound (each learns separately: dry data never predicts the wet) ---
+const WETNESS=["unknown","dry","mostly dry","very lightly wet","lightly wet","moderately wet","very wet","extremely wet"];
+function wetOf(run){
+  if (run._wet) return run._wet; const ch=run.ch, n=run.n, mid=k=>{ const a=ch[k]; if (!a||!n) return NaN; const v=[]; for (let j=0;j<n;j+=Math.max(1,Math.floor(n/400))) v.push(a[j]); return median(v); };
+  const wn=mid("TrackWetness"), decl=mid("WeatherDeclaredWet"), ci=mid("PlayerTireCompound");
+  const tyres=((run.info.DriverInfo||{}).DriverTires)||[], t=tyres.find(x=>+x.TireIndex===+ci), stype=(run.setupFlat||[]).find(e=>/TireType|TyreType|Compound/i.test(e.path));
+  const compound=(t&&t.TireCompoundType) || (stype&&stype.raw.trim()) || "Dry";
+  const wet=/wet|rain|inter/i.test(compound) || decl>0.5 || wn>=4;
+  return run._wet={wet:!!wet, compound:String(compound), wetness:Number.isFinite(wn)?WETNESS[Math.round(wn)]||"":"", key:wet?"wet":"dry"}; }
+const sameSurface = (r, run) => (r.wet?"wet":"dry")===wetOf(run).key;   // a remembered stint driven in the same conditions as this one
+const wetNote = run => { const W=wetOf(run); return W.wet ? `<div class="sugg p2" style="margin:0 0 8px"><h3>Wet session${W.wetness?` (track ${esc(W.wetness)})`:""} · ${esc(W.compound)} tyres</h3><p style="margin:4px 0 0">Tyre models, windows and the setup learning use your wet stints only. ${Object.values(LEARN||{}).some(r=>r.wet&&r.car===run.carPath)?"":"This is your first wet stint in this car: it's learning, so the numbers firm up after a few wet stints."}</p></div>` : ""; };
+// --- tyre heat: where it comes from, so you know how to drive (and set the car up) for more or less of it ---
+// Each second, an axle's tyre temperature rises with the work the tyres do and falls with cooling:
+//   dT/dt = c_brake·braking power + c_corner·cornering power + c_slide·sliding + c_slip·wheel slip − k·(T − air)·(1 + speed/30)
+// fitted on every second of the stint (out laps included: they're where the tyres heat up most)
+function tyreHeat(run, A){
+  if (A._heat!==undefined) return A._heat; const ch=run.ch; if (!ch.LFtempM || !ch.LongAccel) return A._heat=null;
+  const G=9.81, tick=Math.round(run.tick), air=parseFloat((run.info.WeekendInfo||{}).TrackAirTemp);
+  const biasSet=(run.setupFlat||[]).find(e=>/BrakePressureBias$/i.test(e.path)), b0=biasSet?learnNum(biasSet.raw):NaN;
+  const bias=j=>{ const v=ch.dcBrakeBias?ch.dcBrakeBias[j]:NaN; const x=Number.isFinite(v)&&v>30&&v<80?v:Number.isFinite(b0)&&b0>30&&b0<80?b0:56; return x/100; };
+  const axT=(ax,j)=>{ const cs=ax==="F"?["LF","RF"]:["LR","RR"]; let s=0; for (const c of cs) s+=(ch[c+"tempL"][j]+ch[c+"tempM"][j]+ch[c+"tempR"][j])/3; return s/2; };
+  const ws=(cs,j)=>{ let s=0,n=0; for (const c of cs){ const a=ch[c+"speed"]; if (a){ s+=Math.abs(a[j]); n++; } } return n? s/n : NaN; };
+  const ok=j=>ch.Speed[j]>8 && !(ch.OnPitRoad&&ch.OnPitRoad[j]) && !(ch.IsOnTrack&&!ch.IsOnTrack[j]);
+  const terms={F:["brake","corner","slide","lock"], R:["brake","corner","slide","drive","spin"]}, out={};
+  for (const ax of ["F","R"]){ const X=[], y=[], Ps=[];
+    for (let j0=0;j0+tick<run.n;j0+=tick){ let good=true; const s={brake:0,corner:0,slide:0,lock:0,drive:0,spin:0,cool:0};
+      for (let j=j0;j<j0+tick;j++){ if (!ok(j)){ good=false; break; } const v=ch.Speed[j], ax_=ch.LongAccel[j]/G, ay=Math.abs(ch.LatAccel[j])/G, T=axT(ax,j), u=A.us?A.us[j]:NaN;
+        const brk=Math.max(0,-ax_)*v*(ch.Brake[j]>0.03?1:0.2);   // with the brake on; a little engine braking otherwise
+        s.brake+=brk*(ax==="F"?bias(j):1-bias(j)); s.corner+=ay*v;
+        if (Number.isFinite(u)) s.slide+=ay*v*(ax==="F"?Math.max(0,u-US_PUSH):Math.max(0,US_LOOSE-u))/5;
+        if (ax==="F"){ const w=ws(["LF","RF"],j); if (Number.isFinite(w) && ch.Brake[j]>0.1 && v>10) s.lock+=v*Math.max(0,1-w/v-0.03)*ch.Brake[j]*10; }
+        else { s.drive+=Math.max(0,ax_)*v; const w=ws(["LR","RR"],j); if (Number.isFinite(w) && ch.Throttle[j]>0.3 && v>5) s.spin+=v*Math.max(0,w/v-1.03)*ch.Throttle[j]*10; }
+        s.cool+=(T-(Number.isFinite(air)?air:20))*(1+v/30); }
+      if (!good) continue; const T0=axT(ax,j0), T1=axT(ax,j0+tick-1); if (!Number.isFinite(T0)||!Number.isFinite(T1)) continue;
+      const P={}; for (const k in s) P[k]=s[k]/tick; Ps.push(P); y.push((T1-T0)*tick/(tick-1)); }
+    if (y.length<120) continue;
+    // fit; heat sources can only add heat, so a source that comes out negative is dropped and the rest refitted
+    let use=terms[ax].filter(t=>Ps.some(P=>P[t]>1e-6)), fit=null;
+    for (let it=0; it<6; it++){ const c=fitLS(Ps.map(P=>[...use.map(t=>P[t]), -P.cool]), y); if (!c) break;
+      const neg=use.filter((t,i)=>c[1+i]<0); fit={c, use:use.slice()}; if (!neg.length) break; use=use.filter(t=>!neg.includes(t)); }
+    if (!fit) continue; const k=fit.c[1+fit.use.length]; if (!(k>0)) continue;
+    const pred=Ps.map(P=>fit.c[0]+fit.use.reduce((a,t,i)=>a+fit.c[1+i]*P[t],0)-k*P.cool), my=mean(y), r2=1-y.reduce((a,v,i)=>a+(v-pred[i])**2,0)/(y.reduce((a,v)=>a+(v-my)**2,0)||1);
+    // racing laps only for "where the heat comes from" (out laps would overstate the hard stops)
+    const repSet=new Set(); for (const l of A.rep) for (let j=l.s;j<l.e;j+=tick) repSet.add(Math.floor(j/tick));
+    const avgP=t=>mean(Ps.map(P=>P[t])), heat={}; fit.use.forEach((t,i)=>{ heat[t]=Math.max(0,fit.c[1+i])*avgP(t); });
+    const tot=Object.values(heat).reduce((a,b)=>a+b,0)||1;
+    // steady state: heat in = k·(T − air)·(1 + v/30) → a 10% change in one source moves the settled temperature by:
+    const vf=mean(run.ch.Speed ? A.rep.flatMap(l=>{ const o=[]; for (let j=l.s;j<l.e;j+=tick) o.push(1+run.ch.Speed[j]/30); return o; }) : [3]);
+    const dSS=t=>0.1*heat[t]/(k*vf);
+    // +1% brake bias: the front braking heat grows by 1/bias of itself, the rear's shrinks by 1/(1 − bias)
+    const bAvg=mean(A.rep.map(l=>bias(l.s))), bShare=ax==="F"?bAvg:1-bAvg;
+    out[ax]={k, r2, n:y.length, c:Object.fromEntries(fit.use.map((t,i)=>[t,fit.c[1+i]])), heat, share:Object.fromEntries(Object.entries(heat).map(([t,h])=>[t,h/tot])), dSS:Object.fromEntries(fit.use.map(t=>[t,dSS(t)])), vf,
+      biasDT: heat.brake ? (ax==="F"?1:-1)*heat.brake*(0.01/bShare)/(k*vf) : NaN}; }
+  return A._heat=(out.F||out.R)?out:null; }
+const HEAT_WORD={brake:"braking", corner:"cornering load", slide:"sliding", lock:"front wheels slipping under braking", drive:"accelerating", spin:"rear wheelspin"};
+function tyreHeatHTML(run, A, S){
+  const H=tyreHeat(run,A); if (!H) return "";
+  const TW=A.tw||tyreWindow(run,A,S), now={F:TW.front, R:TW.rear}, M=(()=>{ try { return tyreTempModel(run,A,S); } catch(e){ return null; } })(), perKpa=M&&M.cross&&Number.isFinite(M.cross.perKpa)?M.cross.perKpa:NaN;
+  const state=ax=>!Number.isFinite(now[ax])?"":now[ax]<TW.lo?"cold":now[ax]>TW.hi?"hot":"ok";
+  const drive={F:{brake:"brake harder at the start of each braking zone and a little later; on an out lap, a few hard stops from speed heat the fronts fastest", corner:"carry more speed (and load) through the corners", slide:"turn in a touch more sharply so the fronts work a little harder (costs time if overdone)", lock:"brake closer to the limit, right on the edge of locking"},
+               R:{brake:"brake harder (the rears take their share)", corner:"carry more cornering load", slide:"let the rear rotate a little more on entry and exit", drive:"get on the power earlier and harder out of slow corners", spin:"allow a little more wheelspin on exit (less TC)"}};
+  const cool={F:"brake a little earlier and gentler, less trail braking and less steering scrub on entry", R:"smoother on the throttle, less wheelspin and less sliding on exit"};
+  const block=ax=>{ const h=H[ax]; if (!h) return ""; const st=state(ax), name=ax==="F"?"Fronts":"Rears", top=Object.entries(h.share).sort((a,b)=>b[1]-a[1]);
+    const lev=top.filter(([t])=>drive[ax][t]).slice(0,2);
+    return `<div><h3 style="margin:6px 0 4px">${name} <small class="muted">${Number.isFinite(now[ax])?`${now[ax].toFixed(0)}°C`:""} ${st==="cold"?`<span class="bad">below the window</span>`:st==="hot"?`<span class="bad">above the window</span>`:st?`<span class="ok">in the window</span>`:""}</small></h3>
+      <div class="tablewrap"><table style="font-size:12px"><tr><th>Heat from</th><th>Share</th><th>+10% of it</th></tr>${top.map(([t,s])=>`<tr><td>${HEAT_WORD[t]}</td><td><div style="display:flex;align-items:center;gap:6px"><i style="display:inline-block;height:8px;width:${Math.round(s*80)}px;background:${ax==="F"?"#4a8fd8":"#e8803a"};border-radius:2px"></i>${Math.round(s*100)}%</div></td><td>+${h.dSS[t].toFixed(1)}°C</td></tr>`).join("")}</table></div>
+      <p style="margin:6px 0 0;font-size:13px">${st==="hot"?`<b>To cool them:</b> ${cool[ax]}.`:`<b>${st==="cold"?"To get more heat":"If you need more heat"}:</b> ${lev.map(([t])=>drive[ax][t]).join("; ")}.`}</p></div>`; };
+  const bF=H.F?H.F.biasDT:NaN, bR=H.R?H.R.biasDT:NaN;
+  const setup=[];
+  const sg=v=>!Number.isFinite(v)?"–":`${v>=0?"+":"−"}${Math.abs(v).toFixed(Math.abs(v)<0.1?2:1)}`;
+  if (Number.isFinite(bF)||Number.isFinite(bR)) setup.push(`<b>Brake bias +1% (more front):</b> fronts ${sg(bF)}°C, rears ${sg(bR)}°C (from the braking share measured here; −1% does the opposite)${Math.max(Math.abs(bF||0),Math.abs(bR||0))<0.3?". Small: bias is for the balance on the brakes, not a way to heat tyres":""}.`);
+  if (Number.isFinite(perKpa)) setup.push(`<b>Starting pressure:</b> each kPa ${perKpa>0?"more":"less"} gives about ${Math.abs(perKpa).toFixed(2)}°C more (measured across your stints).`);
+  setup.push(`<b>Toe:</b> more front toe-out or rear toe-in scrubs the tyre on the straights too, adding heat on both (and costing a little top speed).`);
+  setup.push(`<b>Anti-roll bar:</b> the stiffer end takes more of the load transfer in corners, so its tyres work (and heat) more: stiffen the cold end${H.F&&H.R?` (cornering is ${Math.round((H.F.share.corner||0)*100)}% of the fronts' heat and ${Math.round((H.R.share.corner||0)*100)}% of the rears')`:""}, if the balance allows.`);
+  setup.push(`<b>Camber:</b> more negative camber heats the inside edge more than the whole tyre; use it to even the tread, not to add heat.`);
+  const q=Math.min(H.F?H.F.r2:1, H.R?H.R.r2:1);
+  return `<section><h2>Tyre heat: where it comes from <small>fitted on every second of this stint, out laps included</small></h2>
+   ${wetNote(run)}
+   <div class="two">${block("F")}${block("R")}</div>
+   <h3 style="margin:12px 0 4px">Setup changes that move tyre heat</h3><ul style="margin:0 0 6px 18px;font-size:13px">${setup.map(s=>`<li>${s}</li>`).join("")}</ul>
+   <p class="muted" style="font-size:12px">How: second by second, each axle's tyre temperature rises with the work the tyres do (braking, cornering load, sliding, wheel slip, accelerating) and falls with cooling (more at speed, more on a hotter tyre). The fit finds how much each source heats this car's tyres; "share" is how much of the heat each gave on your racing laps, and "+10% of it" is how much warmer the tyres would settle if you did 10% more of it. It's the telemetry's view (surface temperatures), not iRacing's tyre model, but it shows which inputs move the temperature. Fit quality ${q>=0.4?"good":q>=0.2?"fair":"rough"} (R² ${q.toFixed(2)}).</p></section>`;
+}
+// --- grip against tyre temperature: what cold (and overheated) tyres cost on this car ---
+function gripTemp(run, A, off0){
+  const ch=run.ch; if (!ch.LFtempM || !ch.LongAccel) return null; const off=Number.isFinite(off0)?off0:A.tw&&Number.isFinite(A.tw.off)?A.tw.off:0, G=9.81;
+  const P=[];
+  for (const l of (A.laps||[]).filter(l=>l.time>20 && l.off<0.5)){ const g=[]; let t=0,n=0;
+    for (let j=l.s;j<l.e;j++){ const v=ch.Speed[j]*3.6; if (ch.OnPitRoad&&ch.OnPitRoad[j]) continue; if (v>70 && v<200){ const a=Math.hypot(ch.LatAccel[j],ch.LongAccel[j])/G; if (a>0.6) g.push(a); }
+      if (Math.abs(ch.LatAccel[j])>8){ let s=0; for (const c of ["LF","RF","LR","RR"]) s+=(ch[c+"tempL"][j]+ch[c+"tempM"][j]+ch[c+"tempR"][j])/3; t+=s/4; n++; } }
+    if (g.length>run.tick*3 && n>run.tick) P.push({lap:l.lap, g:pct(g,0.95), T:t/n+off, rep:!!l.rep}); }
+  return P; }
+// every lap's grip and tyre temperature: this stint + your other stints in this car in the same conditions (from 0.14.1 on each lap stores both)
+function gripPoints(run, A, off){
+  const P=gripTemp(run,A,off); if (!P) return null;
+  const recs=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.date>=LEARN_CUTOFF && sameSurface(r,run) && r.id!==run.learnedId);
+  let hist=0; for (const {rows} of lapRowsFor(recs)) for (const x of rows||[]) if (Number.isFinite(x.g) && Number.isFinite(x.tAll)){ P.push({g:x.g, T:x.tAll, old:true}); hist++; }
+  return {P, hist}; }
+// a curve through grip against temperature; peak, and the window = where the car keeps 98.5% of its peak grip
+function gripCurve(P){
+  const xs=P.map(p=>p.T), span=Math.max(...xs)-Math.min(...xs), out={span, n:P.length, xmin:Math.min(...xs), xmax:Math.max(...xs)};
+  if (P.length<5 || span<6) return out;
+  const fit=fitLS(P.map(p=>[p.T, p.T*p.T]), P.map(p=>p.g));
+  if (fit && fit[2]<0){ out.f=T=>fit[0]+fit[1]*T+fit[2]*T*T; const pk=-fit[1]/(2*fit[2]); if (pk>=out.xmin-5 && pk<=out.xmax+5){ out.peakT=pk; out.peakG=out.f(pk);
+      const d=Math.sqrt(-0.015*out.peakG/fit[2]); out.lo=pk-d; out.hi=pk+d; } }   // f(T) ≥ 98.5% of the peak
+  if (!out.f){ const c=fitLS(P.map(p=>[p.T]), P.map(p=>p.g)); if (c) out.f=T=>c[0]+c[1]*T; }
+  return out; }
+function measuredWindow(run, A, off){
+  const G=gripPoints(run, A, off); if (!G) return null; const C=gripCurve(G.P);
+  if (!Number.isFinite(C.lo)) return {n:C.n, span:C.span, sure:false};
+  const w=C.hi-C.lo, lo=Math.round(C.lo), hi=Math.round(C.hi);
+  // sure: enough laps, temperatures on both sides of the peak, a sensible width
+  const sure=C.n>=20 && C.span>=15 && C.peakT-C.xmin>=5 && C.xmax-C.peakT>=3 && w>=6 && w<=30;
+  return {lo, hi, peak:Math.round(C.peakT), n:C.n, span:C.span, sure}; }
+function gripTempHTML(run, A, S){
+  const TW=A.tw||tyreWindow(run,A,S), G=gripPoints(run,A,TW?TW.off:0); if (!G || G.P.length<5) return "";
+  const P=G.P, hist=G.hist, C=gripCurve(P), xs=P.map(p=>p.T), span=C.span, f=C.f||null, peakT=Number.isFinite(C.peakT)?C.peakT:NaN, peakG=Number.isFinite(C.peakG)?C.peakG:NaN;
+  const lo=Math.floor(Math.min(...xs,TW.lo)-3), hi=Math.ceil(Math.max(...xs,TW.hi)+3), line=f?Array.from({length:41},(_,i)=>{ const T=lo+(hi-lo)*i/40; return [T,f(T)]; }):[];
+  const ref=Number.isFinite(peakG)?peakG:f?f(Math.max(...xs)):NaN, at=T=>f&&Number.isFinite(ref)?(1-f(T)/ref)*100:NaN;
+  const cold=at(TW.lo-10), lap=A.best.time, cost=v=>Number.isFinite(v)?v/100*lap*0.5:NaN;   // ~half a lap's time scales with grip (the corners)
+  const ys=P.map(p=>p.g);
+  return `<section><h2>Grip against tyre temperature <small>cold vs warm tyres on this car${wetOf(run).wet?" (wet)":""}: ${P.length-hist} laps this stint${hist?` + ${hist} from your other stints`:""}</small></h2>
+   ${svgChart({title:"Grip used at the limit, lap by lap, against tyre temperature", xr:[lo,hi], yr:[Math.floor(Math.min(...ys)*20)/20-0.05, Math.ceil(Math.max(...ys)*20)/20+0.05], xl:"average tyre temperature while cornering (°C, garage-equivalent)", yl:"grip (g, best 5%)", h:240,
+     bands:[{y0:-9, y1:9, color:"#2a9d55", op:0}], vlines:[{x:TW.lo},{x:TW.hi}],
+     series:[{type:"dots", pts:P.filter(p=>p.old).map(p=>[p.T,p.g]), color:"#9aa3b5", op:0.5, r:2.4}, {type:"dots", pts:P.filter(p=>!p.old).map(p=>[p.T,p.g]), color:"#4a8fd8", op:0.9, r:3.2}, ...(line.length?[{pts:line, color:"#d6455f", width:2, label:Number.isFinite(peakT)?`best at ${peakT.toFixed(0)}°C`:"trend"}]:[]), {pts:[], color:"#4a8fd8", label:"this stint"}, ...(hist?[{pts:[], color:"#9aa3b5", label:"other stints"}]:[])]})}
+   <p style="margin:6px 0">${!f?`Not enough spread in tyre temperature yet (${span.toFixed(0)}°C): an out lap and a long run give the cold and the warm end.`:Number.isFinite(peakT)?`Grip peaks at about <b>${peakT.toFixed(0)}°C</b> on this car (window ${TW.lo}–${TW.hi}°C). ${Number.isFinite(cold)?`10°C below the window it has about <b>${cold.toFixed(1)}% less grip</b>, roughly ${cost(cold).toFixed(2)} s a lap.`:""}`:`Grip is still rising at the warmest temperatures you've run (${Math.max(...xs).toFixed(0)}°C): ${Number.isFinite(cold)?`10°C below the window costs about ${cold.toFixed(1)}% grip (≈${cost(cold).toFixed(2)} s a lap)`:"warmer is better so far"}.`}</p>
+   ${(()=>{ const M=TW&&TW.measured, g=TW&&TW.generic; if (!M) return "";
+     return `<div class="sugg ${M.sure?"p3":"p1"}" style="margin:6px 0"><h3>Tyre window for this car${wetOf(run).wet?" in the wet":""}: ${M.sure?`<b>${M.lo}–${M.hi}°C</b> (measured)`:`${g?`${g.lo}–${g.hi}°C (generic) for now`:""}`}</h3>
+      <p style="margin:4px 0 0">${M.sure?`Grip stays within 1.5% of its best between ${M.lo} and ${M.hi}°C, peaking at ${M.peak}°C, from ${M.n} laps covering ${M.span.toFixed(0)}°C of tyre temperature. Every tyre and pressure suggestion uses this window now${g&&(g.lo!==M.lo||g.hi!==M.hi)?` instead of the generic ${g.lo}–${g.hi}°C`:""}.`
+       : Number.isFinite(M.lo)?`The laps so far point to about ${M.lo}–${M.hi}°C (peak ${M.peak}°C), but that's from ${M.n} laps over ${M.span.toFixed(0)}°C of temperature: it's used once there are 20+ laps covering 15°C+, with laps on both sides of the peak.`
+       :`Not measurable yet (${M.n} laps over ${M.span.toFixed(0)}°C of temperature). Out laps and first laps give the cold end, long runs the warm end; after a few stints the window is measured from your own laps and replaces the generic one.`}</p></div>`; })()}
+   <p class="muted" style="font-size:12px">Each dot is one lap: the grip you used at the limit (combined braking and cornering, the best 5% of moments between 70 and 200 km/h) against the tyre temperature while cornering. Cold out laps and first laps sit on the left. You also push less on those laps, so the cold end reads a little lower than the tyres alone would make it. The dashed lines are the window in use. Wet and dry stints are kept apart, so the wet tyres get their own window.</p></section>`;
 }
 // --- 6) lift and coast planner: where to coast to save a target amount of fuel per lap for the least lap time ---
 function coastDecel(run, A){ const ch=run.ch, X=[], y=[]; for (const j of A.idx){ const v=ch.Speed[j]; if (ch.Throttle[j]<0.03 && ch.Brake[j]<0.02 && v>25 && Math.abs(ch.LatAccel[j])<3 && ch.LongAccel){ X.push([v*v]); y.push(-ch.LongAccel[j]); } }
