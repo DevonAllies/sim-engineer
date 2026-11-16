@@ -1559,6 +1559,17 @@ function suggest(run, A){
           [O(`${End} ${KN[x.kind]} ${x.d>0?"+1":"−1"}`, C(SET.damp(run,end,x.kind), x.d))],
           `${cs[0]}: ${x.why}. ${cs[1]} shows the same. ${x.kind==="highspeedcompression"?"High-speed damping deals with bumps and kerbs.":"Low-speed damping controls how the car moves when you brake, turn and accelerate."} One click, then compare the histograms on the next run.`,
           cs.map((c,i)=>`${c} ${S2[i].name}, ${S2[i].lean} (Bowley skew ${fmt(D[c].bowley,2)}, Moors kurtosis ${fmt(D[c].moors,2)}), LS bump ${Math.round(D[c].lsB*100)}% / LS rebound ${Math.round(D[c].lsR*100)}% / HS ${Math.round((D[c].hsB+D[c].hsR)*100)}%`).join("; ")+".", "medium"); } } }
+  // dampers from what this car did at every other track: this track works an axle's dampers clearly harder than your usual → the click that brings it back
+  try { const X=A._dc||(A._dc=dampCross(run,A)), DN={hsc:"highspeedcompression", hsr:"highspeedrebound", lsc:"lowspeedcompression", lsr:"lowspeedrebound"};
+    for (const [ax,end,End] of [["F","front","Front"],["R","rear","Rear"]]){ const x=X&&X[ax]; if (!x || !Number.isFinite(x.pred) || !Number.isFinite(x.typ)) continue;
+      const over=x.pred-x.typ; if (over<3) continue;
+      const lev=x.varied.map((k,i)=>({k, b:x.F.b[1+i], se:x.F.se[1+i]})).filter(e=>/^hs/.test(e.k) && e.b<0 && Math.abs(e.b)>2*e.se).sort((a,b)=>a.b-b.b)[0]; if (!lev) continue;
+      const ents=findDamp(run,end,DN[lev.k]); if (!ents) continue; const dir=dirFor(run,ents[0]), raw=Math.min(3, Math.max(1, Math.round(over/-lev.b)));
+      add(over>6?2:1, "Dampers", `${End} dampers will work harder here than on your other tracks: ${DK_LABEL[lev.k]} +${raw}`,
+        [O(`${End} ${DK_LABEL[lev.k]} +${raw} click${raw>1?"s":""}`, C(ents, raw*dir))],
+        `This track is ${X.rough&&X.roughTyp?`${Math.round((X.rough/X.roughTyp-1)*100)}% bumpier than`:"bumpier than"} your usual track in this car, so the ${end} dampers are predicted to spend ${x.pred.toFixed(1)}% of the lap at high shaft speed against your usual ${x.typ.toFixed(1)}%. On your other tracks each click of ${DK_LABEL[lev.k]} took ${(-lev.b).toFixed(1)}% off that, so ${raw} click${raw>1?"s":""} bring${raw>1?"":"s"} it back towards what the car is used to. Too stiff loses grip over the kerbs, so go one click at a time.`,
+        `Cross-track damper model: ${X.n} stints at ${X.tracks} tracks; ${DK_LABEL[lev.k]} ${lev.b.toFixed(2)}% ±${lev.se.toFixed(2)} per click.`, X.tracks>=3?"medium":"low");
+      if (out.length) out[out.length-1].cross=true; } } catch(e){}
   // damper rule of thumb: bump (compression) set lower than the matching rebound
   for (const [end,End] of [["front","Front"],["rear","Rear"]]) for (const [sp,Sp] of [["low","low-speed"],["high","high-speed"]]){
     const bE=findDamp(run,end,sp+"speedcompression"), rE=findDamp(run,end,sp+"speedrebound"); if (!bE || !rE || bE[0]===rE[0]) continue;
@@ -2020,7 +2031,7 @@ function render(){
   syncInCar(run);
   if (!A.bottom) A.bottom = bottoming(run, A);          // where the car touches down
   if (!A.limit) A.limit = limitCorners(run, A);         // how much grip you use per corner
-  const sug=suggest(run,A); learnAnnotate(run, sug); guardSug(run, A, sug); resolveConflicts(run, sug); run.sug=sug;
+  const sug=suggest(run,A); learnAnnotate(run, sug); try { dampAnnotate(run, A, sug); } catch(e){} guardSug(run, A, sug); resolveConflicts(run, sug); run.sug=sug;
   learnRecord(run, A);   // a finished stint goes into your history
   publishPlan(run);
   const wi=run.info.WeekendInfo||{};
@@ -3853,6 +3864,27 @@ function learnModel(car){
 // balance shift in words: negative understeer angle change = more rotation
 function balShift(b){ const out=[]; for (const k of ["entry","mid","exit"]){ const v=b&&b[k]; if (v==null || Math.abs(v)<0.3) continue; out.push(`${v<0?"more rotation":"more stable"} ${k==="mid"?"mid-corner":"on "+k}`); } return out.join(", "); }
 // mark suggestions with what happened the last times you made the same change on this car
+// every damper suggestion (from this stint's histograms) gets what the same click did on this car at every track:
+// on how hard the dampers work, on the balance and on lap time; a click that was clearly slower elsewhere is moved down
+function dampAnnotate(run, A, sug){
+  const X=A._dc||(A._dc=dampCross(run,A)), SM=setupModel(run.carPath), lapS=A.best?A.best.time:100;
+  const kindOf=p=>{ const o=dampKeys({[learnNorm(p)]:1}, /Front|LF|RF/.test(learnNorm(p))?"F":"R"); return Object.keys(o)[0]; };
+  for (const s of sug){ if (s.area!=="Dampers" || s.cross) continue;
+    for (const o of s.opts){ if (o.limit) continue; const notes=[]; let faster=0, slower=0;
+      for (const c of o.ch){ if (!c.res || c.res.same) continue; const k=kindOf(c.e.path); if (!k) continue;
+        const ax=/Front|LF|RF/.test(learnNorm(c.e.path))?"F":"R", dRaw=learnNum(c.res.raw)-learnNum(c.e.raw); if (!Number.isFinite(dRaw) || !dRaw) continue;
+        const x=X&&X[ax], i=x?x.varied.indexOf(k):-1;
+        if (i>=0 && Math.abs(x.F.b[1+i])>x.F.se[1+i]){ const b=x.F.b[1+i]*dRaw, se=x.F.se[1+i]*Math.abs(dRaw); notes.push(`fast-damper share ${b>=0?"+":"−"}${Math.abs(b).toFixed(1)}% ±${se.toFixed(1)}`); }
+        const j=SM?SM.cols.findIndex(q=>q.c&&q.c.k===learnNorm(c.e.path)):-1;
+        if (j>=0){ const st=SM.cols[j].c.step, n=dRaw/st;
+          for (const t of ["mid","exit"]){ const e=SM.eff[t]; if (e && Math.abs(e.b[j])>2*e.se[j]) notes.push(`${t} balance ${e.b[j]*n>=0?"+":"−"}${Math.abs(e.b[j]*n).toFixed(2)}°`); }
+          const e=SM.eff.pace; if (e){ const v=e.b[j]*n*lapS/100, se=Math.abs(e.se[j]*n*lapS/100); if (Math.abs(v)>se) notes.push(`lap time ${v>=0?"+":"−"}${Math.abs(v).toFixed(2)} s ±${se.toFixed(2)}`); if (Math.abs(v)>2*se){ if (v<0) faster++; else slower++; } } } }
+      if (!notes.length){ if (o===s.opts.find(q=>!q.limit) && X && X.n>=5) s.evidence += ` Your other tracks can't confirm it yet: you haven't run this damper at different clicks (${X.n} stints in this car). One stint with it changed, 5+ clean laps, and the next suggestion comes with a measured effect.`; continue; }
+      o.label += ` [your other tracks: ${notes.join(", ")}]`;
+      if (o===s.opts.find(q=>!q.limit)){ s.evidence += ` Measured on this car at every track you've driven (${X?X.n:SM?SM.n:0} stints): ${notes.join(", ")}.`;
+        if (faster && !slower){ s.pr=Math.min(3,s.pr+1); s.conf="high"; }
+        else if (slower && !faster){ s.pr=Math.max(1,s.pr-1); s.conf="low"; s.title+=" (made you slower on other tracks)"; } } } }
+  sug.sort((a,b)=>b.pr-a.pr); }
 function learnAnnotate(run, sug){
   if (!LEARN || !run.carPath) return;
   const M=learnModel(run.carPath); if (!Object.keys(M.eff).length) return;
