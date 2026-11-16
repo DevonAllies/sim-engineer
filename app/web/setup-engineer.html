@@ -2030,7 +2030,11 @@ function render(){
   const head = `<section><span style="float:right;display:flex;gap:6px;align-items:center"><button id="pdfbtn" class="ghost" style="padding:5px 12px">Export PDF report</button>${window.se&&window.se.pdfApps?`<label class="muted" style="font-size:12px">open with <select id="pdfopen" style="padding:3px 6px"></select></label>`:""}</span><h2>${run.carName} <small>${wi.TrackDisplayName||""} ${typeof wi.TrackConfigName==="string"?wi.TrackConfigName:""} · ${run.sessionType} · best ${fmtTime(A.best.time)} · ${A.rep.length} laps used · track ${wi.TrackSurfaceTemp||"?"} / air ${wi.TrackAirTemp||"?"}</small></h2>
     </section>`;
   if (view==="changes"){ out.innerHTML = head + changesHTML(run, A); wireChanges(run); return; }
-  if (view==="compare"){ out.innerHTML = head + compareHTML(run); const c=$("#cmpcsv"); if (c) c.onclick=()=>compareCSV(run); const cd=$("#cmpcsvdir"); if (cd) cd.onclick=()=>window.se.dataOpen("csv");
+  if (view==="compare"){ let sh=""; try { sh=modelRangeHTML(run, "Setting history and models") + settingHistoryHTML(run); } catch(e){ console.error("history", e); }
+    out.innerHTML = head + compareHTML(run) + sh;
+    { const hk=$("#histkey"); if (hk) hk.onchange=()=>{ try { PREFS.set("histKey", hk.value); } catch(e){} render(); }; }
+    out.querySelectorAll(".mrange").forEach(s=>s.onchange=()=>{ const R=modelRange(); R[s.dataset.k]=s.value; try { PREFS.set("modelRange", R); } catch(e){} runs.forEach(r=>{ if (r.A) r.A.tw=null; }); render(); });
+    const c=$("#cmpcsv"); if (c) c.onclick=()=>compareCSV(run); const cd=$("#cmpcsvdir"); if (cd) cd.onclick=()=>window.se.dataOpen("csv");
     out.querySelectorAll(".hist").forEach(b=>b.onclick=()=>moveHistoric(run, b.dataset.scope)); return; }
   const areaCards = k => `<section><h2>What to change <small>switch these on or off here or in Changes</small></h2>${sugCardsHTML(run, s=>AREAS[k].includes(s.area), "Nothing to change in this area.")}</section>`;
   const safe = (f, name) => { try { return f(); } catch(e){ console.error(name, e); return ""; } };
@@ -2057,7 +2061,7 @@ function render(){
   </section>` + cornerBalanceHTML(run, A) + limitHTML(run, A) + arbHTML(run, A) + rotationHTML(run, A) + areaCards("balance"),
     brakes: () => inCarHTML(run, A) + brakesHTML(run, A) + areaCards("brakes"),
     loss: () => gpHTML(run, A),
-    gp: () => gpHTML(run, A) + (()=>{ try { return teamCompareHTML(run, A); } catch(e){ console.error(e); return ""; } })(),
+    gp: () => gpHTML(run, A) + safe(()=>refLapHTML(run, A),"reflap") + (()=>{ try { return teamCompareHTML(run, A); } catch(e){ console.error(e); return ""; } })(),
     hanna: () => (()=>{ try { return enduranceTestHTML(run, A, S); } catch(e){ console.error(e); return ""; } })() + (()=>{ try { return teamEnduHTML(run, A); } catch(e){ console.error(e); return ""; } })()
       + safe(()=>strategyHTML(run, A, S),"strategy") + safe(()=>liftPlanHTML(run, A),"liftplan") + safe(()=>raceTempsHTML(run, A, S),"racetemps") + safe(()=>modelRangeHTML(run, "Fuel model"),"range") + safe(()=>fuelModelHTML(run, A),"fuelmodel")
       + hannaHTML(run, A) + wearModelHTML(run, A, S) + areaCards("fuel"),
@@ -3751,6 +3755,10 @@ function learnRecord(run, A, opts){
   // for the models: the sim's time of day (track temperature over a race), the track's character (starting setup at a new track)
   { const tod=todHour(wi); if (Number.isFinite(tod)) rec.tod=tod; }
   { const W=wetOf(run); rec.wet=W.wet; rec.compound=W.compound; if (W.wetness) rec.wetness=W.wetness; }   // wet and dry are learned separately
+  // temperature across each tyre (inner / middle / outer, garage-equivalent): what camber, pressure and toe did, stint by stint
+  if (A.endTyres && A.endTyres.t){ const off=A.tw&&Number.isFinite(A.tw.off)?A.tw.off:0; rec.tread={};
+    for (const [c,t] of Object.entries(A.endTyres.t)) if (Number.isFinite(t.inner)) rec.tread[c]={i:num(t.inner+off), m:num(t.mid+off), o:num(t.outer+off), p:num(t.hot)}; }
+  if (!dry) try { refLapUpdate(run, A, rec); } catch(e){}   // the reference lap: the fastest clean lap you've ever done here
   try { const P=trackProfile(run, A); rec.prof={w:Object.fromEntries(Object.entries(P.w).map(([k,v])=>[k,+v.toFixed(3)])), vmax:num(P.vmax), corners:P.corners}; } catch(e){}   // lift and coast: where and how long you coast before each braking zone, and what it saves in fuel
   if (dry) return rec;
   run.learnedId=rec.id; learnStore.put(rec);
@@ -3771,6 +3779,8 @@ function lapRowsOf(run, A){
       if (ch.FuelLevel){ const f=ch.FuelLevel[l.s]-ch.FuelLevel[l.e-1]; if (f>0 && f<20) row.fuel=+f.toFixed(3); row.fuelL=+ch.FuelLevel[l.s].toFixed(2); }   // fuel in the tank at the start of the lap (the fuel-weight model)
       const t=per[l.lap]; if (t){ row.tyreF=ax(t,["LF","RF"]); row.tyreR=ax(t,["LR","RR"]); }
       const gt=GT[l.lap]; if (gt){ row.g=+gt.g.toFixed(3); row.tAll=+gt.T.toFixed(1); }
+      // how hard the lap works the tyres (average cornering and braking power, g·m/s): lets the tyre models learn across tracks
+      if (ch.LongAccel){ let c=0,b=0,n=0; for (let j=l.s;j<l.e;j+=3){ const v=ch.Speed[j]; c+=Math.abs(ch.LatAccel[j])/9.81*v; b+=Math.max(0,-ch.LongAccel[j])/9.81*v; n++; } if (n){ row.eC=+(c/n).toFixed(2); row.eB=+(b/n).toFixed(2); } }
       if (l.full && secs.length>1){ const b=[...secs.slice(1).map(p=>tAt(l,p))], st=ch.SessionTime[l.s], s=[];
         let prev=st; for (const x of b){ if (!Number.isFinite(x)){ s.length=0; break; } s.push(+(x-prev).toFixed(3)); prev=x; }
         if (s.length){ s.push(+(st+l.time-prev).toFixed(3)); row.sectors=s; row.s1=s[0]; row.s2=s[1]; row.s3=s.length>2?s.slice(2).reduce((a,b)=>a+b,0):undefined; } }
@@ -4021,12 +4031,13 @@ document.addEventListener("click", e=>{ if (e.target && e.target.id==="learnscan
 let LEARN_SCAN=false;
 // bumped when a version stores more per lap: every recording is read once more in the background (off track), so old stints get the new data too
 // 7: grip and tyre temperature per lap, fuel load, tyre age, wet / dry, track profile, time of day (0.14.x)
-const SCAN_KEY="se.learnFiles7";
+// 8: tread temperatures per stint, and the reference lap (fastest clean lap per car + track, with its trace)
+const SCAN_KEY="se.learnFiles8";
 async function learnScan(statusEl){
   if (LEARN_SCAN || !LEARN) return; LEARN_SCAN=true;
   const say = t => { document.querySelectorAll(".learnstatus").forEach(e=>e.textContent=t); if (statusEl) statusEl.textContent=t; };
   let done={}; try { done=JSON.parse(localStorage.getItem(SCAN_KEY)||"{}"); } catch(e){}
-  let seen={}; try { seen=JSON.parse(localStorage.getItem("se.learnFiles6")||"{}"); } catch(e){}   // read by an older version: only refresh stints that are still remembered (never bring back one you forgot)
+  let seen={}; for (const k of ["se.learnFiles6","se.learnFiles7"]) try { Object.assign(seen, JSON.parse(localStorage.getItem(k)||"{}")); } catch(e){}   // read by an older version: only refresh stints that are still remembered (never bring back one you forgot)
   try {
     const d=await (await fetch("/api/files",{cache:"no-store"})).json();
     const files=(d.files||[]).filter(f=>f.size>1500000 && !done[f.name+"|"+f.size]);
@@ -4354,6 +4365,13 @@ function optimalHTML(run, A){
     ${Number.isFinite(X.real)?`<div class="stat"><div class="k">Realistic target</div><div class="v sm">${fmtTime(X.real)}</div><div class="s">each sector at the time you beat on 1 lap in 3${Number.isFinite(X.typ)?` · ${(X.typ-X.real).toFixed(2)} s under your typical`:""}</div></div>`:""}
     <div class="stat"><div class="k">Sectors</div><div class="v sm">${X.S.length}</div><div class="s">iRacing's own split points</div></div>
    </div>
+   ${(()=>{ // the same across every stint here (range as set under "learn from"): the best of everything you've done, and what you hit regularly
+     const trk=learnTrackOf(run), L=[]; for (const {r,rows} of lapRowsFor(modelRecs(run, q=>q.track===trk && sameSurface(q,run)))) for (const x of rows||[]) if (x.used && !x.odd && Array.isArray(x.sectors) && x.sectors.length===X.S.length) L.push({s:x.sectors, r});
+     if (L.length<5) return ""; const opt=X.S.map((_,k)=>Math.min(X.S[k].opt, ...L.map(l=>l.s[k]))), real=X.S.map((_,k)=>pct(L.map(l=>l.s[k]),1/3));
+     const o=opt.reduce((a,b)=>a+b,0), rl=real.reduce((a,b)=>a+b,0), st=new Set(L.map(l=>l.r.id)).size, from=X.S.map((_,k)=>{ const b=L.reduce((a,l)=>l.s[k]<a.s[k]?l:a); return b.s[k]<X.S[k].opt-1e-6 ? b.r : null; });
+     return `<div class="grid" style="margin:0 0 6px"><div class="stat"><div class="k">Optimal, all your stints here</div><div class="v sm">${fmtTime(o)}</div><div class="s">best of each sector over ${st} stints + this one</div></div>
+       <div class="stat"><div class="k">Realistic, all your stints</div><div class="v sm">${fmtTime(rl)}</div><div class="s">each sector at 1 lap in 3, ${L.length} laps</div></div></div>
+       <p class="muted" style="font-size:12px;margin:0 0 6px">${from.some(Boolean)?`Sectors where an earlier stint beat today: ${from.map((r,k)=>r?`S${k+1} ${new Date(r.date).toLocaleDateString([], {weekday:"short", day:"2-digit", month:"short"})} (${(X.S[k].opt-opt[k]).toFixed(3)} s quicker)`:null).filter(Boolean).join(", ")}. The setting history (Compare) shows what that stint ran.`:"Every sector of today is at least as quick as anything you've done here before."}</p>`; })()}
    ${Number.isFinite(X.real)?`<p class="muted" style="font-size:12px;margin:0 0 6px">Realistic target: the lap you'd do if every sector went as well as it does on one lap in three. Unlike the optimal lap (every sector at its single best), you already drive each piece of it regularly, so it's the lap to aim for in a race stint.</p>`:""}
    <div class="tablewrap"><table><tr><th>Sector</th><th>Optimal</th><th>From lap</th><th>Your best lap</th><th>Lost on the best lap</th></tr>
     ${X.S.map(s=>`<tr><td>S${s.k+1}</td><td>${s.opt.toFixed(3)}</td><td>${s.lap}</td><td>${Number.isFinite(s.bestLap)?s.bestLap.toFixed(3):"–"}</td><td>${Number.isFinite(s.bestLap)?(s.bestLap-s.opt<0.001?`<span class="ok">optimal</span>`:`<span class="warn">+${(s.bestLap-s.opt).toFixed(3)}</span>`):"–"}</td></tr>`).join("")}</table></div>
@@ -4517,6 +4535,19 @@ const gz = async str => new Uint8Array(await new Response(new Blob([str]).stream
 const gunzip = async bytes => await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
 const fileSafe = s => String(s||"").replace(/[\\/:*?"<>|]/g,"-").trim();
 function myName(run){ const di=run.info.DriverInfo||{}, me=(di.Drivers||[]).find(d=>+d.CarIdx===+di.DriverCarIdx)||{}; return TEAM.driver || me.UserName || "me"; }
+// one lap as a small object (30 Hz, the channels GP needs + the setup): team files and the reference lap
+function lapObj(run, A, l, who, when){
+  const step=run.tick>=50?2:1, wi=run.info.WeekendInfo||{};
+  const ch={}; for (const [k,dp] of Object.entries(TEAM_CH)) if (run.ch[k]){ const a=[]; for (let j=l.s;j<l.e;j+=step) a.push(+run.ch[k][j].toFixed(dp)); ch[k]=a; }
+  return {v:1, driver:who, car:run.carPath, carName:run.carName, track:learnTrackOf(run), lapTime:+l.time.toFixed(3), lap:l.lap, best:l===A.best, date:when, tick:run.tick/step,
+    weekend:{TrackDisplayName:wi.TrackDisplayName, TrackConfigName:wi.TrackConfigName, TrackID:wi.TrackID, TrackLength:wi.TrackLength, TrackSurfaceTemp:wi.TrackSurfaceTemp, TrackAirTemp:wi.TrackAirTemp, TrackDisplayShortName:wi.TrackDisplayShortName},
+    split:run.info.SplitTimeInfo||null, setup:run.info.CarSetup||null, ch}; }
+// …and back into a run the whole app can read (one lap)
+function lapRun(o, name){
+  const n=(o.ch.Speed||[]).length, ch={}; for (const [k,a] of Object.entries(o.ch)) ch[k]=Float64Array.from(a);
+  ch.SessionTime=Float64Array.from({length:n},(_,i)=>i/o.tick); ch.Lap=new Float64Array(n).fill(o.lap||1);
+  const info={WeekendInfo:o.weekend||{}, SplitTimeInfo:o.split||{}, CarSetup:o.setup||{}, SessionInfo:{Sessions:[{SessionType:"Reference lap"}]}, DriverInfo:{DriverCarIdx:0, Drivers:[{CarIdx:0, CarPath:o.car, CarScreenName:o.carName, UserName:o.driver}]}};
+  return finishRun({name, n, cap:n, tick:o.tick, ch, units:{}, info}, "team"); }
 // push: every clean lap of the stint (the best one first), one file each
 async function teamShare(run, A, manual, driver){
   if (!window.se || !window.se.teamWrite || !TEAM.dir || run.team || !A || A.error || !A.best) return null;
@@ -4524,10 +4555,7 @@ async function teamShare(run, A, manual, driver){
   const fm=String(run.name||"").match(/(\d{4}-\d\d-\d\d) (\d\d)-(\d\d)/), when=fm?`${fm[1]} ${fm[2]}.${fm[3]}`:new Date().toISOString().slice(0,16).replace("T"," ").replace(":",".");
   const laps=[A.best, ...A.rep.filter(l=>l!==A.best)]; let first=null;
   for (const l of laps){
-    const ch={}; for (const [k,dp] of Object.entries(TEAM_CH)) if (run.ch[k]){ const a=[]; for (let j=l.s;j<l.e;j+=step) a.push(+run.ch[k][j].toFixed(dp)); ch[k]=a; }
-    const obj={v:1, driver:who, car:run.carPath, carName:run.carName, track:learnTrackOf(run), lapTime:+l.time.toFixed(3), lap:l.lap, best:l===A.best, date:when, tick:run.tick/step,
-      weekend:{TrackDisplayName:wi.TrackDisplayName, TrackConfigName:wi.TrackConfigName, TrackID:wi.TrackID, TrackLength:wi.TrackLength, TrackSurfaceTemp:wi.TrackSurfaceTemp, TrackAirTemp:wi.TrackAirTemp, TrackDisplayShortName:wi.TrackDisplayShortName},
-      split:run.info.SplitTimeInfo||null, setup:run.info.CarSetup||null, ch};
+    const obj=lapObj(run, A, l, who, when);
     const rel=`laps/${fileSafe(run.carPath)}/${fileSafe(learnTrackOf(run))}/${fileSafe(who)} ${when} ${l.time.toFixed(3)}.json.gz`;
     try { const f=await window.se.teamWrite(rel, await gz(JSON.stringify(obj))); if (!first) first=f; } catch(e){} }
   run.teamShared=first;
@@ -4578,10 +4606,7 @@ setTimeout(()=>{ teamPull(); setInterval(()=>{ if (!(LIVE.latest && LIVE.latest.
 // a teammate's lap as a run the whole app can read (one lap, 30 Hz)
 async function teamLoadLap(rel){
   const b=await window.se.teamRead(rel); if (!b) return null; const o=JSON.parse(await gunzip(b));
-  const n=(o.ch.Speed||[]).length, ch={}; for (const [k,a] of Object.entries(o.ch)) ch[k]=Float64Array.from(a);
-  ch.SessionTime=Float64Array.from({length:n},(_,i)=>i/o.tick); ch.Lap=new Float64Array(n).fill(o.lap||1);
-  const info={WeekendInfo:o.weekend||{}, SplitTimeInfo:o.split||{}, CarSetup:o.setup||{}, SessionInfo:{Sessions:[{SessionType:"Teammate lap"}]}, DriverInfo:{DriverCarIdx:0, Drivers:[{CarIdx:0, CarPath:o.car, CarScreenName:o.carName, UserName:o.driver}]}};
-  const r=finishRun({name:"team: "+rel, n, cap:n, tick:o.tick, ch, units:{}, info}, "team");
+  const r=lapRun(o, "team: "+rel);
   r.team={driver:o.driver, lapTime:o.lapTime, date:o.date, rel}; r.short=`${o.driver} ${fmtTime(o.lapTime)}`;
   return r;
 }
@@ -4673,6 +4698,63 @@ function teamEnduHTML(run, A){
    ${Number.isFinite(FPS)?`Measured on the stints: the car burns about <b>${FPS.toFixed(3)} L</b> more per second at full throttle than off it, so each second you coast instead of staying flat saves about that much; finding 0.1 L a lap takes about ${(0.1/FPS).toFixed(1)} s of coasting per lap (and costs some lap time, so lift where the car is slowest to lose speed: before a heavy braking zone, not before a fast corner).`:"Fuel saved per second of coasting shows once a stint has enough full-throttle and off-throttle running to measure the burn rate."}
    Tyre wear is the tread used per lap on the worst tyre of each axle, as iRacing reports it when you pit; a run that never pits shows none. A hotter track and more coasting both change wear, so compare runs at similar track temperatures.</p></section>`;
 }
+// your lap against another lap (a teammate's, or your own reference): time slip, speed / brake / throttle overlays, corner table, setup difference
+function lapVsParts(run, A, me, R, RA, him, name, col, tip){
+  const secs=cornerSections(run,A), rows=secs.map((s,i)=>({n:i+1, m:cornerOnLap(run,me,s), h:cornerOnLap(R,him,s)})).filter(x=>x.m&&x.h);
+  const step=10, a=lapTimeAt(run,me,step), b=lapTimeAt(R,him,step), slip=a.map((t,k)=>[k*step, Number.isFinite(t)&&Number.isFinite(b[k])? t-b[k] : NaN]).filter(p=>Number.isFinite(p[1]));
+  const ys=slip.map(p=>p[1]), TL=Math.max(...slip.map(p=>p[0]),1), mk=cornerMarks(run,A,s=>s.at);
+  const tr=(r,l,k,f)=>{ const o=[]; for (let j=l.s;j<l.e;j+=Math.max(1,Math.round(r.tick/20))) o.push([lapDist(r,j), r.ch[k][j]*f]); return o; };
+  const vm=Math.ceil(Math.max(A.vmax||0, RA.vmax||0, 200)/20)*20;
+  const charts=(slip.length>50?svgChart({title:`Time slip: you vs ${name}`, xr:[0,TL], yr:[Math.min(-0.2,pct(ys,0.01)), Math.max(0.2,pct(ys,0.99))], zero:true, xl:"metres", yl:"you behind (+) / ahead (−), s", vlines:mk, series:[{pts:slip, color:"#d6455f", width:2.2}]}):"")
+    + svgChart({title:`Speed: you vs ${name}`, xr:[0,TL], yr:[40,vm], xl:"metres", yl:"km/h", vlines:mk, h:220, series:[{pts:tr(R,him,"Speed",3.6), color:"#d99a2b", width:1.6, label:name}, {pts:tr(run,me,"Speed",3.6), color:"#4a8fd8", width:1.6, label:"you"}]})
+    + svgChart({title:`Brake and throttle: you vs ${name}`, xr:[0,TL], yr:[0,105], xl:"metres", yl:"%", vlines:mk, h:200, series:[
+       {pts:tr(R,him,"Brake",100), color:"#d6455f", width:1.5, label:`${name} brake`}, {pts:tr(run,me,"Brake",100), color:"#7b5cd6", width:1.5, label:"your brake"},
+       {pts:tr(R,him,"Throttle",100), color:"#d99a2b", width:1, op:0.7, dash:"4 3", label:`${name} throttle`}, {pts:tr(run,me,"Throttle",100), color:"#2a9d55", width:1, op:0.7, dash:"4 3", label:"your throttle"}]});
+  const table=`<div class="tablewrap"><table><tr><th>Corner</th><th>Time (you / ${col})</th><th>Brake point</th><th>Peak brake</th><th>Brake at turn-in</th><th>Apex speed · gear</th><th>Throttle back on</th><th>Where the difference is</th></tr>
+    ${rows.map(x=>{ const d=x.m.time-x.h.time, p=v=>Number.isFinite(v)?Math.round(v*100)+"%":"–"; return `<tr><td><b>T${x.n}</b></td><td style="color:${d>0.03?"var(--bad)":d<-0.03?"var(--good)":""}">${x.m.time.toFixed(2)} / ${x.h.time.toFixed(2)} <span class="muted">(${d>0?"+":""}${d.toFixed(2)})</span></td>
+      <td>${Number.isFinite(x.m.brk)&&Number.isFinite(x.h.brk)?`${Math.round(x.m.brk)} / ${Math.round(x.h.brk)} m`:"–"}</td><td>${p(x.m.peak)} / ${p(x.h.peak)}</td><td>${p(x.m.trail)} / ${p(x.h.trail)}</td>
+      <td>${fmt(x.m.vmin,0)} / ${fmt(x.h.vmin,0)} km/h${Number.isFinite(x.m.gear)?` · ${x.m.gear} / ${x.h.gear}`:""}</td><td>${Number.isFinite(x.m.pick)&&Number.isFinite(x.h.pick)?`${Math.round(x.m.pick)} / ${Math.round(x.h.pick)} m`:"–"}</td><td style="font-size:12px">${tip(x)||'<span class="muted">same</span>'}</td></tr>`; }).join("")}</table></div>`;
+  const ms={}; for (const e of run.setupFlat) if (!LEARN_SKIP.test(e.path)) ms[e.path.replace(/^CarSetup\./,"")]=e.raw.trim();
+  const hs={}; for (const e of R.setupFlat) if (!LEARN_SKIP.test(e.path)) hs[e.path.replace(/^CarSetup\./,"")]=e.raw.trim();
+  return {charts, table, diff:learnDiff(ms, hs), rows}; }
+// ---------- the reference lap: the fastest clean lap you've ever done in this car here (dry / wet apart), kept with its trace ----------
+const REFLAP={}; let REFQ=Promise.resolve();
+const refKey = (run, wet) => `${run.carPath}|${learnTrackOf(run)}|${wet?"wet":"dry"}`;
+function refLapUpdate(run, A, rec){
+  if (!window.se || !window.se.learnKvGet || !A || !A.best || !A.rep.includes(A.best) || !A.best.full) return;
+  const k=refKey(run, rec.wet), t=A.best.time;
+  if (REFLAP[k] && REFLAP[k].lapTime<=t) return;   // known and not beaten: nothing to store
+  const o=lapObj(run, A, A.best, "you", new Date(rec.date).toISOString().slice(0,16).replace("T"," "));
+  o.stint=rec.id; o.when=rec.date; o.trackT=rec.trackT; o.airT=rec.airT; o.setupName=rec.setupName;
+  REFQ=REFQ.then(async()=>{ try { if (REFLAP[k]===undefined) REFLAP[k]=(await window.se.learnKvGet("reflap", k))||null;
+      if (!REFLAP[k] || REFLAP[k].lapTime>t){ REFLAP[k]=o; await window.se.learnKvPut("reflap", k, o); delete REFRUN[k]; } } catch(e){} }); }
+const REFRUN={};
+function refLapFor(run){ const k=refKey(run, wetOf(run).wet);
+  if (REFLAP[k]===undefined){ REFLAP[k]=null; if (window.se && window.se.learnKvGet) REFQ=REFQ.then(async()=>{ try { const v=await window.se.learnKvGet("reflap", k); if (v && (!REFLAP[k] || v.lapTime<REFLAP[k].lapTime)) REFLAP[k]=v; } catch(e){} if (view==="gp") rerender(); }); return undefined; }
+  const o=REFLAP[k]; if (!o) return null;
+  if (!REFRUN[k]){ try { const r=lapRun(o, "reference"), A=analyze(r); if (A.error) return null; REFRUN[k]={run:r, A, o}; } catch(e){ return null; } }
+  return REFRUN[k]; }
+function refLapHTML(run, A){
+  const T=refLapFor(run); if (T===undefined) return `<section><h2>Your reference lap</h2><p class="muted">Loading…</p></section>`;
+  if (!T || !A.best) return `<section><h2>Your reference lap <small>the fastest clean lap you've done in this car here</small></h2><p class="muted">Not stored yet: it's kept from this version on, and your past recordings are being re-read to find it (Learning → Learn from my past recordings).</p></section>`;
+  const R=T.run, RA=T.A, o=T.o, me=A.best, ref=Object.assign({}, RA.best, {time:o.lapTime}), gap=me.time-o.lapTime, same=Math.abs(gap)<0.002;
+  if (same) return `<section><h2>Your reference lap <small>the fastest clean lap you've done in this car here</small></h2><p>This stint's ${fmtTime(me.time)} <b>is</b> your reference lap here. Every stint from now on is compared against it.</p></section>`;
+  const tip=x=>{ const t=[], dB=x.h.brk-x.m.brk, dV=x.h.vmin-x.m.vmin, dP=x.m.pick-x.h.pick;
+    if (dB>5) t.push(`on the reference you braked ${Math.round(dB)} m later`); else if (dB<-5) t.push(`you brake ${Math.round(-dB)} m later now`);
+    if (x.h.peak-x.m.peak>0.08) t.push(`harder initial brake on the reference (${Math.round(x.h.peak*100)}% vs ${Math.round(x.m.peak*100)}%)`);
+    if (x.h.trail-x.m.trail>0.08) t.push(`more trail braking into it on the reference`); else if (x.m.trail-x.h.trail>0.08) t.push(`less trail braking on the reference`);
+    if (x.m.coast-x.h.coast>0.15) t.push(`you coast ${x.m.coast.toFixed(1)} s now, ${x.h.coast.toFixed(1)} s on the reference`);
+    if (dV>2) t.push(`${Math.round(dV)} km/h more at the apex on the reference`); else if (dV<-2) t.push(`${Math.round(-dV)} km/h more at the apex now`);
+    if (dP>5) t.push(`throttle ${Math.round(dP)} m earlier on the reference`); else if (dP<-5) t.push(`throttle ${Math.round(-dP)} m earlier now`);
+    return t.join(", "); };
+  const V=lapVsParts(run, A, me, R, RA, ref, "reference", "ref", tip), d=new Date(o.when||Date.now());
+  return `<section><h2>Your reference lap <small>the fastest clean lap you've done in this car here${wetOf(run).wet?" in the wet":""}: ${fmtTime(o.lapTime)}, ${d.toLocaleDateString([], {weekday:"short", day:"2-digit", month:"short"})} ${d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"})}</small></h2>
+   <div class="grid" style="margin-bottom:8px"><div class="stat"><div class="k">This stint's best</div><div class="v sm">${fmtTime(me.time)}</div></div><div class="stat"><div class="k">Reference</div><div class="v sm">${fmtTime(o.lapTime)}</div><div class="s">${esc(o.setupName||"")}${Number.isFinite(o.trackT)?` · track ${Math.round(o.trackT)}°C`:""}</div></div>
+    <div class="stat"><div class="k">Gap</div><div class="v sm" style="color:${gap>0?"var(--bad)":"var(--good)"}">${gap>0?"+":"−"}${Math.abs(gap).toFixed(3)} s</div><div class="s">${gap>0?"off your reference":"a new reference"}</div></div></div>
+   ${V.charts}${V.table}
+   <p style="margin:8px 0 0"><b>Setup then vs now:</b> ${V.diff.length?esc(V.diff.map(c=>c.txt.replace(/ → /," (now) → ")+" (reference)").join("; ")):"the same setup"}.</p>
+   <p class="muted" style="font-size:12px">The reference is kept automatically: whenever a stint here beats it (clean lap, same dry / wet conditions), that lap replaces it. Differences come from your driving, the setup (line above) and the conditions (track temperature on each), so read the corner table with those in mind.</p></section>`;
+}
 function teamCompareHTML(run, A){
   if (!window.se || !window.se.teamList) return "";
   if (!TEAM.dir) return `<section><h2>vs your teammate</h2><p class="muted">Set a team folder (a shared Google Drive folder) under Learning, and your laps and your teammates' are shared automatically. Then GP compares you corner by corner.</p></section>`;
@@ -4690,29 +4772,13 @@ function teamCompareHTML(run, A){
     if (dV>2) t.push(`he carries ${Math.round(dV)} km/h more to the apex`); else if (dV<-2) t.push(`you carry ${Math.round(-dV)} km/h more`);
     if (dP>5) t.push(`he's back on the throttle ${Math.round(dP)} m earlier`); else if (dP<-5) t.push(`you're on the throttle ${Math.round(-dP)} m earlier`);
     return t.join(", "); };
-  // time slip: your best lap against his, along the lap
-  const step=10, a=lapTimeAt(run,me,step), b=lapTimeAt(R,him,step), slip=a.map((t,k)=>[k*step, Number.isFinite(t)&&Number.isFinite(b[k])? t-b[k] : NaN]).filter(p=>Number.isFinite(p[1]));
-  const ys=slip.map(p=>p[1]), TL=Math.max(...slip.map(p=>p[0]),1);
-  const ms={}; for (const e of run.setupFlat) if (!LEARN_SKIP.test(e.path)) ms[e.path.replace(/^CarSetup\./,"")]=e.raw.trim();
-  const hs={}; for (const e of R.setupFlat) if (!LEARN_SKIP.test(e.path)) hs[e.path.replace(/^CarSetup\./,"")]=e.raw.trim();
-  const diff=learnDiff(ms, hs);
+  const V=lapVsParts(run, A, me, R, RA, him, R.team.driver, "him", tip);
   return `<section><h2>vs ${who} <small>his fastest lap here in the team folder (${esc(R.team.date)}), against your best lap</small></h2>
    <div class="grid" style="margin-bottom:8px"><div class="stat"><div class="k">Your best</div><div class="v sm">${fmtTime(me.time)}</div></div><div class="stat"><div class="k">${who}</div><div class="v sm">${fmtTime(him.time)}</div></div>
     <div class="stat"><div class="k">Gap</div><div class="v sm" style="color:${gap>0?"var(--bad)":"var(--good)"}">${gap>0?"+":"−"}${Math.abs(gap).toFixed(3)} s</div><div class="s">${gap>0?"you're slower":"you're faster"}</div></div>
     <div class="stat"><div class="k">Laps from ${who}</div><div class="v sm">${T.list.length}</div><div class="s">in the team folder</div></div></div>
-   ${slip.length>50?svgChart({title:`Time slip: you vs ${R.team.driver}`, xr:[0,TL], yr:[Math.min(-0.2,pct(ys,0.01)), Math.max(0.2,pct(ys,0.99))], zero:true, xl:"metres", yl:"you behind (+) / ahead (−), s", vlines:cornerMarks(run,A,s=>s.at), series:[{pts:slip, color:"#d6455f", width:2.2}]}):""}
-   ${(()=>{ // his speed, brake and throttle on top of yours, along the lap
-     const tr=(r,l,k,f)=>{ const o=[]; for (let j=l.s;j<l.e;j+=Math.max(1,Math.round(r.tick/20))) o.push([lapDist(r,j), r.ch[k][j]*f]); return o; };
-     const vm=Math.ceil(Math.max(A.vmax||0, RA.vmax||0, 200)/20)*20, mk=cornerMarks(run,A,s=>s.at);
-     return svgChart({title:`Speed: you vs ${R.team.driver}`, xr:[0,TL], yr:[40,vm], xl:"metres", yl:"km/h", vlines:mk, h:220, series:[{pts:tr(R,him,"Speed",3.6), color:"#d99a2b", width:1.6, label:R.team.driver}, {pts:tr(run,me,"Speed",3.6), color:"#4a8fd8", width:1.6, label:"you"}]})
-       + svgChart({title:`Brake and throttle: you vs ${R.team.driver}`, xr:[0,TL], yr:[0,105], xl:"metres", yl:"%", vlines:mk, h:200, series:[
-          {pts:tr(R,him,"Brake",100), color:"#d6455f", width:1.5, label:`${R.team.driver} brake`}, {pts:tr(run,me,"Brake",100), color:"#7b5cd6", width:1.5, label:"your brake"},
-          {pts:tr(R,him,"Throttle",100), color:"#d99a2b", width:1, op:0.7, dash:"4 3", label:`${R.team.driver} throttle`}, {pts:tr(run,me,"Throttle",100), color:"#2a9d55", width:1, op:0.7, dash:"4 3", label:"your throttle"}]}); })()}
-   <div class="tablewrap"><table><tr><th>Corner</th><th>Time (you / him)</th><th>Brake point</th><th>Peak brake</th><th>Brake at turn-in</th><th>Apex speed · gear</th><th>Throttle back on</th><th>Where the difference is</th></tr>
-    ${rows.map(x=>{ const d=x.m.time-x.h.time, p=v=>Number.isFinite(v)?Math.round(v*100)+"%":"–"; return `<tr><td><b>T${x.n}</b></td><td style="color:${d>0.03?"var(--bad)":d<-0.03?"var(--good)":""}">${x.m.time.toFixed(2)} / ${x.h.time.toFixed(2)} <span class="muted">(${d>0?"+":""}${d.toFixed(2)})</span></td>
-      <td>${Number.isFinite(x.m.brk)&&Number.isFinite(x.h.brk)?`${Math.round(x.m.brk)} / ${Math.round(x.h.brk)} m`:"–"}</td><td>${p(x.m.peak)} / ${p(x.h.peak)}</td><td>${p(x.m.trail)} / ${p(x.h.trail)}</td>
-      <td>${fmt(x.m.vmin,0)} / ${fmt(x.h.vmin,0)} km/h${Number.isFinite(x.m.gear)?` · ${x.m.gear} / ${x.h.gear}`:""}</td><td>${Number.isFinite(x.m.pick)&&Number.isFinite(x.h.pick)?`${Math.round(x.m.pick)} / ${Math.round(x.h.pick)} m`:"–"}</td><td style="font-size:12px">${tip(x)||'<span class="muted">same</span>'}</td></tr>`; }).join("")}</table></div>
-   <p style="margin:8px 0 0"><b>His setup vs yours:</b> ${diff.length?esc(diff.map(c=>c.txt.replace(/ → /," (you) → ")+" (him)").join("; ")):"the same setup"}.</p>
+   ${V.charts}${V.table}
+   <p style="margin:8px 0 0"><b>His setup vs yours:</b> ${V.diff.length?esc(V.diff.map(c=>c.txt.replace(/ → /," (you) → ")+" (him)").join("; ")):"the same setup"}.</p>
    <p class="muted" style="font-size:12px">Distances are along the lap from the start/finish line. Brake point = first touch of the brake; throttle back on = first 20% after the apex. Different setups change where each of you can brake and get on the power, so check the setup line before copying a brake point.</p>
    <div class="row" style="margin-top:6px"><button class="ghost" id="teamshare" style="padding:3px 10px">Share my best lap now</button></div></section>`;
 }
@@ -4790,6 +4856,46 @@ function setupModelHTML(run){
    <div class="tablewrap"><table style="font-size:12px"><tr><th>Setting</th><th>One step</th><th>Entry</th><th>Mid</th><th>Exit</th><th>Lap time</th><th>Stints off the lowest value</th></tr>
    ${rows.map(({c,j})=>`<tr${c.cov?' style="background:rgba(127,127,127,.08)"':""}><td><b>${esc(c.cov?c.label:c.c.label)}</b></td><td>${c.cov?"–":`${+c.c.step.toFixed(3)}`}</td><td>${cell("entry",j)}</td><td>${cell("mid",j)}</td><td>${cell("exit",j)}</td><td>${cell("pace",j)}</td><td>${c.cov?"–":`${c.c.n} of ${M.R.length}`}</td></tr>`).join("")}</table></div>
    <p class="muted" style="font-size:12px">Balance: + more understeer (blue), − more rotation (orange), in degrees of understeer angle per step of that setting. Lap time in seconds at this track. Bold = clearly more than its ± (twice the uncertainty), grey = not sure yet. How: one regression over every stint of 5+ clean laps in this car, comparing stints at the same track with each other, with the track temperature and how far into the day's session the stint was (the track rubbering in, you getting quicker) as their own effects, so they aren't blamed on a setting. Settings changed together are split between them, which the stint-by-stint table can't do. Anti-roll bars start from the physics (front stiffer = more understeer) until your stints say otherwise.${M.odd.length?` Left out as odd (lap time far from what everything else explains: a new build, damage, rain?): ${M.odd.map(r=>`${new Date(r.date).toLocaleDateString()} ${esc(r.trackName||"")} ${fmtTime(r.med)}`).join("; ")}.`:""}</p></section>`;
+}
+// --- setting history: every value you've run of one setting, where and when, and what each did (lap time, balance, the tyres) ---
+function settingHistoryHTML(run){
+  if (!LEARN) return "";
+  const own=run.learnedId&&LEARN[run.learnedId]?[LEARN[run.learnedId]]:[];
+  const recs=[...own, ...modelRecs(run, r=>!!r.setup && r.laps>=1)].filter((r,i,s)=>s.findIndex(q=>q.id===r.id)===i).sort((a,b)=>b.date-a.date);
+  if (recs.length<2) return `<section><h2>Setting history</h2><p class="muted">Needs 2+ stints in this car in the range you picked (Tyres / Hanna: "learn from").</p></section>`;
+  const V=recs.map(r=>smVals(r.setup)), keys=[...new Set(V.flatMap(o=>Object.keys(o)))].filter(k=>new Set(V.map(o=>o[k]).filter(Number.isFinite).map(x=>+x.toFixed(3))).size>=2)
+    .sort((a,b)=>new Set(V.map(o=>o[b]).filter(Number.isFinite)).size-new Set(V.map(o=>o[a]).filter(Number.isFinite)).size);
+  if (!keys.length) return `<section><h2>Setting history</h2><p class="muted">Every stint in this range ran the same setup.</p></section>`;
+  let k=null; try { k=PREFS.get("histKey"); } catch(e){} if (!keys.includes(k)) k=keys.find(x=>/Camber/i.test(x))||keys[0];
+  const ax=/(^|\.)(Front|LF|RF)|FrontBrakes|LeftFront|RightFront/i.test(k)?"F":"R", cs=ax==="F"?["LF","RF"]:["LR","RR"], tyreKey=/Camber|Toe|Pressure/i.test(k);
+  const raw=r=>{ const o=[]; for (const [p,v] of Object.entries(r.setup)) if (learnNorm(p)===k){ const side=(p.match(/(Left|Right)(Front|Rear)/)||[])[0]; o.push((side?side.replace("Left","L").replace("Right","R").replace("Front","F").replace("Rear","R")+" ":"")+String(v).trim()); } return [...new Set(o)].join(" · "); };
+  const trkMed={}; for (const r of recs) if (trkMed[r.track]===undefined) trkMed[r.track]=Math.min(...recs.filter(q=>q.track===r.track&&Number.isFinite(q.med)).map(q=>q.med));
+  const tread=r=>{ const t=r.tread; if (!t) return null; const v=cs.filter(c=>t[c]); if (!v.length) return null;
+    return {io:mean(v.map(c=>t[c].i-t[c].o)), me:mean(v.map(c=>t[c].m-(t[c].i+t[c].o)/2)), avg:mean(v.map(c=>(t[c].i+t[c].m+t[c].o)/3)), p:mean(v.map(c=>t[c].p).filter(Number.isFinite))}; };
+  const prevAt=r=>recs.filter(q=>q.track===r.track && q.date<r.date).sort((a,b)=>b.date-a.date)[0];
+  const bc=v=>Number.isFinite(v)?`<span style="color:${usColor(v)}">${fmt(v,1)}°</span>`:"–";
+  const dt=d=>new Date(d).toLocaleString([], {weekday:"short", day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit"});
+  const val=r=>smVals(r.setup)[k];
+  // grouped by value: what each value did on average (lap time against that track's best stint, so tracks can be mixed)
+  const groups={}; for (const r of recs){ const v=val(r); if (!Number.isFinite(v)) continue; (groups[v.toFixed(3)]=groups[v.toFixed(3)]||[]).push(r); }
+  const G=Object.entries(groups).map(([v,L])=>{ const tr=L.map(tread).filter(Boolean);
+    return {v:+v, L, n:L.length, laps:L.reduce((a,r)=>a+(r.laps||0),0), d:mean(L.filter(r=>Number.isFinite(r.med)).map(r=>r.med-trkMed[r.track])), e:mean(L.map(r=>r.bal&&r.bal.entry).filter(Number.isFinite)), m:mean(L.map(r=>r.bal&&r.bal.mid).filter(Number.isFinite)), x:mean(L.map(r=>r.bal&&r.bal.exit).filter(Number.isFinite)),
+      io:tr.length?mean(tr.map(t=>t.io)):NaN, me:tr.length?mean(tr.map(t=>t.me)):NaN, avg:tr.length?mean(tr.map(t=>t.avg)):NaN, tracks:[...new Set(L.map(r=>r.trackName||r.track))]}; }).sort((a,b)=>a.v-b.v);
+  const SM=setupModel(run.carPath), j=SM?SM.cols.findIndex(c=>c.c&&c.c.k===k):-1, eff=j>=0?["entry","mid","exit","pace"].map(t=>SM.eff[t]?{t, b:SM.eff[t].b[j], se:SM.eff[t].se[j]}:null).filter(Boolean):[];
+  const opt=keys.map(x=>`<option value="${esc(x)}"${x===k?" selected":""}>${esc(learnLabel(x))} (${new Set(V.map(o=>o[x]).filter(Number.isFinite).map(v=>+v.toFixed(3))).size} values)</option>`).join("");
+  return `<section><h2>Setting history <small>every value you've run, where and when, and what it did</small></h2>
+   <div class="row" style="gap:8px;align-items:center;margin-bottom:8px"><b>Setting</b> <select id="histkey" style="padding:3px 6px">${opt}</select><span class="muted" style="font-size:12px">${recs.length} stints in this car (range and tracks as set under "learn from")</span></div>
+   <div class="tablewrap"><table style="font-size:12px"><tr><th>Value</th><th>Stints (laps)</th><th>Lap time vs that track's best stint</th><th>Entry · mid · exit</th>${tyreKey?`<th>${ax==="F"?"Front":"Rear"} inner − outer</th><th>Middle − edges</th><th>Tyre temp</th>`:""}<th>Where</th></tr>
+    ${G.map(g=>`<tr><td><b>${+g.v.toFixed(3)}</b></td><td>${g.n} (${g.laps})</td><td>${Number.isFinite(g.d)?`+${g.d.toFixed(2)} s`:"–"}</td><td>${bc(g.e)} · ${bc(g.m)} · ${bc(g.x)}</td>${tyreKey?[[g.io,1],[g.me,1],[g.avg,0]].map(([v,d])=>`<td>${Number.isFinite(v)?fmt(v,d)+"°C":'<span class="muted">not stored</span>'}</td>`).join(""):""}<td>${esc(g.tracks.join(", "))}</td></tr>`).join("")}</table></div>
+   ${eff.length?`<p style="margin:6px 0;font-size:13px"><b>All-stints model, per step of ${+SM.cols[j].c.step.toFixed(3)}:</b> ${eff.map(e=>e.t==="pace"?`lap time ${e.b>=0?"+":"−"}${Math.abs(e.b*(run.A&&run.A.best?run.A.best.time:100)/100).toFixed(2)} s ±${(e.se*(run.A&&run.A.best?run.A.best.time:100)/100).toFixed(2)}`:`${e.t} ${e.b>=0?"+":"−"}${Math.abs(e.b).toFixed(2)}° ±${e.se.toFixed(2)}`).join(" · ")} (that one setting on its own, with everything else that changed taken out).</p>`:""}
+   <h3 style="margin:10px 0 4px">Stint by stint</h3>
+   <div class="tablewrap"><table style="font-size:12px"><tr><th>When</th><th>Track</th><th>${esc(learnLabel(k))}</th><th>Laps</th><th>Typical</th><th>vs best stint there</th><th>Entry · mid · exit</th>${tyreKey?`<th>Inner − outer</th><th>Middle − edges</th><th>Hot pressure</th>`:""}<th>Track temp</th><th>Also changed (vs the stint before there)</th></tr>
+    ${recs.filter(r=>Number.isFinite(val(r))).map(r=>{ const t=tread(r), p=prevAt(r), ch=p?learnDiff(p.setup,r.setup).filter(c=>c.n!==k):null, b=r.bal||{};
+      return `<tr${r.id===run.learnedId?' style="background:rgba(80,140,255,.12)"':""}><td style="white-space:nowrap">${dt(r.date)}</td><td>${esc(r.trackName||r.track)}</td><td><b>${esc(raw(r))}</b></td><td>${r.laps}${r.laps<MIN_LAPS?"*":""}</td><td>${fmtTime(r.med)}</td>
+       <td>${Number.isFinite(r.med)?(r.med-trkMed[r.track]<0.005?`<span class="ok">best</span>`:`+${(r.med-trkMed[r.track]).toFixed(2)} s`):"–"}</td><td style="white-space:nowrap">${bc(b.entry)} · ${bc(b.mid)} · ${bc(b.exit)}</td>
+       ${tyreKey?`<td>${t?fmt(t.io,1)+"°":"–"}</td><td>${t?fmt(t.me,1)+"°":"–"}</td><td>${t&&Number.isFinite(t.p)?fmt(t.p,0):"–"}</td>`:""}<td>${Number.isFinite(r.trackT)?Math.round(r.trackT)+"°":"–"}</td>
+       <td style="min-width:180px">${ch===null?'<span class="muted">first there</span>':ch.length?esc(ch.map(c=>c.txt).join("; ")):'<span class="muted">nothing else</span>'}</td></tr>`; }).join("")}</table></div>
+   <p class="muted" style="font-size:12px">Lap time is the typical (median) clean lap against your best stint at the same track, so different tracks can sit in one table. "Also changed" shows what else was different from the stint before at that track: if something else changed too, the lap time and balance aren't down to this setting alone (the model line above separates them). ${tyreKey?"Inner − outer: a few degrees hotter inside is the usual camber target; middle − edges near zero means the pressure suits the tyre. ":""}Tread temperatures are stored from 0.14.3 on (older stints get them when their recordings are re-read). * under ${MIN_LAPS} clean laps.</p></section>`;
 }
 // --- 5) what to test next: the change that teaches the model most, given what's bothering the car ---
 function testNextHTML(run, A){
@@ -4879,9 +4985,17 @@ function tyreThermal(run, A){
   const recs=modelRecs(run, r=>r.laps>=3 && Number.isFinite(r.trackT) && sameSurface(r,run));
   const D=lapRowsFor(recs); if (!(LEARN||{})[run.learnedId]){ const t=thisStintRows(run,A); if (t && Number.isFinite(t.r.trackT)) D.push(t); }
   const out={n:D.length};
-  for (const ax of ["F","R"]){ const X=[], y=[];
+  // the lap's cornering + braking load (stored per lap from 0.14.3): with it the settling temperature transfers between tracks
+  const load=x=>Number.isFinite(x.eC)&&Number.isFinite(x.eB)?x.eC+x.eB:NaN;
+  const curLoad=(()=>{ try { const v=(A._rows||(A._rows=lapRowsOf(run,A))).filter(x=>x.used).map(load).filter(Number.isFinite); return v.length?mean(v):NaN; } catch(e){ return NaN; } })();
+  for (const ax of ["F","R"]){ const X=[], y=[], XL=[], yL=[];
     for (const {r,rows} of D){ const L=(rows||[]).filter(x=>Number.isFinite(x["tyre"+ax])).sort((a,b)=>a.lap-b.lap);
-      for (let i=1;i<L.length;i++) if (L[i].lap===L[i-1].lap+1){ X.push([r.trackT, L[i-1]["tyre"+ax]]); y.push(L[i]["tyre"+ax]-L[i-1]["tyre"+ax]); } }
+      for (let i=1;i<L.length;i++) if (L[i].lap===L[i-1].lap+1){ X.push([r.trackT, L[i-1]["tyre"+ax]]); y.push(L[i]["tyre"+ax]-L[i-1]["tyre"+ax]);
+        const ld=load(L[i]); if (Number.isFinite(ld)){ XL.push([r.trackT, L[i-1]["tyre"+ax], ld]); yL.push(L[i]["tyre"+ax]-L[i-1]["tyre"+ax]); } } }
+    // with the track's load when there's enough of it, from 2+ tracks' worth of spread
+    if (XL.length>=30 && Number.isFinite(curLoad)){ const ls=XL.map(x=>x[2]), c=fitLS(XL, yL);
+      if (c && Math.max(...ls)-Math.min(...ls)>=3){ const al=-c[2]; if (al>0.03 && al<1.2 && c[3]>0){ out[ax]={alpha:al, a:(c[0]+c[3]*curLoad)/al, b:c[1]/al, n:XL.length, spread:Math.max(...XL.map(x=>x[0]))-Math.min(...XL.map(x=>x[0])), perLoad:c[3]/al, load:curLoad};
+        if (!(out[ax].b>0 && out[ax].b<3)){ out[ax].b=0.6; out[ax].bEst=true; out[ax].a=(c[0]+c[1]*mean(XL.map(x=>x[0]))+c[3]*curLoad)/al-0.6*mean(XL.map(x=>x[0])); } continue; } } }
     if (X.length<10) continue; const c=fitLS(X, y); if (!c) continue; const al=-c[2]; if (!(al>0.03 && al<1.2)) continue;
     const sp=Math.max(...X.map(x=>x[0]))-Math.min(...X.map(x=>x[0]));
     out[ax]={alpha:al, a:c[0]/al, b:sp>=4 ? c[1]/al : NaN, b0:c[1]/al, n:X.length, spread:sp};
@@ -4903,7 +5017,7 @@ function tyreThermalHTML(run, A, S){
      ...(pr?[svgChart({title:`Predicted front hot pressure, starting at ${RP.set} kPa`, w:420, h:230, xr:[1,laps], yr:[Math.floor(Math.min(S.hotMin-4,...pr.map(p=>p[1]))), Math.ceil(Math.max(S.hotMax+4,...pr.map(p=>p[1])))], xl:"lap of the stint", yl:"kPa", xticks:6,
        bands:Number.isFinite(S.hotMin)?[{y0:S.hotMin, y1:S.hotMax, color:"#2a9d55", op:0.12}]:[], series:[{pts:pr, color:"#4a8fd8", width:2, label:"front"}]})]:[])])}
    <p style="margin:6px 0">${[w(F,"Front"), w(R,"Rear")].filter(Boolean).join(". ")}.</p>
-   <p class="muted" style="font-size:12px">How: each lap the tyre closes a share of the gap to the temperature it settles at, and that settling temperature rises with the track temperature. Both are fitted on every lap of your stints in this car (${(M.F||M.R).n} lap-to-lap steps, α ${fmt((M.F||M.R).alpha,2)} per lap${(M.F||M.R).bEst?"; only one track temperature in your data so far, so +0.6°C per °C of track is assumed":`, +${fmt((M.F||M.R).b,2)}°C per °C of track`}). Tyres start at the air temperature (no blankets). The pressure line uses the race starting pressure from the gas law above. Pressure and camber changes also move the temperature; this predicts the setup you're running.</p></section>`;
+   <p class="muted" style="font-size:12px">How: each lap the tyre closes a share of the gap to the temperature it settles at, and that settling temperature rises with the track temperature. Both are fitted on every lap of your stints in this car (${(M.F||M.R).n} lap-to-lap steps, α ${fmt((M.F||M.R).alpha,2)} per lap${(M.F||M.R).bEst?"; only one track temperature in your data so far, so +0.6°C per °C of track is assumed":`, +${fmt((M.F||M.R).b,2)}°C per °C of track`}${Number.isFinite((M.F||M.R).perLoad)?`, +${fmt((M.F||M.R).perLoad,1)}°C per unit of the lap's cornering + braking load, so other tracks teach it too: this track's load is ${fmt((M.F||M.R).load,0)}`:"; from 0.14.3 each lap also stores how hard it works the tyres, so other tracks will count properly"}). Tyres start at the air temperature (no blankets). The pressure line uses the race starting pressure from the gas law above. Pressure and camber changes also move the temperature; this predicts the setup you're running.</p></section>`;
 }
 // --- wet or dry, and which tyre compound (each learns separately: dry data never predicts the wet) ---
 const WETNESS=["unknown","dry","mostly dry","very lightly wet","lightly wet","moderately wet","very wet","extremely wet"];
