@@ -160,6 +160,7 @@ Not in the repo: `node_modules`, installers, `.ibt` telemetry, the database, and
 
 | Version | Changes |
 |---|---|
+| 0.14.8 | "Your inputs" (GP and FFB tabs): steering, brake and throttle too smooth or too aggressive, judged by what the car did, with tyre-heat and force feedback advice; Learning moved to a Dev tab group. |
 | 0.14.7 | Damper suggestions use the cross-track model: each carries its measured effect from your other tracks (damper load, balance, lap time); new suggestion when a track will work the dampers harder than usual. |
 | 0.14.6 | App shows lap averages only (aero ride heights, tyre temps); "lap-by-lap tables" tick box adds them to the PDF. |
 | 0.14.5 | ARB grid sensitivity from the all-stints model once it is sure of the bars. |

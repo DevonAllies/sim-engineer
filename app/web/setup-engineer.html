@@ -1986,14 +1986,15 @@ function graphsEnduHTML(run, A, S, g){
 }
 // ---------- windows ----------
 const TABS = [
-  ["home","Home"],["changes","Changes"],["compare","Compare stints"],["graphs","Graphs"],["gp","GP · driver coach"],["hanna","Hanna · strategy"],["tyres","Tyres"],["aero","Aero & ride height"],["balance","Balance"],["brakes","Brakes"],["dampers","Suspension & track"],["ffb","Force feedback"],["laps","Laps & setup"],["learn","Learning"],["guide","Guide"]];
+  ["home","Home"],["changes","Changes"],["compare","Compare stints"],["graphs","Graphs"],["gp","GP · driver coach"],["hanna","Hanna · strategy"],["tyres","Tyres"],["aero","Aero & ride height"],["balance","Balance"],["brakes","Brakes"],["dampers","Suspension & track"],["ffb","Force feedback"],["laps","Laps & setup"],["learn","Learning (dev)"],["guide","Guide"]];
 // the session windows in groups, in the order you'd use them: what to do, how you drove, the car area by area, the race, the data
 const TAB_GROUPS = [
   ["This stint", ["home","changes","compare"]],
   ["Driver",     ["gp","graphs"]],
   ["Car",        ["balance","tyres","aero","brakes","dampers"]],
   ["Race",       ["hanna"]],
-  ["Data & help",["laps","ffb","learn","guide"]]];
+  ["Data & help",["laps","ffb","guide"]],
+  ["Dev",        ["learn"]]];   // what the models learned, in detail: for the developer and the keen
 const AREAS = { tyres:["Tyres","Tyre wear"], aero:["Aero platform","Aero trim","Gearing"], balance:["Balance","Corner entry","Corner exit"], brakes:["Brakes"], dampers:["Dampers","Track"], fuel:["Fuel"] };
 const areaSug = (run,k) => run.sug.filter(s=>AREAS[k].includes(s.area));
 // ---------- sidebar: App panels (always) + Session windows (when a session is selected) ----------
@@ -2072,11 +2073,11 @@ function render(){
   </section>` + cornerBalanceHTML(run, A) + limitHTML(run, A) + arbHTML(run, A) + rotationHTML(run, A) + areaCards("balance"),
     brakes: () => inCarHTML(run, A) + brakesHTML(run, A) + areaCards("brakes"),
     loss: () => gpHTML(run, A),
-    gp: () => gpHTML(run, A) + safe(()=>refLapHTML(run, A),"reflap") + (()=>{ try { return teamCompareHTML(run, A); } catch(e){ console.error(e); return ""; } })(),
+    gp: () => gpHTML(run, A) + safe(()=>inputsHTML(run, A, S),"inputs") + safe(()=>refLapHTML(run, A),"reflap") + (()=>{ try { return teamCompareHTML(run, A); } catch(e){ console.error(e); return ""; } })(),
     hanna: () => (()=>{ try { return enduranceTestHTML(run, A, S); } catch(e){ console.error(e); return ""; } })() + (()=>{ try { return teamEnduHTML(run, A); } catch(e){ console.error(e); return ""; } })()
       + safe(()=>strategyHTML(run, A, S),"strategy") + safe(()=>liftPlanHTML(run, A),"liftplan") + safe(()=>raceTempsHTML(run, A, S),"racetemps") + safe(()=>modelRangeHTML(run, "Fuel model"),"range") + safe(()=>fuelModelHTML(run, A),"fuelmodel")
       + hannaHTML(run, A) + wearModelHTML(run, A, S) + areaCards("fuel"),
-    ffb: () => ffbHTML(run, A),
+    ffb: () => ffbHTML(run, A) + safe(()=>inputsHTML(run, A, S),"inputs"),
     guide: () => guideHTML(run),
     learn: () => learnHTML(run) + safe(()=>setupModelHTML(run),"setupModel") + safe(()=>testNextHTML(run, A),"testNext"),
     dampers: () => (Object.keys(A.damp||{}).length?`<section><h2>Dampers <small>shock speed histograms, all laps used · right = compression (bump), left = extension (rebound)</small></h2>
@@ -3523,6 +3524,72 @@ function wireFfb(){
   document.querySelectorAll("[data-feel]").forEach(b=>b.onclick=()=>save({feel:b.dataset.feel}));
 }
 // ---------- Force feedback ----------
+// ---------- your inputs: too smooth, too aggressive, or right? (steering, brake, throttle), judged by what the car did ----------
+function inputsAnalysis(run, A){
+  if (A._inp!==undefined) return A._inp; const ch=run.ch; if (!ch.SteeringWheelAngle || !A.rep.length) return A._inp=null;
+  const dt=1/run.tick, D=180/Math.PI, secs=cornerSections(run,A), lim=(A.limit&&A.limit.rows)||[];
+  const at=(l,p)=>{ for (let j=l.s;j<l.e;j++) if (ch.LapDistPct[j]>=p) return j; return -1; };
+  const rows=secs.map((s,i)=>{ const P=[];
+    for (const l of A.rep){ const j0=at(l,s.b[0]-0.003), ti=at(l,s.b[1]), ap=at(l,s.b[2]), ex=at(l,s.b[3]); if (j0<0||ti<0||ap<0||ex<0||!(j0<=ti&&ti<=ap&&ap<ex)) continue;
+      const k=Math.max(1,Math.round(run.tick/20)), rate=j=>(Math.abs(ch.SteeringWheelAngle[Math.min(l.e-1,j+k)])-Math.abs(ch.SteeringWheelAngle[Math.max(l.s,j-k)]))*D/(2*k*dt);
+      // steering: how fast you wind lock on, how long it takes to reach the apex lock, and corrections (extra direction changes of the wheel)
+      let wind=0; for (let j=j0;j<=ap;j++) wind=Math.max(wind, rate(j)); const lockAp=Math.abs(ch.SteeringWheelAngle[ap])*D, tWind=wind>5? lockAp/wind : NaN;
+      // a correction = the wheel moving a real amount one way (10°, or 15% of the apex lock) and then reversing; tiny wobbles and the normal unwind don't count
+      const thr=Math.max(12, 0.25*Math.abs(ch.SteeringWheelAngle[ap])*D);
+      // ...while the car keeps turning the same way: steering left then right through a chicane is the corner, not a correction
+      let rev=0, last=0, seg=0, segLat=0; for (let j=ti;j<=ex;j+=k){ const d=(ch.SteeringWheelAngle[Math.min(l.e-1,j+k)]-ch.SteeringWheelAngle[j])*D; if (Math.abs(d)<0.3) continue; const sg=Math.sign(d), lat=Math.abs(ch.LatAccel[j])>3?Math.sign(ch.LatAccel[j]):0;
+        if (sg===last) seg+=Math.abs(d); else { if (last && seg>=thr && lat && lat===segLat) rev++; seg=Math.abs(d); last=sg; segLat=lat; } }
+      // brake: how quickly the pressure builds (5% → 90% of the peak); throttle: first touch after the apex → 95%, and lifts once you're on it
+      let pk=0, jp=j0; for (let j=j0;j<=ap;j++) if (ch.Brake[j]>pk){ pk=ch.Brake[j]; jp=j; }
+      let b5=-1, b90=-1; if (pk>0.3) for (let j=j0;j<=jp;j++){ if (b5<0 && ch.Brake[j]>0.05*pk) b5=j; if (b90<0 && ch.Brake[j]>=0.9*pk){ b90=j; break; } }
+      let t1=-1, t2=-1, lifts=0, hi=0; for (let j=ap;j<Math.min(l.e,ex+run.tick*2);j++){ const th=ch.Throttle[j]; if (t1<0 && th>0.1) t1=j; if (t1>=0 && t2<0 && th>0.95) t2=j; if (t1>=0){ if (th>hi) hi=th; else if (hi>0.5 && hi-th>0.15){ lifts++; hi=th; } } }
+      let usPk=-9; if (A.us) for (let j=ti;j<=ap;j++) if (Number.isFinite(A.us[j])) usPk=Math.max(usPk, A.us[j]);
+      P.push({wind, tWind, corr:Math.max(0,rev-1) /* one reversal is the normal unwind out of the corner */, brkRise:b5>=0&&b90>b5?(b90-b5)*dt:NaN, thrRamp:t1>=0&&t2>t1?(t2-t1)*dt:NaN, lifts, usPk, v:ch.Speed[ap]*3.6}); }
+    if (P.length<2) return null; const md=k=>median(P.map(p=>p[k]).filter(Number.isFinite));
+    const L=lim.find(r=>r.n===i+1);
+    return {n:i+1, wind:md("wind"), tWind:md("tWind"), corr:mean(P.map(p=>p.corr)), brkRise:md("brkRise"), thrRamp:md("thrRamp"), lifts:mean(P.map(p=>p.lifts)), spike:P.filter(p=>p.usPk>US_PUSH_BAD).length/P.length, v:md("v"), verdict:L?L.verdict:null}; }).filter(Boolean);
+  if (!rows.length) return A._inp=null;
+  const m=k=>median(rows.map(r=>r[k]).filter(Number.isFinite)), avg=k=>mean(rows.map(r=>r[k]).filter(Number.isFinite));
+  const S={tWind:m("tWind"), wind:m("wind"), corr:avg("corr"), brkRise:m("brkRise"), thrRamp:m("thrRamp"), lifts:avg("lifts"), spike:avg("spike"), under:rows.filter(r=>r.verdict==="under").length/rows.length, over:rows.filter(r=>r.verdict==="over").length/rows.length};
+  // verdicts: aggressive only counts as "too" when the car shows it (front washing out at turn-in, corrections, slides); smooth only when there's grip left
+  const steer = S.tWind<0.3 && (S.spike>0.3 || S.corr>2) ? "aggressive" : S.tWind>0.8 && S.under>0.4 ? "smooth" : S.corr>2 ? "busy" : "good";
+  const brake = S.brkRise<0.12 && ((A.lockF||0)>0.1 || S.spike>0.3) ? "aggressive" : S.brkRise>0.35 ? "smooth" : "good";
+  const thr = S.thrRamp<0.4 && (A.osExit||0)>0.6 ? "aggressive" : S.thrRamp>1.6 && (A.osExit||0)<0.3 ? "smooth" : S.lifts>0.4 ? "busy" : "good";
+  return A._inp={rows, S, steer, brake, thr}; }
+function inputsHTML(run, A, S0){
+  const I=inputsAnalysis(run,A); if (!I) return "";
+  const S=I.S, TW=A.tw||null, cold=TW&&Number.isFinite(TW.front)&&TW.front<TW.lo, hot=TW&&Number.isFinite(TW.front)&&TW.front>TW.hi, F=A.ffb||{}, clip=Number.isFinite(F.clip)&&F.clip>0.05, weak=Number.isFinite(F.p95pct)&&F.p95pct<0.55;
+  const H=(()=>{ try { return tyreHeat(run,A); } catch(e){ return null; } })();
+  const W={aggressive:'<b class="bad">too aggressive</b>', smooth:'<b style="color:var(--us)">too smooth / slow</b>', busy:'<b class="warn">busy</b>', good:'<b class="ok">about right</b>'};
+  const tips=[];
+  if (I.steer==="aggressive") tips.push(`<b>Steering:</b> you wind on lock in ${S.tWind.toFixed(2)} s and the front washes out at turn-in in ${Math.round(S.spike*100)}% of corners${S.corr>2?`, with ${S.corr.toFixed(1)} corrections per corner`:""}. Turn in a little more progressively: the tyre needs a moment to build its grip, and a sudden input just slides it.`);
+  else if (I.steer==="smooth") tips.push(`<b>Steering:</b> you take ${S.tWind.toFixed(2)} s to wind on lock and ${Math.round(S.under*100)}% of corners are under the grip limit. Commit to the turn-in more quickly and with more lock: the tyre can take it, and a quicker turn-in also puts heat into the fronts.`);
+  else if (I.steer==="busy") tips.push(`<b>Steering:</b> ${S.corr.toFixed(1)} corrections per corner: the wheel is moving more than the corner needs. One clean input to the apex, then unwind once.`);
+  if (I.brake==="aggressive") tips.push(`<b>Brake:</b> you build pressure in ${(S.brkRise*1000).toFixed(0)} ms and the fronts lock or wash out. Squeeze the first 100–150 ms: load the front, then go to the peak.`);
+  else if (I.brake==="smooth") tips.push(`<b>Brake:</b> ${(S.brkRise*1000).toFixed(0)} ms to reach peak pressure: most of the braking is done at low pressure. Hit the peak sooner (in about 0.15–0.25 s); the car stops in less distance and the fronts get more heat.`);
+  if (I.thr==="aggressive") tips.push(`<b>Throttle:</b> 0 → 95% in ${S.thrRamp.toFixed(2)} s and the rear steps out on exit (${fmt(A.osExit,1)} slides per lap). Roll it on over a little longer, matching how fast you unwind the wheel.`);
+  else if (I.thr==="smooth") tips.push(`<b>Throttle:</b> ${S.thrRamp.toFixed(2)} s from first touch to flat, and the rear barely slides. There's traction to use: get to full throttle sooner.`);
+  else if (I.thr==="busy") tips.push(`<b>Throttle:</b> ${S.lifts.toFixed(1)} lifts per corner after you've picked up the throttle. Wait a fraction longer, then commit once.`);
+  // tyres: inputs are the quickest way to move tyre temperature
+  const heat=[]; if (cold){ heat.push(`<b>Tyres are cold (fronts ${Math.round(TW.front)}°C, window ${TW.lo}–${TW.hi}°C):</b> quicker, more committed inputs are the fastest way to heat them. ${H&&H.F?`On this car the fronts get ${Math.round((H.F.share.corner||0)*100)}% of their heat from cornering load and ${Math.round((H.F.share.brake||0)*100)}% from braking, so carry speed in and brake harder at the start.`:"Brake harder at the start of each zone and carry more speed in."} On the out lap, a few hard stops from speed and quick direction changes at speed do more than gentle weaving.`); }
+  else if (hot) heat.push(`<b>Tyres are hot (fronts ${Math.round(TW.front)}°C):</b> smoother inputs keep them in the window: less sliding at turn-in, a slightly gentler first brake, a smoother throttle.`);
+  // force feedback: what to change on the wheel to suit this
+  const ffb=[];
+  if (clip) ffb.push(`The wheel <b>clips</b> ${Math.round(F.clip*100)}% of hard cornering: you can't feel the front going, which ${I.steer==="aggressive"?"is part of why the turn-in is too sharp":"hides the limit"}. Raise <b>max force</b> to about ${Number.isFinite(F.peakNm)?Math.ceil(F.peakNm*1.1):"–"} Nm (or Auto).`);
+  if (I.steer==="smooth" && weak) ffb.push(`The forces are light (95% of the time under ${Math.round(F.p95pct*100)}%): a stronger wheel (lower max force, towards ${Number.isFinite(F.peakNm)?Math.ceil(F.peakNm*1.1):"–"} Nm) gives you more to lean on and builds the confidence to turn in harder.`);
+  if (I.steer==="busy" || (I.steer==="aggressive" && S.corr>2)) ffb.push(`Lots of small corrections: a little <b>damping</b> in iRacing (10–20%) or the wheel's own damper / smoothing calms the rim. Too much hides the detail, so add a little at a time.`);
+  if (I.steer==="smooth" && !weak && !clip) ffb.push(`The wheel strength looks fine. If the car feels vague at turn-in, lower iRacing's <b>min force</b> only if your wheel has a dead zone around the centre (belt and gear wheels); otherwise leave it at 0.`);
+  return `<section><h2>Your inputs <small>smooth or aggressive, judged by what the car did (${A.rep.length} clean laps, ${I.rows.length} corners)</small></h2>
+   <div class="grid" style="margin-bottom:8px"><div class="stat"><div class="k">Steering</div><div class="v sm">${W[I.steer]}</div><div class="s">${fmt(S.tWind,2)} s to wind on lock · ${fmt(S.corr,1)} corrections/corner</div></div>
+    <div class="stat"><div class="k">Brake</div><div class="v sm">${W[I.brake]}</div><div class="s">${Number.isFinite(S.brkRise)?Math.round(S.brkRise*1000)+" ms":"–"} to peak pressure</div></div>
+    <div class="stat"><div class="k">Throttle</div><div class="v sm">${W[I.thr]}</div><div class="s">${fmt(S.thrRamp,2)} s to flat · ${fmt(S.lifts,1)} lifts/corner</div></div>
+    <div class="stat"><div class="k">Front washing out at turn-in</div><div class="v sm">${Math.round(S.spike*100)}%</div><div class="s">of corners · ${Math.round(S.under*100)}% under the grip limit</div></div></div>
+   ${tips.length?`<ul style="margin:0 0 6px 18px;line-height:1.6">${tips.map(t=>`<li>${t}</li>`).join("")}</ul>`:`<p>Your inputs suit the car: quick enough to use the grip, smooth enough not to overwhelm it.</p>`}
+   ${heat.length?`<p style="margin:6px 0">${heat.join(" ")}</p>`:""}
+   ${ffb.length?`<h3 style="margin:10px 0 4px">Force feedback for this</h3><ul style="margin:0 0 6px 18px;line-height:1.6">${ffb.map(t=>`<li>${t}</li>`).join("")}</ul>`:""}
+   <div class="tablewrap"><table style="font-size:12px"><tr><th>Corner</th><th>Apex speed</th><th>Wind on lock</th><th>Corrections</th><th>Brake to peak</th><th>Throttle to flat</th><th>Front washes out</th><th>Grip used</th></tr>
+    ${I.rows.map(r=>`<tr><td><b>T${r.n}</b></td><td>${fmt(r.v,0)} km/h</td><td style="color:${r.tWind<0.3?"var(--warn)":r.tWind>0.8?"var(--us)":""}">${fmt(r.tWind,2)} s</td><td style="color:${r.corr>2.5?"var(--warn)":""}">${fmt(r.corr,1)}</td><td>${Number.isFinite(r.brkRise)?Math.round(r.brkRise*1000)+" ms":"–"}</td><td>${fmt(r.thrRamp,2)} s</td><td style="color:${r.spike>0.3?"var(--bad)":""}">${Math.round(r.spike*100)}%</td><td>${r.verdict?{under:"under",at:"at the limit",over:"over"}[r.verdict]:"–"}</td></tr>`).join("")}</table></div>
+   <p class="muted" style="font-size:12px">Wind on lock = time from the start of the turn-in to the apex steering angle at your quickest steering rate (shorter = more aggressive). Corrections = the wheel reversing by a real amount (a quarter of the corner's lock, at least 12°) while the car is still turning the same way, apart from the normal unwind; direction changes through chicanes don't count. Brake to peak = 5% → 90% of the peak pressure. Throttle to flat = first touch after the apex → 95%. "Too aggressive" only shows when the car paid for it (the front washing out, corrections, lock-ups, exit slides); "too smooth" only when there was grip left. Quick inputs aren't wrong on their own: a GT3 likes a positive turn-in.</p></section>`; }
 function ffbHTML(run, A){
   const F=A.ffb;
   if (!F || !Number.isFinite(F.clip)) return `<section><h2>Force feedback</h2><p class="muted">No steering-force data in this run.</p></section>`;
