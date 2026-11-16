@@ -18,6 +18,10 @@ Private repo: for the four of us only.
 
 Your data stays on your PC in `Documents\Setup Engineer`; only the team folder is shared.
 
+**Updates:** from 0.13.4 on, the app checks this repo's [Releases](https://github.com/DevonAllies/sim-engineer/releases) every 4 hours, downloads a new version in the background and installs it when you close the app (one Windows admin click). Versions before 0.13.4 don't check: install 0.13.4 by hand once.
+
+**Releasing a new version** (maintainer): bump `version` in `app/package.json`, run `npm run dist` in `app/`, then create a GitHub release tagged `v<version>` with `app/dist/Setup-Engineer-Setup-<version>.exe`, its `.blockmap` and `latest.yml` attached.
+
 ---
 
 ## What it does
@@ -120,7 +124,7 @@ app/
   main.js            Electron main process: windows, overlays, data folder, database, PDF, team folder
   preload.js         safe bridge between the pages and the app (window.se)
   db.js              SQLite database (sql.js / WASM)
-  updater.js         auto-update (not wired to this repo yet)
+  updater.js         auto-update from this repo's GitHub Releases
   web/setup-engineer.html   the main app: telemetry parser, analysis, all tabs
   web/overlays/      Bono (engineer), Hanna (fuel), GP, Garage, radio
   build/             icon, installer script (removes the old per-user install)
@@ -138,6 +142,7 @@ Not in the repo: `node_modules`, installers, `.ibt` telemetry, the database, and
 
 | Version | Changes |
 |---|---|
+| 0.13.4 | Auto-update from this repo's GitHub Releases. |
 | 0.13.3 | Teammate long runs in the Endurance test; lift and coast and tyre wear vs teammates. |
 | 0.13.2 | Teammate data used for driving comparison only; speed and brake/throttle overlays, peak brake, trail, coasting, gear per corner. |
 | 0.13.x | Team sharing through Google Drive (laps pushed and pulled automatically, raw .ibt pickup). Endurance test table. Endurance starting pressure for track/air temps. |
