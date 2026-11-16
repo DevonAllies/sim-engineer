@@ -2039,7 +2039,7 @@ function render(){
     graphs: () => { try { return graphsHTML(run, A, S); } catch(e){ console.error(e); return `<section><h2>Graphs</h2><p class="muted">Couldn't draw the graphs for this stint (${esc(e.message)}).</p></section>`; } },
     tyres: () => `<section><h2>Tyres <small>temperatures, pressures, camber and wear</small></h2><div class="two"><div>${tiresHTML(A,S,run)}</div><div>${wearHTML(A)}
         <div class="grid" style="margin-top:10px"><div class="stat"><div class="k">Rear wheelspin</div><div class="v">${fmt((A.spin||0)*100,0)}%</div><div class="s">of throttle &gt;60% samples</div></div>
-        <div class="stat"><div class="k">Inside rear spin</div><div class="v">${fmt((A.inSpin||0)*100,0)}%</div><div class="s">while cornering on power</div></div></div></div></div></section>` + tyreModelHTML(run, A, S) + racePressureHTML(run, A, S) + safe(()=>tyreThermalHTML(run, A, S),"thermal") + safe(()=>gripTempHTML(run, A, S),"griptemp") + safe(()=>tyreHeatHTML(run, A, S),"heat") + areaCards("tyres"),
+        <div class="stat"><div class="k">Inside rear spin</div><div class="v">${fmt((A.inSpin||0)*100,0)}%</div><div class="s">while cornering on power</div></div></div></div></div></section>` + tyreModelHTML(run, A, S) + racePressureHTML(run, A, S) + safe(()=>modelRangeHTML(run, "Tyre models"),"range") + safe(()=>tyreThermalHTML(run, A, S),"thermal") + safe(()=>gripTempHTML(run, A, S),"griptemp") + safe(()=>tyreHeatHTML(run, A, S),"heat") + areaCards("tyres"),
     aero: () => aeroHTML(run, A, S) + optimalRakeHTML(run, A, S) + rakePhasesHTML(run, A, S) + aeroMapHTML(run, A) + aeroOptionsHTML(run, A, S) + bumpHTML(run, A) + bottomHTML(run, A) + downforceHTML(run, A) + areaCards("aero"),
     balance: () => safeBalanceFeel(run, A) + `<section><h2>Balance <small>understeer angle in degrees (front wheel): higher = more understeer</small></h2>
    ${balanceReady(run,A)?"":`<div class="sugg p2" style="margin:0 0 10px"><h3>First read only</h3><p style="margin:4px 0 0">${balanceWait(run,A)}</p></div>`}
@@ -2059,7 +2059,7 @@ function render(){
     loss: () => gpHTML(run, A),
     gp: () => gpHTML(run, A) + (()=>{ try { return teamCompareHTML(run, A); } catch(e){ console.error(e); return ""; } })(),
     hanna: () => (()=>{ try { return enduranceTestHTML(run, A, S); } catch(e){ console.error(e); return ""; } })() + (()=>{ try { return teamEnduHTML(run, A); } catch(e){ console.error(e); return ""; } })()
-      + safe(()=>strategyHTML(run, A, S),"strategy") + safe(()=>liftPlanHTML(run, A),"liftplan") + safe(()=>raceTempsHTML(run, A, S),"racetemps") + safe(()=>fuelModelHTML(run, A),"fuelmodel")
+      + safe(()=>strategyHTML(run, A, S),"strategy") + safe(()=>liftPlanHTML(run, A),"liftplan") + safe(()=>raceTempsHTML(run, A, S),"racetemps") + safe(()=>modelRangeHTML(run, "Fuel model"),"range") + safe(()=>fuelModelHTML(run, A),"fuelmodel")
       + hannaHTML(run, A) + wearModelHTML(run, A, S) + areaCards("fuel"),
     ffb: () => ffbHTML(run, A),
     guide: () => guideHTML(run),
@@ -2081,6 +2081,8 @@ function render(){
   if (view==="balance" || view==="home") wireBalanceFeel(run);
   { const ts=$("#teamshare"); if (ts) ts.onclick=async()=>{ ts.textContent="Sharing…"; const f=await teamShare(run, A, true); ts.textContent=f?"Shared ✓":"Couldn't share (set the team folder under Learning)"; }; }
   { const es=$("#endupit"); if (es) es.onchange=()=>{ RACE.pitLoss=+es.value||60; PREFS.set("race", RACE); rerender(); }; }
+  document.querySelectorAll(".mrange").forEach(s=>s.onchange=()=>{ const R=modelRange(); R[s.dataset.k]=s.value; try { PREFS.set("modelRange", R); } catch(e){}
+    runs.forEach(r=>{ if (r.A) r.A.tw=null; }); rerender(); });   // the measured tyre window follows the range too
   for (const [id,key] of [["lctarget","lcTarget"],["tyreloss","tyreLoss"],["racestart","startH"]]){ const el=$("#"+id); if (el) el.onchange=()=>{ RACE[key]=el.value===""?"":+el.value; PREFS.set("race", RACE); rerender(); }; }
   if (view==="aero" && A.rh) drawRH(run,A,S);
   if (view==="laps") drawTrace(run,A);
@@ -3113,7 +3115,7 @@ async function loadStintIbt(run, tries, lastSize){
     runs.push(r);
     if (runs[current]===run) current=runs.length-1;   // you were looking at that stint: show the full-data version
     learnLive(r);
-    try { const done=JSON.parse(localStorage.getItem("se.learnFiles6")||"{}"); done[f.name+"|"+f.size]=1; localStorage.setItem("se.learnFiles6", JSON.stringify(done)); } catch(e){}
+    try { const done=JSON.parse(localStorage.getItem(SCAN_KEY)||"{}"); done[f.name+"|"+f.size]=1; localStorage.setItem(SCAN_KEY, JSON.stringify(done)); } catch(e){}
     scheduleRender(true);
   } catch(e){ again(lastSize); }
 }
@@ -3702,6 +3704,7 @@ let LEARN = null, LEARN_VER = 0, LEARN_CACHE = {};
 const learnStore = {
   async load(){ try { if (window.se && window.se.learnGet) return await window.se.learnGet() || {}; return JSON.parse(localStorage.getItem("se.learn")||"{}"); } catch(e){ return {}; } },
   async put(rec){ LEARN[rec.id]=Object.assign({}, LEARN[rec.id]||{}, rec, LEARN[rec.id]&&LEARN[rec.id].date<rec.date?{date:LEARN[rec.id].date}:{}); LEARN_VER++;
+    if (typeof LROWS!=="undefined"){ if (rec.lapRows) LROWS[rec.id]=rec.lapRows; else delete LROWS[rec.id]; }   // the models read the new laps straight away
     try { if (window.se && window.se.learnPut){ await window.se.learnPut(rec); learnSettings(); } else localStorage.setItem("se.learn", JSON.stringify(LEARN)); } catch(e){} },
   async forget(car, track){ for (const [k,r] of Object.entries(LEARN||{})) if (r.car===car && (!track || r.track===track)) delete LEARN[k]; LEARN_VER++;
     try { if (window.se && window.se.learnForget) await window.se.learnForget(car, track); else localStorage.setItem("se.learn", JSON.stringify(LEARN)); } catch(e){} },
@@ -4016,10 +4019,14 @@ learnStore.load().then(async d=>{ LEARN=d||{}; await learnSettings(); LEARN_VER+
 document.addEventListener("click", e=>{ if (e.target && e.target.id==="learnscan") learnScan(); });
 // learn from the .ibt files already in your telemetry folder (each file once)
 let LEARN_SCAN=false;
+// bumped when a version stores more per lap: every recording is read once more in the background (off track), so old stints get the new data too
+// 7: grip and tyre temperature per lap, fuel load, tyre age, wet / dry, track profile, time of day (0.14.x)
+const SCAN_KEY="se.learnFiles7";
 async function learnScan(statusEl){
   if (LEARN_SCAN || !LEARN) return; LEARN_SCAN=true;
   const say = t => { document.querySelectorAll(".learnstatus").forEach(e=>e.textContent=t); if (statusEl) statusEl.textContent=t; };
-  let done={}; try { done=JSON.parse(localStorage.getItem("se.learnFiles6")||"{}"); } catch(e){}
+  let done={}; try { done=JSON.parse(localStorage.getItem(SCAN_KEY)||"{}"); } catch(e){}
+  let seen={}; try { seen=JSON.parse(localStorage.getItem("se.learnFiles6")||"{}"); } catch(e){}   // read by an older version: only refresh stints that are still remembered (never bring back one you forgot)
   try {
     const d=await (await fetch("/api/files",{cache:"no-store"})).json();
     const files=(d.files||[]).filter(f=>f.size>1500000 && !done[f.name+"|"+f.size]);
@@ -4030,10 +4037,11 @@ async function learnScan(statusEl){
       say(`Learning from recordings: ${i} of ${files.length} (${f.name})`);
       try { const buf=await (await fetch("/api/file?name="+encodeURIComponent(f.name))).arrayBuffer();
         const run=finishRun(parseIBT(buf, f.name), f.name), A=analyze(run);
-        if (!A.error && A.rep && A.rep.length>=1){ const S=settingsFor(run); if (!A.tw) A.tw=tyreWindow(run,A,S);
+        const id=!A.error&&A.best?`${run.carPath}|${learnTrackOf(run)}|${A.best.time.toFixed(3)}`:null;
+        if (!A.error && A.rep && A.rep.length>=1 && !(seen[f.name+"|"+f.size] && !LEARN[id])){ const S=settingsFor(run); if (!A.tw) A.tw=tyreWindow(run,A,S);
           const before=Object.keys(LEARN).length; learnRecord(run, A); if (Object.keys(LEARN).length>before) added++; }
       } catch(e){}
-      done[f.name+"|"+f.size]=1; try { localStorage.setItem("se.learnFiles6", JSON.stringify(done)); } catch(e){}
+      done[f.name+"|"+f.size]=1; try { localStorage.setItem(SCAN_KEY, JSON.stringify(done)); } catch(e){}
       await new Promise(r=>setTimeout(r,30));
     }
     say(files.length ? `Done: ${added} new stint${added===1?"":"s"} learned from ${files.length} recording${files.length===1?"":"s"}.` : "All your recordings are already learned.");
@@ -4815,6 +4823,22 @@ function similarSetupHTML(run, A){
    ${diff.length?`<p style="margin:4px 0"><b>To start from it:</b> ${esc(diff.map(c=>c.txt.replace(/ → /," (now) → ")).join("; "))}.</p>`:`<p class="muted">Your setup already matches it.</p>`}
    <p class="muted" style="font-size:12px">Similar = the same mix of straights, slow, fast and heavy-braking corners, traction zones, kerbs and top speed. It's a starting point: the gearing and the ride heights still need checking for this track's top speed.</p></section>`;
 }
+// --- which stints the tyre and fuel models learn from: a time range up to this stint, this track or every track (your choice, remembered) ---
+let MR=null;
+function modelRange(){ if (!MR){ MR={days:"season", track:"all"}; try { Object.assign(MR, PREFS.get("modelRange")||{}); } catch(e){} } return MR; }
+const runDate = run => { const fm=String(run.name||"").match(/(\d{4})-(\d\d)-(\d\d) (\d\d)-(\d\d)-(\d\d)/); return fm ? new Date(+fm[1],fm[2]-1,+fm[3],+fm[4],+fm[5],+fm[6]).getTime() : Date.now(); };
+function modelRecs(run, base){ const R=modelRange(), t0=runDate(run), trk=learnTrackOf(run), own=run.A&&run.A.best?`${run.carPath}|${trk}|${run.A.best.time.toFixed(3)}`:null;
+  if (R.days==="stint") return [];
+  return Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.date>=LEARN_CUTOFF && r.id!==run.learnedId && r.id!==own && (R.track!=="this" || r.track===trk)
+    && (R.days==="season" || (r.date<=t0+6*3600e3 && r.date>=t0-(+R.days)*864e5)) && (!base || base(r))); }
+function modelRangeHTML(run, what){
+  const R=modelRange(), recs=modelRecs(run, r=>sameSurface(r,run)), rows=lapRowsFor(recs), withG=rows.filter(x=>(x.rows||[]).some(l=>Number.isFinite(l.g))).length;
+  const opt=(v,l,cur)=>`<option value="${v}"${String(cur)===String(v)?" selected":""}>${l}</option>`;
+  const scanning=typeof LEARN_SCAN!=="undefined" && LEARN_SCAN;
+  return `<div class="row" style="margin:14px 0 4px;align-items:center;gap:8px;flex-wrap:wrap"><b style="font-size:13px">${what} learn from:</b>
+    <select class="mrange" data-k="days" style="padding:3px 6px">${opt("stint","this stint only",R.days)}${opt(7,"the last 7 days",R.days)}${opt(30,"the last 30 days",R.days)}${opt("season","this season",R.days)}</select>
+    <select class="mrange" data-k="track" style="padding:3px 6px">${opt("this","this track",R.track)}${opt("all","every track",R.track)}</select>
+    <span class="muted" style="font-size:12px">this stint + ${recs.length} other stint${recs.length===1?"":"s"} in this car${wetOf(run).wet?" (wet)":""}${recs.length?`, ${withG} with lap-by-lap grip and tyre temperature`:""}${recs.length>withG?(scanning?" (the rest are being re-read from their recordings now)":" (older stints get it when their recordings are re-read: Learning → Learn from my past recordings)"):""}.</span></div>`; }
 // --- lap rows from the database (async, cached): the fuel and tyre models need every lap, not just the stint summaries ---
 const LROWS={}; let LROWS_PEND=false, MODEL_VER=0;
 function lapRowsFor(recs){
@@ -4827,7 +4851,7 @@ function lapRowsFor(recs){
 const thisStintRows = (run, A) => { try { return {r:{id:"this", trackT:parseFloat((run.info.WeekendInfo||{}).TrackSurfaceTemp), airT:parseFloat((run.info.WeekendInfo||{}).TrackAirTemp), med:median(A.rep.map(l=>l.time))}, rows:lapRowsOf(run,A)}; } catch(e){ return null; } };
 // --- 3) the fuel effect, measured: lap time against fuel load, tyre age and track temperature over all your stints here ---
 function fuelModel(run, A){
-  const trk=learnTrackOf(run), recs=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===trk && r.date>=LEARN_CUTOFF && r.laps>=3);
+  const trk=learnTrackOf(run), recs=modelRecs(run, r=>r.track===trk && r.laps>=3 && sameSurface(r,run));   // fuel and tyre age: always this track
   const D=lapRowsFor(recs); if (!(LEARN||{})[run.learnedId]){ const t=thisStintRows(run,A); if (t) D.push(t); }
   const P=[]; for (const {r,rows} of D) for (const x of rows||[]) if (x.used && !x.odd && Number.isFinite(x.fuelL) && Number.isFinite(x.age) && Number.isFinite(x.time)) P.push({t:x.time, f:x.fuelL, a:x.age, T:Number.isFinite(r.trackT)?r.trackT:NaN, s:r.id});
   if (P.length<12) return {n:P.length, stints:new Set(P.map(p=>p.s)).size};
@@ -4852,7 +4876,7 @@ const fuelK = (run, A) => { try { const F=fuelModel(run,A); return F&&F.ok ? {k:
 // --- 4) tyre temperature model: each lap the tyre heats toward a track-temperature-dependent balance point ---
 // T(next lap) − T = α·(T∞ − T), with T∞ = a + b·track temperature; fitted per axle over every lap of your stints in this car
 function tyreThermal(run, A){
-  const recs=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.date>=LEARN_CUTOFF && r.laps>=3 && Number.isFinite(r.trackT) && sameSurface(r,run));
+  const recs=modelRecs(run, r=>r.laps>=3 && Number.isFinite(r.trackT) && sameSurface(r,run));
   const D=lapRowsFor(recs); if (!(LEARN||{})[run.learnedId]){ const t=thisStintRows(run,A); if (t && Number.isFinite(t.r.trackT)) D.push(t); }
   const out={n:D.length};
   for (const ax of ["F","R"]){ const X=[], y=[];
@@ -4975,7 +4999,7 @@ function gripTemp(run, A, off0){
 // every lap's grip and tyre temperature: this stint + your other stints in this car in the same conditions (from 0.14.1 on each lap stores both)
 function gripPoints(run, A, off){
   const P=gripTemp(run,A,off); if (!P) return null;
-  const recs=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.date>=LEARN_CUTOFF && sameSurface(r,run) && r.id!==run.learnedId);
+  const recs=modelRecs(run, r=>sameSurface(r,run));
   let hist=0; for (const {rows} of lapRowsFor(recs)) for (const x of rows||[]) if (Number.isFinite(x.g) && Number.isFinite(x.tAll)){ P.push({g:x.g, T:x.tAll, old:true}); hist++; }
   return {P, hist}; }
 // a curve through grip against temperature; peak, and the window = where the car keeps 98.5% of its peak grip

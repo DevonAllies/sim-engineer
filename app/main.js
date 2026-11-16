@@ -306,6 +306,8 @@ ipcMain.handle('learn:put', (_e, rec) => {
   if (old && old.date && (!rec.date || old.date < rec.date)) rec.date = old.date;   // the same stint seen live and later as a .ibt file: keep the first date
   // every lap of the stint goes into its own table (and the CSV), not into the stint record
   if (Array.isArray(rec.lapRows)) { if (rec.lapRows.length) L.laps[rec.id] = rec.lapRows; delete rec.lapRows; }
+  // re-reading a recording (new version, more data per lap) must not lose what you told the app about that stint
+  if (old) for (const k of ['feel', 'feelDrv']) if (old[k] !== undefined && rec[k] === undefined) rec[k] = old[k];
   S[rec.id] = rec; csvTouched.add(rec.car + '|' + rec.track); learnSave(); return true;
 });
 ipcMain.handle('data:info', () => ({ dir: store && store.dir, db: store && store.file, csv: store && store.csvDir, reports: store && store.reportDir, manuals: store && store.manualDir, lastSaved, lastSaveError }));
