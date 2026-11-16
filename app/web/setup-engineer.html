@@ -1789,7 +1789,157 @@ function graphsHTML(run, A, S){
         bands:W?[{y0:W.df.f[0], y1:W.df.f[1], color:"#4a8fd8", op:0.12}, {y0:W.df.r[0], y1:W.df.r[1], color:"#e8803a", op:0.12}]:S.frontRH?[{y0:S.frontRH-S.rhTol,y1:S.frontRH+S.rhTol,color:"#4a8fd8"},{y0:S.rearRH-S.rhTol,y1:S.rearRH+S.rhTol,color:"#e8803a"}]:[],
         series:[{type:"dots", pts:sub(fr,2500), color:"#4a8fd8", op:0.3}, {type:"dots", pts:sub(rr,2500), color:"#e8803a", op:0.3}, {pts:[], color:"#4a8fd8", label:"front"}, {pts:[], color:"#e8803a", label:"rear"}]})
         + note(`The car sinks as downforce builds with speed. Shaded: ${W?"iRacing's max-downforce window (front blue, rear orange)":"the target ride heights"}; where the clouds sit at the top end is your ride height at speed. The gap between the two clouds is your rake.`)); } }
-  return `<section><h2>Graphs <small>your clean laps (${A.rep.length}); corner numbers match the map</small></h2>${trackMapSVG(run,A,{note:false, phases:true, h:240, w:360})}${parts.join("")}</section>`;
+  const more=(f,name)=>{ try { return f(run,A,S,{TL,marks,note,sub}); } catch(e){ console.error(name,e); return ""; } };
+  return `<section><h2>Graphs <small>your clean laps (${A.rep.length}); corner numbers match the map</small></h2>${trackMapSVG(run,A,{note:false, phases:true, h:240, w:360})}${parts.join("")}</section>`
+    + more(graphsSetupHTML,"setup") + more(graphsDrivingHTML,"driving") + more(graphsEnduHTML,"endurance");
+}
+const GCOL={LF:"#4a8fd8", RF:"#1f5fb0", LR:"#e8803a", RR:"#c25a12"};
+const smallGrid = items => `<div style="display:flex;flex-wrap:wrap;gap:8px 14px">${items.map(x=>`<div style="flex:1 1 320px;max-width:420px">${x}</div>`).join("")}</div>`;
+// ---- setup: dampers, balance and ride height along the lap, temperature across the tread ----
+function graphsSetupHTML(run, A, S, g){
+  const ch=run.ch, out=[], L=A.best, {TL,marks,note}=g;
+  // 1) shock velocity histograms: share of time at each damper speed, per corner (recordings only: the live feed has no damper channels)
+  const D=A.damp||{}, cs=Object.keys(D).filter(c=>D[c].hist);
+  if (cs.length){ const series=cs.map(c=>{ const h=D[c].hist, n=h.reduce((a,b)=>a+b,0)||1; return {pts:h.map((v,i)=>[(i-30)*10, v/n*100]), color:GCOL[c], width:1.7, label:c}; });
+    const ym=Math.ceil(Math.max(...series.flatMap(s=>s.pts.map(p=>p[1])))+1);
+    const row=c=>{ const d=D[c]; return `<tr><td><b>${c}</b></td><td>${Math.round(d.lsB*100)}% · ${Math.round(d.lsR*100)}%</td><td>${Math.round(d.hsB*100)}% · ${Math.round(d.hsR*100)}%</td><td>${fmt(d.p95B,0)} · ${fmt(d.p95R,0)}</td></tr>`; };
+    const fr=c=>D[c]?D[c].hsB+D[c].hsR:NaN, fH=mean(["LF","RF"].map(fr).filter(Number.isFinite)), rH=mean(["LR","RR"].map(fr).filter(Number.isFinite));
+    out.push(svgChart({title:"Shock velocity histogram (damper speed, share of time)", xr:[-300,300], yr:[0,ym], xl:"mm/s  (− rebound · bump +)", yl:"% of time", xticks:12, h:250,
+        bands:[], vlines:[{x:-40},{x:40}], series})
+      + `<div class="tablewrap"><table style="font-size:12px"><tr><th>Corner</th><th>Slow bump · rebound</th><th>Fast bump · rebound</th><th>95% bump · rebound (mm/s)</th></tr>${cs.map(row).join("")}</table></div>`
+      + note(`How fast each damper moves, as a share of all your clean-lap time. Inside the dashed lines (±40 mm/s) is slow speed: the body rolling, pitching and diving, set by the low-speed clickers. Outside is fast speed: bumps and kerbs, set by the high-speed clickers. A well-matched car has a centred, symmetric bell with left and right on top of each other. A lop-sided bell (more bump than rebound, or the reverse) means that side is too soft or too stiff for the other. ${Number.isFinite(fH)&&Number.isFinite(rH)?(fH>rH*1.3?"The front spends clearly more time at fast speed than the rear: it's riding the kerbs and bumps harder (stiffer front, or a lower front ride height).":rH>fH*1.3?"The rear spends clearly more time at fast speed than the front: it's hitting bumps and kerbs harder.":"Front and rear spend about the same time at fast speed."):""}`)); }
+  else out.push(note(`<b>Shock velocity histogram:</b> needs the damper channels, which iRacing writes only into the recording (.ibt), not the live feed. Open this stint's recording to see it.`));
+  // 2) understeer angle along the lap, on the map and as a trace
+  if (A.us && L){ const pts=[]; for (let j=L.s;j<L.e;j+=2) if (Number.isFinite(A.us[j]) && Math.abs(ch.LatAccel[j])>4) pts.push([lapDist(run,j), A.us[j]]); else pts.push([lapDist(run,j), NaN]);
+    const seg=[]; let cur=[]; for (const p of pts){ if (Number.isFinite(p[1])) cur.push(p); else if (cur.length){ seg.push(cur); cur=[]; } } if (cur.length) seg.push(cur);
+    const ys=pts.map(p=>p[1]).filter(Number.isFinite), lo=Math.min(US_LOOSE-1, pct(ys,0.02)), hi=Math.max(US_PUSH+1, pct(ys,0.98));
+    out.push(`<h3 style="margin:14px 0 4px">Balance around the lap</h3>`+smallGrid([trackMapSVG(run,A,{balance:true, note:false, w:380, h:270}),
+      svgChart({title:`Understeer angle along your best lap`, w:520, h:270, xr:[0,TL], yr:[lo,hi], zero:true, xl:"metres", yl:"understeer (°)", vlines:marks,
+        bands:[{y0:US_PUSH, y1:hi, color:"#4a8fd8"}, {y0:lo, y1:US_LOOSE, color:"#e8803a"}],
+        series:seg.map((s,i)=>({pts:s, color:"#9b7be0", width:1.7, label:i?"":"while cornering"})).map(s=>s.label?s:Object.assign(s,{label:undefined}))})])
+      + note(`Where in each corner the car pushes (blue band, above ${US_PUSH.toFixed(1)}°) or gets loose (orange band, below ${US_LOOSE.toFixed(1)}°), shown only while cornering. Read it corner by corner: understeer that starts at the corner number (turn-in) is entry; at the bottom of the dip in speed is mid; after it, on the throttle, is exit. The Balance tab turns this into setup changes.`)); }
+  // 3) ride height and rake along the lap, with iRacing's aero window
+  if (ch.LFrideHeight && ch.LRrideHeight && L){ const f=[], r=[], rk=[];
+    const hw=Math.max(1,Math.round(run.tick*0.1)), avg=(k1,k2,j)=>{ let s=0,n=0; for (let k=Math.max(L.s,j-hw);k<=Math.min(L.e-1,j+hw);k++){ s+=ch[k1][k]+ch[k2][k]; n++; } return s/n*500; };   // 0.2 s average: kerb strikes out, braking and compressions in
+    for (let j=L.s;j<L.e;j+=2){ const d=lapDist(run,j), a=avg("LFrideHeight","RFrideHeight",j), b=avg("LRrideHeight","RRrideHeight",j); f.push([d,a]); r.push([d,b]); rk.push([d,b-a]); }
+    const W=(PROFILES[run.carPath]||{}).aeroWin, all=[...f,...r].map(p=>p[1]), lo=Math.floor(pct(all,0.005)-2), hi=Math.ceil(pct(all,0.995)+2);
+    const inWin=(P,w)=>{ const fast=P.filter((p,i)=>ch.Speed[L.s+i*2]*3.6>180); return fast.length? fast.filter(p=>p[1]>=w[0]&&p[1]<=w[1]).length/fast.length : NaN; };
+    const iF=W?inWin(f,W.df.f):NaN, iR=W?inWin(r,W.df.r):NaN;
+    out.push(svgChart({title:"Ride height along your best lap", xr:[0,TL], yr:[lo,hi], xl:"metres", yl:"ride height (mm)", vlines:marks, h:250,
+        bands:W?[{y0:W.df.f[0], y1:W.df.f[1], color:"#4a8fd8", op:0.13}, {y0:W.df.r[0], y1:W.df.r[1], color:"#e8803a", op:0.13}]:[],
+        series:[{pts:f, color:"#4a8fd8", width:1.5, label:"front"}, {pts:r, color:"#e8803a", width:1.5, label:"rear"}]})
+      + svgChart({title:"Rake along your best lap", xr:[0,TL], yr:[Math.floor(pct(rk.map(p=>p[1]),0.005)-1), Math.ceil(pct(rk.map(p=>p[1]),0.995)+1)], xl:"metres", yl:"rear − front (mm)", vlines:marks, h:170,
+        series:[{pts:rk, color:"#7b5cd6", width:1.5, label:"rake"}]})
+      + note(`${W?`Shaded: iRacing's max-downforce window at speed (front blue ${W.df.f[0]}–${W.df.f[1]} mm, rear orange ${W.df.r[0]}–${W.df.r[1]} mm). It only matters where the car is fast: in slow corners the car sits higher and the window doesn't apply. Above 180 km/h the front is in its window ${Number.isFinite(iF)?Math.round(iF*100)+"%":"–"} of the time and the rear ${Number.isFinite(iR)?Math.round(iR*100)+"%":"–"}. `:""}Dips are braking (the nose dives, rake grows) and compressions; peaks in rake on the straights mean the rear squats less than the front sinks. The Aero tab works out what to change.`)); }
+  // 4) temperature across the tread, lap by lap: camber (inner − outer) and pressure (middle vs the edges)
+  const PL=A.endTyres&&A.endTyres.perLap;
+  if (PL && PL.length>=3){ const cs4=["LF","RF","LR","RR"].filter(c=>PL[0].t[c]);
+    const cam=cs4.map(c=>({pts:PL.map(p=>[p.lap, p.t[c].inner-p.t[c].outer]), color:GCOL[c], width:1.7, label:c}));
+    const prs=cs4.map(c=>({pts:PL.map(p=>[p.lap, p.t[c].mid-(p.t[c].inner+p.t[c].outer)/2]), color:GCOL[c], width:1.7, label:c}));
+    const rng=S2=>{ const v=S2.flatMap(s=>s.pts.map(p=>p[1])).filter(Number.isFinite); return [Math.floor(Math.min(-2,...v)), Math.ceil(Math.max(2,...v))]; };
+    const xr=[Math.min(...PL.map(p=>p.lap)), Math.max(...PL.map(p=>p.lap))];
+    out.push(`<h3 style="margin:14px 0 4px">Temperature across the tread, lap by lap</h3>`+smallGrid([
+      svgChart({title:"Inner − outer (camber)", w:420, h:230, xr, yr:rng(cam), zero:true, xl:"lap", yl:"°C", xticks:6, bands:[{y0:4, y1:9, color:"#2a9d55", op:0.10}], series:cam}),
+      svgChart({title:"Middle − edges (pressure)", w:420, h:230, xr, yr:rng(prs), zero:true, xl:"lap", yl:"°C", xticks:6, bands:[{y0:-2, y1:2, color:"#2a9d55", op:0.10}], series:prs})])
+      + note(`Each lap's live tyre temperatures averaged through the corners. Left: how much hotter the inside edge runs than the outside. A few degrees hotter inside (green band) is the usual target with negative camber; much more means too much camber, below zero means too little. Right: the middle against the edges. Hotter in the middle (above the band) means too much pressure; cooler means too little. Lines that drift over the stint show the tyre changing as it heats and wears.`)); }
+  return out.length ? `<section><h2>Setup graphs <small>dampers, balance and ride height along the lap, tyre temperatures</small></h2>${out.join("")}</section>` : "";
+}
+// ---- driving: braking consistency, apex speeds, throttle on exit, shifting ----
+function graphsDrivingHTML(run, A, S, g){
+  const ch=run.ch, out=[], secs=cornerSections(run,A), laps=A.rep.slice().sort((a,b)=>a.lap-b.lap), {note}=g;
+  if (!secs.length || laps.length<2) return "";
+  const per=secs.map(s=>laps.map(l=>({l, c:cornerOnLap(run,l,s)})).filter(x=>x.c));
+  // 5) brake traces per corner: every clean lap, lined up on your best lap's brake point
+  const brakeCards=secs.map((s,i)=>{ const at=s.at, series=[]; let bp=[];
+    for (const l of laps){ const pts=[]; for (let j=l.s;j<l.e;j+=Math.max(1,Math.round(run.tick/30))){ const d=lapDist(run,j)-at; if (d<-120) continue; if (d>200) break; pts.push([d, ch.Brake[j]*100]); }
+      if (pts.length>5) series.push({pts, color:l===A.best?"#d6455f":"#9aa3b5", width:l===A.best?2.2:1, op:l===A.best?1:0.55}); }
+    bp=per[i].map(x=>x.c.brk).filter(Number.isFinite); const sd=bp.length>2?Math.sqrt(bp.reduce((a,b)=>a+(b-mean(bp))**2,0)/(bp.length-1)):NaN;
+    if (!series.length) return "";
+    series.sort((a,b)=>(a.color==="#d6455f")-(b.color==="#d6455f"));
+    return svgChart({title:`T${i+1}: brake point spread ±${fmt(sd,0)} m`, w:420, h:170, xr:[-120,200], yr:[0,105], xl:"m from your best lap's brake point", yl:"brake %", xticks:8, vlines:[{x:0}], series}); }).filter(Boolean);
+  if (brakeCards.length) out.push(`<h3 style="margin:14px 0 4px">Braking, corner by corner</h3>`+smallGrid(brakeCards)
+    + note(`Every clean lap's brake pressure (grey) with your best lap (red), lined up on the best lap's brake point (0 m). Tight bundles = consistent. A spread in where the lines start is your brake point moving; differences in the peak or in how the line falls away (the release, trail braking into the corner) are the technique changing. The title gives how much your brake point varies from lap to lap.`));
+  // 6) apex speed, lap by lap, for each corner (against your typical)
+  { const dots=[], med=[], spread=[];
+    per.forEach((P,i)=>{ const v=P.map(x=>x.c.vmin).filter(Number.isFinite); if (v.length<2) return; const m=median(v); med.push([i+1,0]);
+      P.forEach(x=>{ if (Number.isFinite(x.c.vmin)) dots.push({p:[i+1+(x.l===A.best?0:((x.l.lap*37)%11-5)/40), x.c.vmin-m], best:x.l===A.best}); });
+      spread.push({n:i+1, sd:Math.sqrt(v.reduce((a,b)=>a+(b-m)**2,0)/(v.length-1))}); });
+    if (dots.length){ const ys=dots.map(d=>d.p[1]), r=Math.max(4, Math.ceil(Math.max(...ys.map(Math.abs))));
+      const worst=spread.slice().sort((a,b)=>b.sd-a.sd).slice(0,3).filter(x=>x.sd>2);
+      out.push(svgChart({title:"Apex speed on every lap, against your typical apex speed", xr:[0.5, secs.length+0.5], yr:[-r,r], zero:true, xl:"corner", yl:"km/h vs typical", xticks:Math.min(secs.length,20), h:240,
+          series:[{type:"dots", pts:dots.filter(d=>!d.best).map(d=>d.p), color:"#4a8fd8", op:0.6, r:2.6}, {type:"dots", pts:dots.filter(d=>d.best).map(d=>d.p), color:"#d6455f", op:1, r:3.6}, {pts:[], color:"#4a8fd8", label:"each clean lap"}, {pts:[], color:"#d6455f", label:"best lap"}]})
+        + note(`Each dot is one lap's slowest point in that corner, against your typical (0). A tall column means you're inconsistent there; that's where practice pays before setup. ${worst.length?`Most inconsistent: ${worst.map(x=>`T${x.n} (±${x.sd.toFixed(1)} km/h)`).join(", ")}.`:"Your apex speeds are consistent (within ±2 km/h everywhere)."} If the best lap sits well above your typical in a corner, you know you can carry that speed there.`)); } }
+  // 7) throttle on exit: how long from first touch to full throttle, and whether the car stepped out while you did it
+  { const dots=[], bad=[], meds=[];
+    secs.forEach((s,i)=>{ const v=[];
+      for (const l of laps){ let j0=-1, j1=-1, apex=-1, vmin=1e9;
+        for (let j=l.s;j<l.e;j++){ const p=ch.LapDistPct[j]; if (p<s.b[0]-0.004) continue; if (p>s.b[3]+0.02) break; if (p<=s.b[3] && ch.Speed[j]<vmin){ vmin=ch.Speed[j]; apex=j; } }
+        if (apex<0) continue;
+        for (let j=apex;j<l.e && j<apex+run.tick*8;j++){ if (j0<0 && ch.Throttle[j]>0.1 && ch.Brake[j]<0.05) j0=j; if (j0>=0 && ch.Throttle[j]>0.95){ j1=j; break; } }
+        if (j0<0 || j1<0) continue; const t=(j1-j0)/run.tick; let loose=false; if (A.us) for (let j=j0;j<=j1;j++) if (A.us[j]<US_LOOSE-1.5){ loose=true; break; }
+        v.push(t); (loose?bad:dots).push([i+1+((l.lap*37)%11-5)/40, t]); }
+      if (v.length) meds.push([i+1, median(v)]); });
+    if (dots.length+bad.length){ const ym=Math.min(6, Math.ceil(Math.max(...[...dots,...bad].map(p=>p[1]))*2)/2+0.5);
+      const nL=bad.length, tot=dots.length+bad.length;
+      out.push(svgChart({title:"Throttle on exit: first touch to full throttle", xr:[0.5, secs.length+0.5], yr:[0,ym], xl:"corner", yl:"seconds", xticks:Math.min(secs.length,20), h:230,
+          series:[{type:"dots", pts:dots, color:"#2a9d55", op:0.6, r:2.6}, {type:"dots", pts:bad, color:"#e8803a", op:0.95, r:3.4}, {pts:meds, color:"#9aa3b5", width:1.6, dash:"4 3", label:"typical"}, {pts:[], color:"#2a9d55", label:"clean exit"}, {pts:[], color:"#e8803a", label:"car stepped out"}]})
+        + note(`How long you take from first touching the throttle after the apex to flat out, each lap and corner. Short and green = the car takes the power. Orange = it oversteered while you fed the throttle in (${nL} of ${tot} exits). Orange dots on short times: you're too quick with your foot. Orange dots even on long, gentle ramps: the car is short of traction (traction control, diff, rear bar, rear springs; the Changes tab says which). Long green ramps everywhere: you're being cautious and there's time to find.`)); } }
+  // 8) shifting: RPM at each upshift (and after each downshift), against the shift light and the limiter
+  if (ch.RPM && ch.Gear){ const di=run.info.DriverInfo||{}, sl=parseFloat(di.DriverCarSLShiftRPM), red=parseFloat(di.DriverCarRedLine);
+    const up=[], down=[]; let lim=0, tot=0;
+    for (const l of laps){ let gp=ch.Gear[l.s]; for (let j=l.s+1;j<l.e;j++){ tot++; if (Number.isFinite(red) && ch.RPM[j]>red-80) lim++;
+      const g1=ch.Gear[j]; if (g1<1) continue;   // every shift passes through neutral (0) for a sample or two: compare with the last real gear
+      const g0=gp; gp=g1; if (g0<1 || g1===g0) continue;
+      if (g1===g0+1){ let m=0; for (let k=Math.max(l.s,j-Math.round(run.tick*0.3));k<j;k++) m=Math.max(m,ch.RPM[k]); up.push([g0+((l.lap*37)%11-5)/40, m]); }
+        else if (g1===g0-1){ let m=0; for (let k=j;k<Math.min(l.e,j+Math.round(run.tick*0.4));k++) m=Math.max(m,ch.RPM[k]); down.push([g1+((l.lap*37)%11-5)/40, m]); } } }
+    if (up.length+down.length>5){ const all=[...up,...down].map(p=>p[1]), lo=Math.floor((pct(all,0.01)-300)/500)*500, hi=Math.ceil((Math.max(...all, red||0)+200)/500)*500, gm=Math.max(...[...up,...down].map(p=>Math.round(p[0])));
+      const limS=tot? lim/tot*A.best.time : 0;
+      out.push(svgChart({title:"Shifting: RPM at each upshift and after each downshift", xr:[0.5, gm+0.5], yr:[lo,hi], xl:"gear (upshift: from · downshift: into)", yl:"RPM", xticks:gm, h:240,
+          bands:Number.isFinite(red)?[{y0:red-80, y1:hi, color:"#d6455f", op:0.12}]:[],
+          series:[{type:"dots", pts:up, color:"#4a8fd8", op:0.6, r:2.6}, {type:"dots", pts:down, color:"#d99a2b", op:0.6, r:2.6},
+            ...(Number.isFinite(sl)?[{pts:[[0.5,sl],[gm+0.5,sl]], color:"#2a9d55", width:1.4, dash:"5 3", label:`shift light ${Math.round(sl)}`}]:[]), {pts:[], color:"#4a8fd8", label:"upshift"}, {pts:[], color:"#d99a2b", label:"after downshift"}]})
+        + note(`Blue: the highest RPM just before each upshift, by the gear you shifted out of. Gold: the RPM straight after each downshift, by the gear you went into. ${Number.isFinite(red)?`Red band: the limiter (${Math.round(red)} RPM). You sit on it about ${limS.toFixed(1)} s a lap: that's lost acceleration, shift a little earlier. `:""}Upshifts well below the shift light lose drive; downshifts that land in the red band over-rev the engine and upset the rear on entry, so brake a touch longer before the next downshift.`)); } }
+  return out.length ? `<section><h2>Driving graphs <small>every clean lap: braking, apex speed, throttle and shifting, corner by corner</small></h2>${out.join("")}</section>` : "";
+}
+// ---- endurance: pace over the stint (fuel vs tyres), fuel against coasting, tyres settling ----
+function graphsEnduHTML(run, A, S, g){
+  const ch=run.ch, out=[], {note}=g, laps=(A.laps||[]).filter(l=>l.full && l.valid).sort((a,b)=>a.lap-b.lap);
+  // 9) lap time over the stint, split into the fuel getting lighter and the tyres going off
+  if (laps.length>=5 && ch.FuelLevel){ const clean=new Set(A.rep), f0=ch.FuelLevel[laps[0].s], k=0.5*0.75*A.best.time/1300;   // ≈ s per litre: half the lap-time share of the car's mass (est. 1300 kg with driver)
+    const P=laps.map(l=>({lap:l.lap, t:l.time, burned:f0-ch.FuelLevel[l.s], clean:clean.has(l)})).filter(p=>p.clean);
+    if (P.length>=5){ const c=fitLS(P.map(p=>[p.lap]), P.map(p=>p.t)), cT=fitLS(P.map(p=>[p.lap]), P.map(p=>p.t+k*p.burned));
+      const x0=P[0].lap, x1=P[P.length-1].lap, ys=P.map(p=>p.t), lo=Math.floor((Math.min(...ys)-0.3)*10)/10, hi=Math.ceil((pct(ys,0.95)+0.4)*10)/10;
+      const fuelGain=c&&cT? cT[1]-c[1] : NaN;
+      out.push(svgChart({title:"Lap time over the stint: fuel against tyres", xr:[x0-0.5,x1+0.5], yr:[lo,hi], xl:"lap", yl:"lap time (s)", xticks:Math.min(12,x1-x0+1), h:240,
+          series:[{type:"dots", pts:P.map(p=>[p.lap,p.t]), color:"#4a8fd8", op:0.8, r:3},
+            ...(c?[{pts:[[x0,c[0]+c[1]*x0],[x1,c[0]+c[1]*x1]], color:"#9aa3b5", width:2, label:`measured${c[1]>=0?"+":""}${c[1].toFixed(3)} s/lap`}]:[]),
+            ...(cT?[{pts:[[x0,cT[0]+cT[1]*x0],[x1,cT[0]+cT[1]*x1]], color:"#d6455f", width:2, dash:"5 3", label:`tyres alone ${cT[1]>=0?"+":""}${cT[1].toFixed(3)} s/lap`}]:[])]})
+        + note(`Blue dots: your clean laps. Black: how the lap time actually moves over the stint. Red dashed: the same with the fuel you burnt put back (about ${k.toFixed(3)} s per litre, an estimate from the car's weight), so it's what the tyres alone cost. ${Number.isFinite(fuelGain)?`Burning fuel is worth about ${fuelGain.toFixed(3)} s a lap here. `:""}If the red line is steep the tyres are going off; for a double stint you want it flat. A first lap or two above the line is the tyres coming in.`)); } }
+  // 10) fuel and lap time against coasting: you and your teammates, lap by lap
+  { const mine=liftCoastOf(run,A), sets=[]; if (mine && mine.pl && mine.pl.length>=3) sets.push({who:"you", pl:mine.pl, color:"#4a8fd8"});
+    const cols=["#d99a2b","#2a9d55","#7b5cd6"]; let ci=0;
+    for (const r of (typeof TEAMSTINTS!=="undefined"?TEAMSTINTS:[]).filter(r=>r.car===run.carPath && r.track===learnTrackOf(run) && r.lc && r.lc.pl && r.lc.pl.length>=3)){
+      if (sets.some(s=>s.who===r.driver)) continue; sets.push({who:r.driver, pl:r.lc.pl, color:cols[ci++%cols.length]}); }
+    if (sets.length){ const X=sets.flatMap(s=>s.pl.map(p=>p[1])), F=sets.flatMap(s=>s.pl.map(p=>p[2])), T=sets.flatMap(s=>s.pl.map(p=>p[3]));
+      const xr=[Math.floor(Math.min(...X)), Math.ceil(Math.max(...X)+0.5)], fps=mine&&mine.fuelPerS;
+      out.push(`<h3 style="margin:14px 0 4px">Fuel and lap time against coasting${sets.length>1?" (you and your teammates)":""}</h3>`+smallGrid([
+        svgChart({title:"Fuel per lap", w:420, h:240, xr, yr:[Math.floor(Math.min(...F)*20)/20-0.05, Math.ceil(Math.max(...F)*20)/20+0.05], xl:"coasting per lap (s)", yl:"litres", xticks:6,
+          series:sets.map(s=>({type:"dots", pts:s.pl.map(p=>[p[1],p[2]]), color:s.color, op:0.85, r:3.2})).concat(sets.map(s=>({pts:[], color:s.color, label:s.who})))}),
+        svgChart({title:"Lap time", w:420, h:240, xr, yr:[Math.floor(Math.min(...T)*2)/2, Math.ceil(pct(T,0.95)*2)/2+0.5], xl:"coasting per lap (s)", yl:"seconds", xticks:6,
+          series:sets.map(s=>({type:"dots", pts:s.pl.map(p=>[p[1],p[3]]), color:s.color, op:0.85, r:3.2})).concat(sets.map(s=>({pts:[], color:s.color, label:s.who})))})])
+        + note(`One dot per lap. Moving right is coasting more (off both pedals). On the left chart that should pull the fuel down; on the right it costs lap time. The best fuel-save style is the one whose dots drop furthest on the left while rising least on the right.${Number.isFinite(fps)?` Measured burn: about ${fps.toFixed(3)} L for every second you'd otherwise be flat out.`:""} Dots also move with traffic and mistakes, so look at the cloud, not single laps.`)); } }
+  // 11) tyres over a long run: temperature and pressure settling, against the window
+  { const M=(()=>{ try { return tyreTempModel(run,A,S); } catch(e){ return null; } })();
+    if (M && M.D && M.D.lap.length>=4){ const D=M.D, TW=M.TW, xr=[Math.min(...D.lap), Math.max(...D.lap)];
+      const tv=[...D.F,...D.R].filter(Number.isFinite), pv=[...D.pF,...D.pR].filter(Number.isFinite), u=A.pressUnit||"kPa";
+      const cards=[svgChart({title:"Tyre temperature (garage-equivalent)", w:420, h:230, xr, yr:[Math.floor(Math.min(TW.lo-3,...tv)), Math.ceil(Math.max(TW.hi+3,...tv))], xl:"lap of the stint", yl:"°C", xticks:6,
+          bands:[{y0:TW.lo, y1:TW.hi, color:"#2a9d55", op:0.12}], series:[{pts:D.lap.map((x,i)=>[x,D.F[i]]), color:"#4a8fd8", width:2, label:"front"}, {pts:D.lap.map((x,i)=>[x,D.R[i]]), color:"#e8803a", width:2, label:"rear"}]})];
+      if (pv.length) cards.push(svgChart({title:`Hot pressure`, w:420, h:230, xr, yr:[Math.floor(Math.min(...pv)-2), Math.ceil(Math.max(...pv)+2)], xl:"lap of the stint", yl:u, xticks:6,
+          series:[{pts:D.lap.map((x,i)=>[x,D.pF[i]]), color:"#4a8fd8", width:2, label:"front"}, {pts:D.lap.map((x,i)=>[x,D.pR[i]]), color:"#e8803a", width:2, label:"rear"}]}));
+      const wF=M.warm&&M.warm.Fx, wR=M.warm&&M.warm.Rx;
+      out.push(`<h3 style="margin:14px 0 4px">Tyres over the run</h3>`+smallGrid(cards)
+        + note(`Green band: the tyre's working window (${TW.lo}–${TW.hi}°C). ${wF&&Number.isFinite(wF.reach)?`The front reaches it on lap ${wF.reach}`:"The front doesn't reach it on this run"}${wR?`, ${Number.isFinite(wR.reach)?`the rear on lap ${wR.reach}`:"the rear doesn't"}`:""}. Where the lines flatten is where the tyres have settled: that's the temperature and pressure the race runs at, and what the starting pressure should be chosen for (Tyres and the endurance pressure use this). Still climbing at the end = the run was too short to tell.`)); } }
+  return out.length ? `<section><h2>Endurance graphs <small>pace, fuel and tyres over the stint</small></h2>${out.join("")}</section>` : "";
 }
 // ---------- windows ----------
 const TABS = [
@@ -4418,13 +4568,15 @@ function liftCoastOf(run, A){
   const dt=1/run.tick, zones=secs.map(s=>({p:+s.b[0].toFixed(4), c:[], m:[], v:[]})), perLap=[];
   for (const l of L){
     let tot=0; for (let j=l.s;j<l.e;j++) if (ch.Throttle[j]<0.1 && ch.Brake[j]<0.05 && ch.Speed[j]*3.6>60) tot+=dt;
-    perLap.push({lap:l.lap, coast:tot, fuel: ch.FuelLevel ? ch.FuelLevel[l.s]-ch.FuelLevel[l.e-1] : NaN});
+    perLap.push({lap:l.lap, coast:tot, time:l.time, fuel: ch.FuelLevel ? ch.FuelLevel[l.s]-ch.FuelLevel[l.e-1] : NaN});
     for (const z of zones){
       // the brake point on this lap (near the best lap's), then back from there while you're off both pedals
       let jb=-1; for (let j=l.s;j<l.e;j++){ const p=ch.LapDistPct[j]; if (p>=z.p-0.012 && p<=z.p+0.02 && ch.Brake[j]>0.08){ jb=j; break; } }
       if (jb<0) continue; let jl=jb; while (jl>l.s && ch.Throttle[jl-1]<0.1 && ch.Brake[jl-1]<0.05) jl--;
       const c=(jb-jl)*dt; z.c.push(c); z.m.push(c>0.05 ? lapDist(run,jb)-lapDist(run,jl) : 0); z.v.push(ch.Speed[jl]*3.6); } }
-  const out={perLap:+median(perLap.map(x=>x.coast)).toFixed(2), laps:L.length, zones:zones.filter(z=>z.c.length).map(z=>({p:z.p, coast:+median(z.c).toFixed(2), liftM:Math.round(median(z.m)), vLift:Math.round(median(z.v)), share:+(z.c.filter(c=>c>=0.25).length/z.c.length).toFixed(2)}))};
+  const out={perLap:+median(perLap.map(x=>x.coast)).toFixed(2), laps:L.length,
+    pl:perLap.filter(x=>x.fuel>0&&x.fuel<20).map(x=>[x.lap, +x.coast.toFixed(2), +x.fuel.toFixed(3), +x.time.toFixed(3)]),   // lap by lap, for the fuel / coasting graph
+    zones:zones.filter(z=>z.c.length).map(z=>({p:z.p, coast:+median(z.c).toFixed(2), liftM:Math.round(median(z.m)), vLift:Math.round(median(z.v)), share:+(z.c.filter(c=>c>=0.25).length/z.c.length).toFixed(2)}))};
   // what a second of coasting saves: the fuel burnt per second at full throttle minus off the throttle, measured on this stint
   if (ch.FuelLevel){ let fw=0, tw=0, fc=0, tc=0;
     for (const l of L) for (let j=l.s+1;j<l.e;j++){ const d=ch.FuelLevel[j-1]-ch.FuelLevel[j]; if (!(d>=0 && d<0.05)) continue;

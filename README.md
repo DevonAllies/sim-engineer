@@ -52,7 +52,10 @@ Your data stays on your PC in `Documents\Setup Engineer`; only the team folder i
 - **Sectors:** iRacing's own sectors (not mini sectors), optimal lap from your best sectors.
 
 ### Graphs
-Time slip, traction circle, roll and pitch gradients, balance vs speed, lap traces (speed, brake, throttle, steering), ride height vs speed.
+- **General:** time slip, traction circle, roll and pitch gradients, balance vs speed, best-lap trace (speed, throttle, brake), ride height vs speed.
+- **Setup:** shock velocity histograms per corner (slow / fast, bump / rebound; recordings only), understeer along the lap (map and trace), ride height and rake along the lap with the aero window, tread temperatures lap by lap (inner − outer for camber, middle − edges for pressure).
+- **Driving:** brake traces per corner for every lap (brake-point spread), apex speed per corner per lap, throttle ramp on exit (flagging exits where the car stepped out), RPM at upshifts and downshifts against the shift light and limiter.
+- **Endurance:** lap time over the stint split into fuel and tyres, fuel and lap time against coasting (you and teammates), tyre temperature and hot pressure settling over the run.
 
 ### Overlays (in the car)
 - **Bono:** race engineer on the radio.
@@ -142,6 +145,7 @@ Not in the repo: `node_modules`, installers, `.ibt` telemetry, the database, and
 
 | Version | Changes |
 |---|---|
+| 0.13.5 | 11 new graphs: setup (shocks, balance and ride height along the lap, tread temps), driving (brake traces, apex speed, throttle on exit, shifting), endurance (stint pace fuel vs tyres, fuel vs coasting, tyres over the run). |
 | 0.13.4 | Auto-update from this repo's GitHub Releases. |
 | 0.13.3 | Teammate long runs in the Endurance test; lift and coast and tyre wear vs teammates. |
 | 0.13.2 | Teammate data used for driving comparison only; speed and brake/throttle overlays, peak brake, trail, coasting, gear per corner. |
