@@ -145,6 +145,7 @@ Not in the repo: `node_modules`, installers, `.ibt` telemetry, the database, and
 
 | Version | Changes |
 |---|---|
+| 0.13.7 | Tab list scrolls on its own, independent of the page. |
 | 0.13.6 | Rake against speed: measured vs aero-only (acceleration squat removed). |
 | 0.13.5 | 11 new graphs: setup (shocks, balance and ride height along the lap, tread temps), driving (brake traces, apex speed, throttle on exit, shifting), endurance (stint pace fuel vs tyres, fuel vs coasting, tyres over the run). |
 | 0.13.4 | Auto-update from this repo's GitHub Releases. |

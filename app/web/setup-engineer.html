@@ -101,14 +101,16 @@ details summary{cursor:pointer;color:var(--muted)}
 .tabs{flex-wrap:wrap}
 .layout{display:grid;grid-template-columns:200px minmax(0,1fr);gap:14px;align-items:start;margin-top:14px}
 .layout .content > section:first-child{margin-top:0}
-.side{position:sticky;top:10px;display:flex;flex-direction:column;gap:4px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px}
+.side{position:sticky;top:10px;display:flex;flex-direction:column;gap:4px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px;
+  max-height:calc(100vh - 20px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}   /* the tab list scrolls on its own, the page keeps its place */
+.side > *{flex-shrink:0}
 .side .tab{text-align:left;width:100%;display:flex;justify-content:space-between;align-items:center;border-radius:7px}
 .side .tab[disabled]{opacity:.35;cursor:default}
 .navh{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:8px 4px 2px}
 .navh:first-child{margin-top:0}
 #sessbar{margin-bottom:10px}
 main{max-width:1400px}
-@media (max-width:800px){.layout{grid-template-columns:1fr}.side{position:static;flex-direction:row;flex-wrap:wrap}.side .tab{width:auto}}
+@media (max-width:800px){.layout{grid-template-columns:1fr}.side{position:static;flex-direction:row;flex-wrap:wrap;max-height:none;overflow:visible}.side .tab{width:auto}}
 .cargrid{display:grid;grid-template-columns:1fr 1fr 1fr;grid-template-rows:auto auto auto;gap:10px;align-items:start}
 .carbody{grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:12px;color:var(--muted);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
 .carshape{width:46px;height:26px;border:2px solid var(--line);border-radius:12px 12px 6px 6px}
