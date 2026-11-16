@@ -2010,10 +2010,33 @@ const SPECIAL=[
   {name:"992 Endurance Cup", dates:"27–29 Nov 2026", start:"2026-11-27", track:"Spa-Francorchamps", length:"12 hours", cars:"Porsche 911 Cup (992.2), single class", fit:true},
   {name:"Production Car Challenge @ VIR", dates:"18–19 Dec 2026", start:"2026-12-18", track:"VIRginia International Raceway – Grand Course", length:"4 hours (solo or team)", cars:"MX-5, BMW M2 CS, Clio, GR86"},
   {name:"Daytona 24 (expected)", dates:"mid-January 2027 (not announced yet)", start:"2027-01-15", track:"Daytona International Speedway – Road Course", length:"24 hours", cars:"GTP, LMP2, GT3 (multiclass) – usually", fit:true, tbc:true}];
+// ---------- your content: the cars and tracks you own (base content ticked by default, plus everything you've driven), saved ----------
+const BASE_TRACKS=["Charlotte Motor Speedway","Lime Rock Park","WeatherTech Raceway Laguna Seca","Okayama International Circuit","Tsukuba Circuit","Summit Point Raceway","Virginia International Raceway","Oran Park Raceway","Southern National Motorsports Park","Concord Speedway","Lanier National Speedway","South Boston Speedway","Oxford Plains Speedway"];
+const BASE_CARS=["Global Mazda MX-5 Cup","Mazda MX-5 Cup","Toyota GR86","Formula Vee"];
+const trackBase = t => String(t||"").replace(/ - .*$/,"").trim();
+// the same car / track under slightly different names: every significant word of the shorter name is in the longer one
+const sameName = (a,b) => { a=String(a||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,""); b=String(b||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,""); if (!a||!b) return false;
+  const w=s=>s.replace(/[^a-z0-9 ]/g," ").split(/\s+/).filter(x=>(x.length>1||/\d/.test(x))&&!/^(the|at|de|del|des|du|di|e|circuit|international|speedway|raceway|motor|motorsports?|park|racing|grand|prix|course|full|road)$/.test(x));
+  const A=w(a), B=w(b); if (!A.length||!B.length) return false; const [S,L]=A.length<=B.length?[A,B]:[B,A]; return S.every(x=>L.includes(x)); };
+function contentLists(){ const S=(SCHED&&SCHED.series)||[], road=S.filter(s=>/SPORTS CAR|FORMULA CAR/.test(s.discipline));
+  const tracks=[...new Set(road.flatMap(s=>s.weeks.map(w=>trackBase(w.track))))].filter(Boolean).sort();
+  const cars=[...new Set(road.flatMap(s=>s.cars.split(/,\s*/).map(c=>c.replace(/\s+/g," ").trim())))].filter(c=>c && c.length>3 && !/^(Class|Races|Min |Penalty)/.test(c)).sort();
+  return {tracks, cars}; }
+function ownedDefault(){ const L=contentLists(), driven=Object.values(LEARN||{}), dT=driven.map(r=>r.trackName).filter(Boolean), dC=driven.map(r=>r.carName).filter(Boolean);
+  return {tracks:L.tracks.filter(t=>BASE_TRACKS.some(b=>sameName(t,b)) || dT.some(d=>sameName(t,d))), cars:L.cars.filter(c=>BASE_CARS.some(b=>sameName(c,b)) || dC.some(d=>sameName(c,d)))}; }
+function owned(){ let o=null; try { o=PREFS.get("owned"); } catch(e){} return o&&Array.isArray(o.tracks) ? o : ownedDefault(); }
+const ownsTrack = t => owned().tracks.some(x=>sameName(trackBase(t), x));
+const ownsCarIn = s => owned().cars.some(c=>s.cars.toLowerCase().includes(c.toLowerCase()));
+function ownedHTML(){ const L=contentLists(), O=owned(), B={t:t=>BASE_TRACKS.some(b=>sameName(t,b)), c:c=>BASE_CARS.some(b=>sameName(c,b))};
+  const box=(kind,list,sel,isBase)=>`<div style="columns:2;font-size:12px;margin-top:6px">${list.map(x=>`<label style="display:block"><input type="checkbox" class="ownpick" data-kind="${kind}" value="${esc(x)}" ${sel.includes(x)?"checked":""}> ${esc(x)}${isBase(x)?' <span class="muted">(base)</span>':""}</label>`).join("")}</div>`;
+  return `<details style="margin-top:10px"><summary><b>Your cars and tracks</b> <span class="muted">(${O.tracks.length} tracks, ${O.cars.length} cars ticked${(()=>{ try { return PREFS.get("owned")?", saved":" by default: base content + what you've driven"; } catch(e){ return ""; } })()})</span></summary>
+    <p class="muted" style="font-size:12px;margin:6px 0">Tick what you own. Base content is ticked to start with (the base list is my best knowledge: untick anything that isn't), plus every car and track in your recordings. Saved as soon as you tick. The schedule then shows which races you can enter, and "test for next week" only points at tracks you own.</p>
+    <div class="row" style="gap:8px"><button class="ghost" id="ownreset" style="padding:2px 10px">Back to base content + what I've driven</button></div>
+    <h4 style="margin:8px 0 0">Tracks</h4>${box("tracks",L.tracks,O.tracks,B.t)}<h4 style="margin:8px 0 0">Cars</h4>${box("cars",L.cars,O.cars,B.c)}</details>`; }
 function schedWeek(s, t){ const ts=t||Date.now(); let cur=null, next=null; for (const w of s.weeks){ const st=Date.parse(w.start+"T00:00:00Z"); if (st<=ts) cur=w; else if (!next) next=w; } return {cur, next}; }
 function schedMine(){ let sel=null; try { sel=PREFS.get("schedSeries"); } catch(e){} const all=(SCHED&&SCHED.series)||[]; return Array.isArray(sel) ? all.filter(s=>sel.includes(s.name)) : all.filter(s=>SCHED_DEFAULT.some(re=>re.test(s.name))); }
 // tracks for next week in your series (the test programme points you there)
-function schedNextTracks(){ if (!SCHED) { schedLoad(); return []; } const o={}; for (const s of schedMine()){ const {next}=schedWeek(s); if (next) (o[next.track]=o[next.track]||[]).push(s.name.replace(/ - 2026.*| by .*| 2026.*/,"")); } return Object.entries(o).map(([track,series])=>({track, series})); }
+function schedNextTracks(all){ if (!SCHED) { schedLoad(); return []; } const o={}; for (const s of schedMine()){ const {next}=schedWeek(s); if (next && (all || (ownsTrack(next.track) && ownsCarIn(s)))) (o[next.track]=o[next.track]||[]).push(s.name.replace(/ - 2026.*| by .*| 2026.*/,"")); } return Object.entries(o).map(([track,series])=>({track, series})); }
 function renderSchedule(){
   const box=$("#schedbox"); if (!box) return; if (!SCHED){ schedLoad(); return; }
   const all=SCHED.series||[], mine=schedMine(), carCodes=[...new Set(runs.map(r=>BOP_CODE[r.carPath]).filter(Boolean))], myCode=carCodes[0]||"NSXE22";
@@ -2021,14 +2044,15 @@ function renderSchedule(){
   const stints=track=>Object.values(LEARN||{}).filter(r=>r.trackName && track.toLowerCase().startsWith(r.trackName.toLowerCase().split(" ")[0]) ).length;
   const row=s=>{ const {cur,next}=schedWeek(s), w=cur||s.weeks[0];
     const bop=x=>x&&x.bop&&x.bop[myCode]?` <span class="muted" style="font-size:11px">${myCode}: ${esc(x.bop[myCode])}</span>`:"";
-    return `<tr><td><b>${esc(s.name.replace(/ - 2026 Season 4| 2026 Season 4| - 2026 Season/,""))}</b><div class="muted" style="font-size:11px">${esc(s.every||"")}</div></td>
-      <td>${cur?`<b>${esc(cur.track)}</b><div class="muted" style="font-size:11px">week ${cur.week} from ${d(cur.start)} · ${esc(cur.length||"")}${cur.simTime?` · sim ${esc(cur.simTime.slice(11))}`:""}</div>${bop(cur)}`:"–"}</td>
-      <td>${next?`<b>${esc(next.track)}</b><div class="muted" style="font-size:11px">week ${next.week} from ${d(next.start)} · ${esc(next.length||"")}</div>${bop(next)}`:'<span class="muted">season ends</span>'}</td></tr>`; };
+    const own=x=>x?(ownsTrack(x.track)?' <span class="ok" title="you own this track">✓</span>':' <span class="warn" style="font-size:11px">not owned</span>'):"", car=ownsCarIn(s);
+    return `<tr${car?"":' style="opacity:.6"'}><td><b>${esc(s.name.replace(/ - 2026 Season 4| 2026 Season 4| - 2026 Season/,""))}</b><div class="muted" style="font-size:11px">${esc(s.every||"")}${car?"":" · no car you own"}</div></td>
+      <td>${cur?`<b>${esc(cur.track)}</b>${own(cur)}<div class="muted" style="font-size:11px">week ${cur.week} from ${d(cur.start)} · ${esc(cur.length||"")}${cur.simTime?` · sim ${esc(cur.simTime.slice(11))}`:""}</div>${bop(cur)}`:"–"}</td>
+      <td>${next?`<b>${esc(next.track)}</b>${own(next)}<div class="muted" style="font-size:11px">week ${next.week} from ${d(next.start)} · ${esc(next.length||"")}</div>${bop(next)}`:'<span class="muted">season ends</span>'}</td></tr>`; };
   const endu=mine.filter(s=>/Endurance|Creventic|Global Endurance/i.test(s.name));
-  const nt=schedNextTracks();
+  const nt=schedNextTracks(), ntAll=schedNextTracks(true), missing=ntAll.filter(x=>!nt.some(y=>y.track===x.track));
   const sportsAll=all.filter(s=>s.discipline==="SPORTS CAR");
   box.innerHTML = `<h2>Schedule <small>${esc(SCHED.source||"")} · iRacing weeks start on Tuesday (00:00 UTC)</small></h2>
-   ${nt.length?`<div class="sugg p3" style="margin:0 0 10px"><h3>Test for next week</h3><p style="margin:4px 0 0">${nt.map(x=>`<b>${esc(x.track)}</b> (${esc(x.series.join(", "))})`).join(" · ")}. Open a stint there (Test Drive or a practice) and start the test programme for that track (Learning (dev)).</p></div>`:""}
+   ${nt.length?`<div class="sugg p3" style="margin:0 0 10px"><h3>Test for next week</h3><p style="margin:4px 0 0">${nt.map(x=>`<b>${esc(x.track)}</b> (${esc(x.series.join(", "))})`).join(" · ")}. Open a stint there (Test Drive or a practice) and start the test programme for that track (Learning (dev)).${missing.length?` <span class="muted">Not owned: ${missing.map(x=>esc(x.track)).join(", ")}.</span>`:""}</p></div>`:ntAll.length?`<div class="sugg p1" style="margin:0 0 10px"><h3>Next week</h3><p style="margin:4px 0 0">Your series go to ${ntAll.map(x=>`<b>${esc(x.track)}</b>`).join(", ")}, none of which you own (or no car of yours races there). Tick what you own under "Your cars and tracks".</p></div>`:""}
    <div class="tablewrap"><table style="font-size:13px"><tr><th>Series</th><th>This week</th><th>Next week</th></tr>${mine.map(row).join("")||`<tr><td colspan="3" class="muted">Pick your series below.</td></tr>`}</table></div>
    ${endu.length?`<h3 style="margin:14px 0 4px">Endurance rounds</h3><div class="tablewrap"><table style="font-size:12px"><tr><th>Series</th><th>Coming up</th></tr>${endu.map(s=>`<tr><td><b>${esc(s.name.replace(/ - 2026.*| 2026.*/,""))}</b><div class="muted" style="font-size:11px">${esc(s.every||"")}</div></td><td>${s.weeks.filter(w=>Date.parse(w.start+"T23:59:59Z")>=Date.now()-6*864e5).map(w=>`${d(w.start)}: <b>${esc(w.track)}</b> (${esc(w.length||"")})`).join("<br>")||'<span class="muted">none left this season</span>'}</td></tr>`).join("")}</table></div>`:""}
    <h3 style="margin:14px 0 4px">Special events</h3><div class="tablewrap"><table style="font-size:12px"><tr><th>Event</th><th>When</th><th>Track</th><th>Length</th><th>Cars</th></tr>
@@ -2036,8 +2060,12 @@ function renderSchedule(){
    <p class="muted" style="font-size:12px">Special events from iRacing's special events calendar (no more GT3 / LMP2 / GTP specials in 2026; the Daytona 24 is usually mid-January but isn't on iRacing's 2027 calendar yet). Bold = your kind of car.</p>
    <details style="margin-top:10px"><summary><b>Your series</b> <span class="muted">(pick which ones show above)</span></summary>
     <div style="columns:2;font-size:12px;margin-top:6px">${sportsAll.map(s=>`<label style="display:block"><input type="checkbox" class="schedpick" value="${esc(s.name)}" ${mine.includes(s)?"checked":""}> ${esc(s.name.replace(/ - 2026 Season 4| 2026 Season 4/,""))}</label>`).join("")}</div></details>
+   ${ownedHTML()}
    <details style="margin-top:8px"><summary><b>Full season</b> for your series</summary>${mine.map(s=>`<h4 style="margin:10px 0 2px">${esc(s.name)}</h4><div class="muted" style="font-size:11px">${esc(s.cars)}</div><ol style="margin:4px 0 0 20px;font-size:12px">${s.weeks.map(w=>`<li value="${w.week}">${d(w.start)}: ${esc(w.track)} · ${esc(w.length||"")}${w.bop&&w.bop[myCode]?` · ${myCode}: ${esc(w.bop[myCode])}`:""}</li>`).join("")}</ol>`).join("")}</details>
    <p class="muted" style="font-size:12px;margin-top:8px">New season: put iRacing's season schedule PDF in the app folder and run <code>app/scripts/parse-schedule.js</code> (or ask your engineer) to refresh this.</p>`;
+  box.querySelectorAll(".ownpick").forEach(c=>c.onchange=()=>{ const O={tracks:[...box.querySelectorAll('.ownpick[data-kind="tracks"]:checked')].map(x=>x.value), cars:[...box.querySelectorAll('.ownpick[data-kind="cars"]:checked')].map(x=>x.value)};
+    try { PREFS.set("owned", O); } catch(e){} const open=[...box.querySelectorAll("details")].map(d=>d.open); renderSchedule(); [...$("#schedbox").querySelectorAll("details")].forEach((d,i)=>{ d.open=!!open[i]; }); });
+  { const rs=box.querySelector("#ownreset"); if (rs) rs.onclick=()=>{ try { PREFS.set("owned", null); } catch(e){} renderSchedule(); }; }
   box.querySelectorAll(".schedpick").forEach(c=>c.onchange=()=>{ const sel=[...box.querySelectorAll(".schedpick:checked")].map(x=>x.value); try { PREFS.set("schedSeries", sel); } catch(e){} renderSchedule(); });
 }
 let LIVE_OK=false, APP_OK=false, APPVER="";
@@ -3957,9 +3985,33 @@ function learnDiff(sa, sb){
   return real.length ? real : all;
 }
 const dBal = (a,b,k) => (a.bal&&b.bal&&a.bal[k]!=null&&b.bal[k]!=null) ? b.bal[k]-a.bal[k] : null;
+// ---------- pooling: short stints (under 5 clean laps) on the identical setup, the same day, within ~2.5 h of each other,
+// at a similar track temperature (±3°C) and sim time of day (±1.5 h) are combined into one run for the setup and balance learning.
+// Balance, lap time and slides settle in a lap or two, so the combined laps count; tyre temperatures and wear don't (each stint
+// restarts on cooler tyres), so the tyre models keep using each stint on its own.
+const POOL_CACHE={};
+function pooledStints(car){
+  const ck=car+"|"+LEARN_VER; if (POOL_CACHE[ck]) return POOL_CACHE[ck];
+  const all=Object.values(LEARN||{}).filter(r=>r.car===car && r.date>=LEARN_CUTOFF && Number.isFinite(r.med) && r.setup);
+  const sig=r=>JSON.stringify(Object.keys(r.setup).sort().map(k=>[k,String(r.setup[k]).trim()]));
+  const out=all.filter(r=>r.laps>=MIN_LAPS), shorts=all.filter(r=>r.laps<MIN_LAPS).sort((a,b)=>a.date-b.date), member={};
+  const groups=[]; for (const r of shorts){ const day=new Date(r.date).toDateString(), s=sig(r);
+    const g=groups.find(g=>g.track===r.track && g.sig===s && g.day===day && !!g.wet===!!r.wet && r.date-g.last<=2.5*3600e3
+      && (!Number.isFinite(r.trackT)||!Number.isFinite(g.T)||Math.abs(r.trackT-g.T)<=3) && (!Number.isFinite(r.tod)||!Number.isFinite(g.tod)||Math.abs(r.tod-g.tod)<=1.5));
+    if (g){ g.L.push(r); g.last=r.date; } else groups.push({track:r.track, sig:s, day, wet:r.wet, last:r.date, T:r.trackT, tod:r.tod, L:[r]}); }
+  for (const g of groups){ const L=g.L, n=L.reduce((a,r)=>a+r.laps,0); if (L.length<2 || n<MIN_LAPS) { out.push(...L); continue; }
+    const w=(f)=>{ let s=0,W=0; for (const r of L){ const v=f(r); if (Number.isFinite(v)){ s+=v*r.laps; W+=r.laps; } } return W?+(s/W).toFixed(3):null; };
+    const T=L.map(r=>r.trackT).filter(Number.isFinite), base=L.reduce((a,b)=>b.laps>a.laps?b:a);
+    const P=Object.assign({}, base, {id:"pool|"+L.map(r=>r.id).join("+"), pooled:true, from:L.map(r=>r.id), laps:n, date:L[0].date, best:Math.min(...L.map(r=>r.best).filter(Number.isFinite)),
+      med:w(r=>r.med), sd:w(r=>r.sd), slides:w(r=>r.slides), trackT:T.length?+mean(T).toFixed(1):null, airT:w(r=>r.airT), Trange:T.length?[Math.min(...T),Math.max(...T)]:null,
+      bal:{entry:w(r=>r.bal&&r.bal.entry), mid:w(r=>r.bal&&r.bal.mid), exit:w(r=>r.bal&&r.bal.exit), slow:w(r=>r.bal&&r.bal.slow), fast:w(r=>r.bal&&r.bal.fast)}});
+    out.push(P); for (const r of L) member[r.id]=P; }
+  out.sort((a,b)=>a.date-b.date); out.member=member;
+  return POOL_CACHE[ck]=out; }
+const poolNote = P => `combined: ${P.from.length} short stints, same setup${P.Trange?`, track ${Math.round(P.Trange[0])}${P.Trange[1]-P.Trange[0]>=0.5?`–${Math.round(P.Trange[1])}`:""}°C`:""}, ${P.laps} laps`;
 function learnModel(car){
   const ck=car+"|"+LEARN_VER; if (LEARN_CACHE[ck]) return LEARN_CACHE[ck];
-  const by={}; for (const r of Object.values(LEARN||{})) if (r.car===car && r.laps>=2 && r.med>0 && r.date>=LEARN_CUTOFF) (by[r.track]=by[r.track]||[]).push(r);
+  const by={}; for (const r of pooledStints(car)) if (r.laps>=2 && r.med>0) (by[r.track]=by[r.track]||[]).push(r);   // short same-setup stints come in combined
   const pairs=[], same=[];
   for (const all of Object.values(by)){ all.sort((a,b)=>a.date-b.date);
     const list = all.filter(r=>r.laps>=MIN_LAPS);   // learn only from stints of 5+ clean laps: shorter ones are listed but not compared
@@ -4122,7 +4174,7 @@ function learnHTML(run){
       : `<p class="muted" style="font-size:13px">Your style (the balance you're fastest with) shows after about 6 stints of 3+ clean laps in this car (${st.n} so far).</p>`}
   </section>
   <section><h2>Stints at this track <small>newest first</small></h2>${list.length ? `<div class="tablewrap"><table><tr><th>When</th><th>Session</th><th>Laps</th><th>Best</th><th>Typical lap</th><th>Spread</th><th>Entry / mid / exit</th><th>Track</th><th>Setup changes from the stint before</th><th>Lap time change</th></tr>
-    ${list.map(r=>{ const p=prevOf(r); return `<tr><td style="white-space:nowrap">${dt(r.date)}${r.live?"":` <span class="tag">ibt</span>`}</td><td>${esc(r.session||"")}</td><td>${r.laps}</td><td>${fmtTime(r.best)}</td><td>${fmtTime(r.med)}</td><td>±${fmt(r.sd,2)} s</td>
+    ${list.map(r=>{ const p=prevOf(r); return `<tr${r.pooled?' style="background:rgba(217,154,43,.08)"':""}><td style="white-space:nowrap">${dt(r.date)}${r.pooled?` <span class="tag" title="${esc(poolNote(r))}">combined</span>`:r.live?"":` <span class="tag">ibt</span>`}</td><td>${esc(r.session||"")}${r.pooled?`<div class="muted" style="font-size:11px">${esc(poolNote(r))}: learning from laps of stints that were each too short</div>`:""}</td><td>${r.laps}${r.pooled?"ᶜ":""}</td><td>${fmtTime(r.best)}</td><td>${fmtTime(r.med)}</td><td>±${fmt(r.sd,2)} s</td>
       <td>${bw(r.bal&&r.bal.entry)} / ${bw(r.bal&&r.bal.mid)} / ${bw(r.bal&&r.bal.exit)}</td><td>${r.trackT!=null?Math.round(r.trackT)+"°C":"–"}</td>
       <td style="font-size:12px">${r.laps<MIN_LAPS ? `<span class="muted">under ${MIN_LAPS} clean laps: too short to learn from</span>` : p ? (p.ch.length ? p.ch.map(c=>esc(c.txt)).join("<br>") : `<span class="muted">no change</span>`) : `<span class="muted">first stint of 5+ laps</span>`}</td>
       <td>${p ? (p.ch.length ? sgnS(p.adj) + (p.hot?` <span class="muted" style="font-size:11px">temp ${p.dT>0?"+":""}${Math.round(p.dT)}°C</span>`:"") : sgnS(p.dPace)) : "–"}</td></tr>`; }).join("")}</table></div>` : `<p class="muted">Nothing yet.</p>`}
@@ -4989,7 +5041,7 @@ const SM_DERIVED=/(^|\.)(CenterFrontSplitterHeight|FWtdist|CrossWeight|NoseWeigh
 function smVals(setup){ const o={}; for (const [p,raw] of Object.entries(setup||{})){ const v=learnNum(raw); if (!Number.isFinite(v)) continue; const k=learnNorm(p); if (SM_DERIVED.test(k)) continue; (o[k]=o[k]||[]).push(v); } for (const k in o) o[k]=mean(o[k]); return o; }
 function setupModel(car){
   const ck=car+"|"+LEARN_VER; if (SM_CACHE[ck]!==undefined) return SM_CACHE[ck];
-  let R=Object.values(LEARN||{}).filter(r=>r.car===car && r.laps>=MIN_LAPS && r.date>=LEARN_CUTOFF && Number.isFinite(r.med) && r.setup && r.bal && !r.wet);   // dry stints: the wet has its own balance
+  let R=pooledStints(car).filter(r=>r.laps>=MIN_LAPS && Number.isFinite(r.med) && r.setup && r.bal && !r.wet);   // dry stints (the wet has its own balance); short same-setup stints combined
   if (R.length<4) return SM_CACHE[ck]=null;
   const V=R.map(r=>smVals(r.setup));
   const keys=[...new Set(V.flatMap(o=>Object.keys(o)))].filter(k=>{ const v=V.map(o=>o[k]).filter(Number.isFinite); return v.length>=R.length*0.8 && new Set(v.map(x=>+x.toFixed(4))).size>=2; });
@@ -5633,7 +5685,7 @@ function compareHTML(run){
    <div class="tablewrap"><table style="font-size:12px"><tr><th>When</th><th>Laps</th><th>Best</th><th>Typical</th><th>Spread</th><th>Bal. slow / fast</th><th>Entry · mid · exit</th><th>Slides /lap</th><th>ARB F / R</th><th>Wing</th><th>Start kPa</th><th>Tyres F / R</th><th>Hot kPa</th><th>RH at speed F / R (rake)</th><th>Bias · TC · ABS</th><th>Track</th><th>What changed</th></tr>
     ${R.map(x=>{ const r=x.r, a=r.aero||{}, t=r.tyreT||{}, b=r.bal||{};
       return `<tr style="${x.cur?"background:rgba(80,140,255,.14)":""}${r.laps<MIN_LAPS?";opacity:.7":""}"><td style="white-space:nowrap">${w(x.when)}${r.live?' <span class="tag">live</span>':""}${x.cur?' <span class="tag">open</span>':""}</td>
-       <td>${r.laps}${r.laps<MIN_LAPS?' <span class="muted" title="under 5 clean laps: shown, but not used to judge balance or setup changes">*</span>':""}</td><td>${fmtTime(r.best)}</td>
+       <td>${r.laps}${r.laps<MIN_LAPS?((pooledStints(run.carPath).member||{})[r.id]?` <span class="tag" title="${esc(poolNote(pooledStints(run.carPath).member[r.id]))}">combined</span>`:' <span class="muted" title="under 5 clean laps: shown, but not used to judge balance or setup changes">*</span>'):""}</td><td>${fmtTime(r.best)}</td>
        <td style="${r.med===best?"color:var(--good);font-weight:700":""}">${fmtTime(r.med)}${r.med!==best&&Number.isFinite(r.med)?` <span class="muted">+${(r.med-best).toFixed(2)}</span>`:""}</td><td>${n(r.sd,2)}</td>
        <td style="white-space:nowrap">${bc(b.slow)} / ${bc(b.fast)}</td><td style="white-space:nowrap">${bc(b.entry)} · ${bc(b.mid)} · ${bc(b.exit)}</td><td>${n(r.slides,1)}</td>
        <td><b>${esc(x.arbF||"–")} / ${esc(x.arbR||"–")}</b></td><td>${esc(x.wing||"–")}</td><td>${n(t.sPF,0)}${Number.isFinite(t.sPR)&&t.sPR!==t.sPF?" / "+n(t.sPR,0):""}</td>
@@ -5643,7 +5695,7 @@ function compareHTML(run){
    ${window.se&&window.se.learnHistoric?`<div class="sugg p2" style="margin:10px 0"><h3>New iRacing build changed the car or track?</h3>
      <p style="margin:4px 0 6px">Move the old data to <b>historic</b>: it stays in the database (you can restore it under Learning), but nothing learns from it any more: no comparisons, models, Bono, Hanna or GP.</p>
      <button class="ghost hist" data-scope="track" style="padding:3px 10px">This car at this track</button> <button class="ghost hist" data-scope="car" style="padding:3px 10px">This car, every track</button> <button class="ghost hist" data-scope="all" style="padding:3px 10px">Everything</button></div>`:""}
-   <p class="muted" style="font-size:12px">* fewer than ${MIN_LAPS} clean laps: listed so you can see it, but balance and setup verdicts wait for ${MIN_LAPS}. A stint seen live and later as its recording is listed once. Tyre temperatures are garage-equivalent averages per lap.</p></section>`;
+   <p class="muted" style="font-size:12px">* fewer than ${MIN_LAPS} clean laps: listed so you can see it, but balance and setup verdicts wait for ${MIN_LAPS}. <b>combined</b>: a short stint learned together with others on the identical setup, the same day, a similar track temperature and time of day (hover for which); the combined laps count for balance, lap time and the setup learning, but not for the tyre models (each stint restarts on cooler tyres). A stint seen live and later as its recording is listed once. Tyre temperatures are garage-equivalent averages per lap.</p></section>`;
 }
 // when each car + track was moved to historic: a recording driven before that (the old build) is never learned again
 let HIST_CUT={};
