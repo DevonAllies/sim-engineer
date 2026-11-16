@@ -3586,7 +3586,14 @@ function arbModel(run, A){
   let G=12, Gsrc="estimate (about 0.12° of understeer per 1% more front roll stiffness)"+(kF===100&&kR===100&&profileOf(run).cup?"; the springs are fixed on this car and treated as equal front and rear":"");
   if (LEARN){ const M=learnModel(run.carPath), e=Object.values(M.eff).filter(e=>/\.(arb|rarb|farb)[a-z]*\|/i.test(e.k) && e.bal && e.bal.mid!=null && e.n>=1);
     const g=e.map(x=>{ const front=/front/i.test(x.k), d1=share(kF,kR,F.i+(front?x.dir:0),R.i+(front?0:x.dir)).phi-base.phi; return Math.abs(d1)>1e-4 ? x.bal.mid/d1 : NaN; }).filter(v=>Number.isFinite(v) && v>0 && v<60);
-    if (g.length){ G=median(g); Gsrc=`from ${g.length} anti-roll bar change${g.length>1?"s":""} in your history`; } }
+    if (g.length){ G=median(g); Gsrc=`from ${g.length} anti-roll bar change${g.length>1?"s":""} in your history`; }
+    // better: the all-stints model (every stint, every track, changes made together split apart), once it's sure of a bar's effect
+    try { const SM=setupModel(run.carPath), E=SM&&SM.eff.mid; if (E){ const est=[];
+        SM.cols.forEach((c,j)=>{ if (c.cov) return; const P=SM_PRIOR.findIndex(([re])=>re.test(c.c.k)); if (P<0) return; const front=P===0, b=E.b[j], se=E.se[j];
+          if (!(se<0.3) || Math.abs(b)<2*se) return;   // not sure of it yet (the prior alone is ±0.5)
+          const d1=share(kF,kR,F.i+(front?1:0),R.i+(front?0:1)).phi-base.phi; if (Math.abs(d1)<1e-4) return; const gv=b/d1; if (gv>0 && gv<60) est.push({g:gv, w:1/(se*se), front}); });
+        if (est.length){ G=est.reduce((a,e)=>a+e.g*e.w,0)/est.reduce((a,e)=>a+e.w,0); Gsrc=`from the all-stints model: ${est.map(e=>e.front?"front bar":"rear bar").join(" and ")} measured over ${SM.n} stints at every track`; }
+        else { const se=SM.cols.map((c,j)=>!c.cov&&SM_PRIOR.some(([re])=>re.test(c.c.k))?E.se[j]:NaN).filter(Number.isFinite); if (se.length) Gsrc+=`; the all-stints model (${SM.n} stints) knows the bars only to ±${Math.min(...se).toFixed(2)}° per step so far: a stint or two with a different bar, 5+ clean laps each, and it takes over`; } } } catch(e){} }
   const pred=(kf,kr,fi,ri)=>{ const s=share(kf,kr,fi,ri); return {us: Number.isFinite(us0) ? us0+G*(s.phi-base.phi) : NaN, phi:s.phi, roll:s.tot/base.tot}; };
   const grid=F.vals.map((fv,fi)=>R.vals.map((rv,ri)=>({fv, rv, fi, ri, ...pred(kF,kR,fi,ri)})));
   const surf=A.surface&&Number.isFinite(A.surface.vertSd) ? (A.surface.vertSd<1.0?"smooth":A.surface.vertSd<1.35?"medium":"bumpy") : "medium";
