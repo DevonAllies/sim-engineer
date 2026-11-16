@@ -539,6 +539,12 @@ function analyze(run){
   const best = valid.reduce((a,b)=>a.time<b.time?a:b);
   let rep = valid.filter(l=>l.time<=best.time*1.03 && l.off<0.5);
   if (!rep.length) rep=[best];
+  // odd laps: clearly slower than your typical clean lap (traffic, a moment, a big mistake) are left out, so they don't bend the analysis or the learning
+  A.oddLaps=[];
+  if (rep.length>=5){ const t=rep.map(l=>l.time), m=median(t), mad=median(t.map(x=>Math.abs(x-m)))*1.4826, thr=m+Math.max(3.5*mad, 0.8);
+    A.oddLaps=rep.filter(l=>l!==best && l.time>thr); if (A.oddLaps.length && A.oddLaps.length<=rep.length/3){ rep=rep.filter(l=>!A.oddLaps.includes(l)); A.oddLaps.forEach(l=>{ l.odd=true; });
+      A.warnings.push(`Left out as odd laps (more than ${(thr-m).toFixed(1)} s slower than your typical ${fmtTime(m)}: traffic, a moment or a mistake): ${A.oddLaps.map(l=>`lap ${l.lap} (${fmtTime(l.time)})`).join(", ")}.`); }
+    else A.oddLaps=[]; }
   laps.forEach(l=>{ l.best = l===best; l.rep = rep.includes(l); });
   A.laps=laps; A.best=best; A.rep=rep;
   A.endTyres = endTyres(run, rep);   // tyre temps: average over the clean laps (garage reading only as a fallback)
@@ -1927,7 +1933,7 @@ function graphsDrivingHTML(run, A, S, g){
 function graphsEnduHTML(run, A, S, g){
   const ch=run.ch, out=[], {note}=g, laps=(A.laps||[]).filter(l=>l.full && l.valid).sort((a,b)=>a.lap-b.lap);
   // 9) lap time over the stint, split into the fuel getting lighter and the tyres going off
-  if (laps.length>=5 && ch.FuelLevel){ const clean=new Set(A.rep), f0=ch.FuelLevel[laps[0].s], k=0.5*0.75*A.best.time/1300;   // ≈ s per litre: half the lap-time share of the car's mass (est. 1300 kg with driver)
+  if (laps.length>=5 && ch.FuelLevel){ const clean=new Set(A.rep), f0=ch.FuelLevel[laps[0].s], FK=fuelK(run,A), k=FK?FK.k:0.5*0.75*A.best.time/1300;   // s per litre: measured over your stints here, else half the lap-time share of the car's mass (est. 1300 kg with driver)
     const P=laps.map(l=>({lap:l.lap, t:l.time, burned:f0-ch.FuelLevel[l.s], clean:clean.has(l)})).filter(p=>p.clean);
     if (P.length>=5){ const c=fitLS(P.map(p=>[p.lap]), P.map(p=>p.t)), cT=fitLS(P.map(p=>[p.lap]), P.map(p=>p.t+k*p.burned));
       const x0=P[0].lap, x1=P[P.length-1].lap, ys=P.map(p=>p.t), lo=Math.floor((Math.min(...ys)-0.3)*10)/10, hi=Math.ceil((pct(ys,0.95)+0.4)*10)/10;
@@ -1936,7 +1942,7 @@ function graphsEnduHTML(run, A, S, g){
           series:[{type:"dots", pts:P.map(p=>[p.lap,p.t]), color:"#4a8fd8", op:0.8, r:3},
             ...(c?[{pts:[[x0,c[0]+c[1]*x0],[x1,c[0]+c[1]*x1]], color:"#9aa3b5", width:2, label:`measured${c[1]>=0?"+":""}${c[1].toFixed(3)} s/lap`}]:[]),
             ...(cT?[{pts:[[x0,cT[0]+cT[1]*x0],[x1,cT[0]+cT[1]*x1]], color:"#d6455f", width:2, dash:"5 3", label:`tyres alone ${cT[1]>=0?"+":""}${cT[1].toFixed(3)} s/lap`}]:[])]})
-        + note(`Blue dots: your clean laps. Black: how the lap time actually moves over the stint. Red dashed: the same with the fuel you burnt put back (about ${k.toFixed(3)} s per litre, an estimate from the car's weight), so it's what the tyres alone cost. ${Number.isFinite(fuelGain)?`Burning fuel is worth about ${fuelGain.toFixed(3)} s a lap here. `:""}If the red line is steep the tyres are going off; for a double stint you want it flat. A first lap or two above the line is the tyres coming in.`)); } }
+        + note(`Blue dots: your clean laps. Black: how the lap time actually moves over the stint. Red dashed: the same with the fuel you burnt put back (about ${k.toFixed(3)} s per litre, ${FK?"measured over your stints here":"an estimate from the car's weight until the fuel model can measure it (Hanna)"}), so it's what the tyres alone cost. ${Number.isFinite(fuelGain)?`Burning fuel is worth about ${fuelGain.toFixed(3)} s a lap here. `:""}If the red line is steep the tyres are going off; for a double stint you want it flat. A first lap or two above the line is the tyres coming in.`)); } }
   // 10) fuel and lap time against coasting: you and your teammates, lap by lap
   { const mine=liftCoastOf(run,A), sets=[]; if (mine && mine.pl && mine.pl.length>=3) sets.push({who:"you", pl:mine.pl, color:"#4a8fd8"});
     const cols=["#d99a2b","#2a9d55","#7b5cd6"]; let ci=0;
@@ -2023,12 +2029,13 @@ function render(){
   if (view==="compare"){ out.innerHTML = head + compareHTML(run); const c=$("#cmpcsv"); if (c) c.onclick=()=>compareCSV(run); const cd=$("#cmpcsvdir"); if (cd) cd.onclick=()=>window.se.dataOpen("csv");
     out.querySelectorAll(".hist").forEach(b=>b.onclick=()=>moveHistoric(run, b.dataset.scope)); return; }
   const areaCards = k => `<section><h2>What to change <small>switch these on or off here or in Changes</small></h2>${sugCardsHTML(run, s=>AREAS[k].includes(s.area), "Nothing to change in this area.")}</section>`;
+  const safe = (f, name) => { try { return f(); } catch(e){ console.error(name, e); return ""; } };
   const W = {
-    home: () => homeHTML(run, A) + safeBalanceFeel(run, A) + rotationHTML(run, A) + (()=>{ try { return carFitHTML(run, A); } catch(e){ console.error(e); return ""; } })(),
+    home: () => homeHTML(run, A) + safeBalanceFeel(run, A) + rotationHTML(run, A) + safe(()=>carFitHTML(run, A),"carFit") + safe(()=>similarSetupHTML(run, A),"similar"),
     graphs: () => { try { return graphsHTML(run, A, S); } catch(e){ console.error(e); return `<section><h2>Graphs</h2><p class="muted">Couldn't draw the graphs for this stint (${esc(e.message)}).</p></section>`; } },
     tyres: () => `<section><h2>Tyres <small>temperatures, pressures, camber and wear</small></h2><div class="two"><div>${tiresHTML(A,S,run)}</div><div>${wearHTML(A)}
         <div class="grid" style="margin-top:10px"><div class="stat"><div class="k">Rear wheelspin</div><div class="v">${fmt((A.spin||0)*100,0)}%</div><div class="s">of throttle &gt;60% samples</div></div>
-        <div class="stat"><div class="k">Inside rear spin</div><div class="v">${fmt((A.inSpin||0)*100,0)}%</div><div class="s">while cornering on power</div></div></div></div></div></section>` + tyreModelHTML(run, A, S) + racePressureHTML(run, A, S) + areaCards("tyres"),
+        <div class="stat"><div class="k">Inside rear spin</div><div class="v">${fmt((A.inSpin||0)*100,0)}%</div><div class="s">while cornering on power</div></div></div></div></div></section>` + tyreModelHTML(run, A, S) + racePressureHTML(run, A, S) + safe(()=>tyreThermalHTML(run, A, S),"thermal") + areaCards("tyres"),
     aero: () => aeroHTML(run, A, S) + optimalRakeHTML(run, A, S) + rakePhasesHTML(run, A, S) + aeroMapHTML(run, A) + aeroOptionsHTML(run, A, S) + bumpHTML(run, A) + bottomHTML(run, A) + downforceHTML(run, A) + areaCards("aero"),
     balance: () => safeBalanceFeel(run, A) + `<section><h2>Balance <small>understeer angle in degrees (front wheel): higher = more understeer</small></h2>
    ${balanceReady(run,A)?"":`<div class="sugg p2" style="margin:0 0 10px"><h3>First read only</h3><p style="margin:4px 0 0">${balanceWait(run,A)}</p></div>`}
@@ -2047,10 +2054,12 @@ function render(){
     brakes: () => inCarHTML(run, A) + brakesHTML(run, A) + areaCards("brakes"),
     loss: () => gpHTML(run, A),
     gp: () => gpHTML(run, A) + (()=>{ try { return teamCompareHTML(run, A); } catch(e){ console.error(e); return ""; } })(),
-    hanna: () => (()=>{ try { return enduranceTestHTML(run, A, S); } catch(e){ console.error(e); return ""; } })() + (()=>{ try { return teamEnduHTML(run, A); } catch(e){ console.error(e); return ""; } })() + hannaHTML(run, A) + wearModelHTML(run, A, S) + areaCards("fuel"),
+    hanna: () => (()=>{ try { return enduranceTestHTML(run, A, S); } catch(e){ console.error(e); return ""; } })() + (()=>{ try { return teamEnduHTML(run, A); } catch(e){ console.error(e); return ""; } })()
+      + safe(()=>strategyHTML(run, A, S),"strategy") + safe(()=>liftPlanHTML(run, A),"liftplan") + safe(()=>raceTempsHTML(run, A, S),"racetemps") + safe(()=>fuelModelHTML(run, A),"fuelmodel")
+      + hannaHTML(run, A) + wearModelHTML(run, A, S) + areaCards("fuel"),
     ffb: () => ffbHTML(run, A),
     guide: () => guideHTML(run),
-    learn: () => learnHTML(run),
+    learn: () => learnHTML(run) + safe(()=>setupModelHTML(run),"setupModel") + safe(()=>testNextHTML(run, A),"testNext"),
     dampers: () => (Object.keys(A.damp||{}).length?`<section><h2>Dampers <small>shock speed histograms, all laps used · right = compression (bump), left = extension (rebound)</small></h2>
    <div class="dampgrid">${["LF","RF","LR","RR"].filter(c=>A.damp[c]).map(c=>`<div><b>${c}</b><canvas id="dh${c}"></canvas></div>`).join("")}</div>
    <div class="tablewrap" style="margin-top:10px"><table><tr><th></th><th>Low-speed bump</th><th>Low-speed rebound</th><th>High-speed bump</th><th>High-speed rebound</th><th>95% bump / rebound speed</th><th>Peak (99%)</th></tr>
@@ -2068,6 +2077,7 @@ function render(){
   if (view==="balance" || view==="home") wireBalanceFeel(run);
   { const ts=$("#teamshare"); if (ts) ts.onclick=async()=>{ ts.textContent="Sharing…"; const f=await teamShare(run, A, true); ts.textContent=f?"Shared ✓":"Couldn't share (set the team folder under Learning)"; }; }
   { const es=$("#endupit"); if (es) es.onchange=()=>{ RACE.pitLoss=+es.value||60; PREFS.set("race", RACE); rerender(); }; }
+  for (const [id,key] of [["lctarget","lcTarget"],["tyreloss","tyreLoss"],["racestart","startH"]]){ const el=$("#"+id); if (el) el.onchange=()=>{ RACE[key]=el.value===""?"":+el.value; PREFS.set("race", RACE); rerender(); }; }
   if (view==="aero" && A.rh) drawRH(run,A,S);
   if (view==="laps") drawTrace(run,A);
   if (view==="dampers") for (const c of Object.keys(A.damp||{})) drawHist($("#dh"+c), A.damp[c].hist);
@@ -3730,7 +3740,10 @@ function learnRecord(run, A, opts){
   // endurance testing: how much the lap time drops over the stint (s per lap, clean laps in order), and the tank size
   { const L=A.rep.slice().sort((a,b)=>a.lap-b.lap); if (L.length>=5){ const c=fitLS(L.map(l=>[l.lap]), L.map(l=>l.time)); if (c && Number.isFinite(c[1])) rec.deg=num(c[1]); } }
   { const di=run.info.DriverInfo||{}, mx=parseFloat(di.DriverCarFuelMaxLtr), pc=parseFloat(di.DriverCarMaxFuelPct); if (mx>0) rec.tankL=num(mx*(pc>0&&pc<=1?pc:1)); }
-  try { rec.lc=liftCoastOf(run, A); } catch(e){}   // lift and coast: where and how long you coast before each braking zone, and what it saves in fuel
+  try { rec.lc=liftCoastOf(run, A); } catch(e){}
+  // for the models: the sim's time of day (track temperature over a race), the track's character (starting setup at a new track)
+  { const tod=todHour(wi); if (Number.isFinite(tod)) rec.tod=tod; }
+  try { const P=trackProfile(run, A); rec.prof={w:Object.fromEntries(Object.entries(P.w).map(([k,v])=>[k,+v.toFixed(3)])), vmax:num(P.vmax), corners:P.corners}; } catch(e){}   // lift and coast: where and how long you coast before each braking zone, and what it saves in fuel
   if (dry) return rec;
   run.learnedId=rec.id; learnStore.put(rec);
   // push to the team folder: every clean lap (GP's driving comparison) and, for long runs, the stint summary (endurance: fuel, lift and coast, tyre wear)
@@ -3744,9 +3757,10 @@ function lapRowsOf(run, A){
     const per={}; for (const p of (A.endTyres&&A.endTyres.perLap)||[]) per[p.lap]=p.t;
     const off=A.tw&&Number.isFinite(A.tw.off)?A.tw.off:0, ax=(t,cs)=>{ const v=cs.filter(c=>t[c]).map(c=>(t[c].inner+t[c].mid+t[c].outer)/3); return v.length? +(v.reduce((a,b)=>a+b,0)/v.length+off).toFixed(1) : null; };
     const tAt=(l,p)=>{ for (let j=l.s+1;j<l.e;j++) if (ch.LapDistPct[j]>=p && ch.LapDistPct[j-1]<p) return ch.SessionTime[j]; return NaN; };
+    const lap0=Math.min(...(A.laps||[]).map(l=>l.lap));
     return (A.laps||[]).filter(l=>l.full || l.time>20).map(l=>{
-      const row={lap:l.lap, time:+l.time.toFixed(3), clean:!!(l.valid && l.off<0.5), used:!!l.rep, best:!!l.best, offTrack_s:+(l.off||0).toFixed(2), full:!!l.full};
-      if (ch.FuelLevel){ const f=ch.FuelLevel[l.s]-ch.FuelLevel[l.e-1]; if (f>0 && f<20) row.fuel=+f.toFixed(3); }
+      const row={lap:l.lap, time:+l.time.toFixed(3), clean:!!(l.valid && l.off<0.5), used:!!l.rep, best:!!l.best, offTrack_s:+(l.off||0).toFixed(2), full:!!l.full, age:l.lap-lap0, odd:!!l.odd};   // age = laps on these tyres in this stint
+      if (ch.FuelLevel){ const f=ch.FuelLevel[l.s]-ch.FuelLevel[l.e-1]; if (f>0 && f<20) row.fuel=+f.toFixed(3); row.fuelL=+ch.FuelLevel[l.s].toFixed(2); }   // fuel in the tank at the start of the lap (the fuel-weight model)
       const t=per[l.lap]; if (t){ row.tyreF=ax(t,["LF","RF"]); row.tyreR=ax(t,["LR","RR"]); }
       if (l.full && secs.length>1){ const b=[...secs.slice(1).map(p=>tAt(l,p))], st=ch.SessionTime[l.s], s=[];
         let prev=st; for (const x of b){ if (!Number.isFinite(x)){ s.length=0; break; } s.push(+(x-prev).toFixed(3)); prev=x; }
@@ -4307,12 +4321,12 @@ function optimalLap(run, A){
     t.push(ch.SessionTime[l.s]+l.time); return B.map((_,k)=>t[k+1]-t[k]); };
   const build = B => { const per=laps.map(l=>({lap:l.lap, best:l===A.best, seg:split(l,B)}));
     return B.map((_,k)=>{ const v=per.filter(p=>Number.isFinite(p.seg[k]) && p.seg[k]>0); if (!v.length) return null; const m=v.reduce((a,b)=>b.seg[k]<a.seg[k]?b:a), bl=per.find(p=>p.best);
-      return {k, opt:m.seg[k], lap:m.lap, bestLap: bl ? bl.seg[k] : NaN}; }); };
+      return {k, opt:m.seg[k], lap:m.lap, bestLap: bl ? bl.seg[k] : NaN, real: v.length>=4 ? pct(v.map(p=>p.seg[k]), 1/3) : NaN}; }); };   // real: the time you beat on 1 lap in 3
   const S=build(sec);
   if (S.some(x=>!x)) return null;
   S.forEach((x,k)=>{ x.from=sec[k]; x.to=k+1<sec.length?sec[k+1]:1; });   // where each sector starts / ends (for the bar)
-  const opt=S.reduce((a,x)=>a+x.opt,0);
-  return {S, opt, best:A.best.time};
+  const opt=S.reduce((a,x)=>a+x.opt,0), real=S.every(x=>Number.isFinite(x.real)) ? S.reduce((a,x)=>a+x.real,0) : NaN;
+  return {S, opt, best:A.best.time, real, typ:median(A.rep.map(l=>l.time))};
 }
 // one bar across the lap, a block per iRacing sector, as wide as the sector is long
 const sectorBar = (S, tip, col) => `<div style="display:flex;gap:2px;height:14px;margin:10px 0 4px">${S.map(s=>`<i title="${tip(s)}" style="flex:${Math.max(0.01,(s.to??1)-(s.from??0)).toFixed(4)};border-radius:3px;background:${col(s)}"></i>`).join("")}</div>`;
@@ -4323,8 +4337,10 @@ function optimalHTML(run, A){
    <div class="grid" style="margin-bottom:8px">
     <div class="stat"><div class="k">Best lap</div><div class="v sm">${fmtTime(X.best)}</div></div>
     <div class="stat"><div class="k">Optimal (sectors)</div><div class="v sm">${fmtTime(X.opt)}</div><div class="s">${gain>0.001?`−${gain.toFixed(3)} s available`:"your best lap is your optimal"}</div></div>
+    ${Number.isFinite(X.real)?`<div class="stat"><div class="k">Realistic target</div><div class="v sm">${fmtTime(X.real)}</div><div class="s">each sector at the time you beat on 1 lap in 3${Number.isFinite(X.typ)?` · ${(X.typ-X.real).toFixed(2)} s under your typical`:""}</div></div>`:""}
     <div class="stat"><div class="k">Sectors</div><div class="v sm">${X.S.length}</div><div class="s">iRacing's own split points</div></div>
    </div>
+   ${Number.isFinite(X.real)?`<p class="muted" style="font-size:12px;margin:0 0 6px">Realistic target: the lap you'd do if every sector went as well as it does on one lap in three. Unlike the optimal lap (every sector at its single best), you already drive each piece of it regularly, so it's the lap to aim for in a race stint.</p>`:""}
    <div class="tablewrap"><table><tr><th>Sector</th><th>Optimal</th><th>From lap</th><th>Your best lap</th><th>Lost on the best lap</th></tr>
     ${X.S.map(s=>`<tr><td>S${s.k+1}</td><td>${s.opt.toFixed(3)}</td><td>${s.lap}</td><td>${Number.isFinite(s.bestLap)?s.bestLap.toFixed(3):"–"}</td><td>${Number.isFinite(s.bestLap)?(s.bestLap-s.opt<0.001?`<span class="ok">optimal</span>`:`<span class="warn">+${(s.bestLap-s.opt).toFixed(3)}</span>`):"–"}</td></tr>`).join("")}</table></div>
    ${X.S.length>1?sectorBar(X.S, s=>`S${s.k+1}: best lap ${Number.isFinite(s.bestLap)?s.bestLap.toFixed(3):"–"} · optimal ${s.opt.toFixed(3)} (lap ${s.lap})`, s=>{ const d=s.bestLap-s.opt; return !Number.isFinite(d)?"rgba(127,127,127,.25)":d<0.01?"var(--good)":d<0.05?"var(--warn)":"var(--bad)"; }):""}
@@ -4685,6 +4701,273 @@ function teamCompareHTML(run, A){
    <p style="margin:8px 0 0"><b>His setup vs yours:</b> ${diff.length?esc(diff.map(c=>c.txt.replace(/ → /," (you) → ")+" (him)").join("; ")):"the same setup"}.</p>
    <p class="muted" style="font-size:12px">Distances are along the lap from the start/finish line. Brake point = first touch of the brake; throttle back on = first 20% after the apex. Different setups change where each of you can brake and get on the power, so check the setup line before copying a brake point.</p>
    <div class="row" style="margin-top:6px"><button class="ghost" id="teamshare" style="padding:3px 10px">Share my best lap now</button></div></section>`;
+}
+// ================= models: learned from every stint, each with how sure it is =================
+// sim time of day in hours (WeekendOptions.TimeOfDay, e.g. "2:00 pm")
+function todHour(wi){ const s=String(((wi||{}).WeekendOptions||{}).TimeOfDay||""), m=s.match(/(\d{1,2}):(\d\d)\s*(am|pm)?/i); if (!m) return NaN; let h=+m[1]%12+(+m[2])/60; if (/pm/i.test(m[3]||"")) h+=12; else if (!m[3]) h=+m[1]+(+m[2])/60; return h; }
+// solve (symmetric) A x = b, and the inverse's diagonal (for the ± of each effect)
+function solveSPD(M, b){ const n=b.length, A=M.map((r,i)=>[...r, b[i], ...Array.from({length:n},(_,j)=>i===j?1:0)]);
+  for (let c=0;c<n;c++){ let p=c; for (let r=c+1;r<n;r++) if (Math.abs(A[r][c])>Math.abs(A[p][c])) p=r; [A[c],A[p]]=[A[p],A[c]]; const d=A[c][c]; if (Math.abs(d)<1e-12) return null;
+    for (let k=c;k<A[c].length;k++) A[c][k]/=d; for (let r=0;r<n;r++) if (r!==c){ const f=A[r][c]; if (f) for (let k=c;k<A[r].length;k++) A[r][k]-=f*A[c][k]; } }
+  return {x:A.map(r=>r[n]), diag:A.map((r,i)=>r[n+1+i])}; }
+// Bayesian ridge: y = X·β, prior β ~ N(β0, τ²) per column; returns β, ± and the noise level
+function bayesRidge(X, y, tau, b0){ const n=X.length, p=X[0]?X[0].length:0; if (!p || n<2) return null;
+  const y2=y.map((v,i)=>v-X[i].reduce((s,x,j)=>s+x*(b0?b0[j]||0:0),0));
+  let s2=Math.max(1e-6, y2.reduce((a,v)=>a+v*v,0)/n*0.5), out=null;
+  for (let it=0;it<3;it++){ const M=Array.from({length:p},()=>new Array(p).fill(0)), v=new Array(p).fill(0);
+    X.forEach((r,i)=>{ for (let a=0;a<p;a++){ if (!r[a]) continue; v[a]+=r[a]*y2[i]; for (let c=0;c<p;c++) M[a][c]+=r[a]*r[c]; } });
+    for (let a=0;a<p;a++) M[a][a]+=s2/(tau[a]*tau[a]);
+    const S=solveSPD(M, v); if (!S) return null;
+    const res=y2.map((v,i)=>v-X[i].reduce((s,x,j)=>s+x*S.x[j],0)), sse=res.reduce((a,b)=>a+b*b,0);
+    let dof=0; for (let a=0;a<p;a++) dof+=1-S.diag[a]*s2/(tau[a]*tau[a]);   // effective number of fitted settings
+    const vy=y2.reduce((a,v)=>a+v*v,0)/n;
+    s2 = n-dof>=3 ? Math.max(1e-6, sse/(n-dof)) : Math.max(sse/Math.max(1,n-dof), vy*0.5, 1e-6);   // too few stints for the settings: don't trust a perfect fit
+    out={b:S.x.map((x,j)=>x+(b0?b0[j]||0:0)), se:S.diag.map(d=>Math.sqrt(Math.max(0,d*s2))), sigma:Math.sqrt(s2), res, n, dof}; }
+  return out; }
+// --- 1 + 2) what each setting does on this car, from ALL your stints at once, with track temperature and the session's rubber separated out ---
+const SM_CACHE={};
+const SM_PRIOR=[   // physics as the starting point (degrees of understeer per click): it's overruled as your stints come in
+  [/(^|\.)(Front[A-Za-z]*\.(Arb|ArbBlades|ArbSetting|ArbSize|AntiRollBar)|FrontBrakes\.Arb[A-Za-z]*)$/i, {entry:0.25, mid:0.3, exit:0.1}],
+  [/(^|\.)Rear[A-Za-z]*\.(Arb|ArbBlades|ArbSetting|ArbSize|AntiRollBar)$/i, {entry:-0.1, mid:-0.3, exit:-0.3}]];
+const SM_DERIVED=/(^|\.)(CenterFrontSplitterHeight|FWtdist|CrossWeight|NoseWeight|CornerWeight|LastHotPressure|LastTempsOMI|LastTempsIMO|TreadRemaining|SpringPerchOffset|BumpRubberGap|ShockDefl[A-Za-z]*|LastHotPressure)$/i;
+function smVals(setup){ const o={}; for (const [p,raw] of Object.entries(setup||{})){ const v=learnNum(raw); if (!Number.isFinite(v)) continue; const k=learnNorm(p); if (SM_DERIVED.test(k)) continue; (o[k]=o[k]||[]).push(v); } for (const k in o) o[k]=mean(o[k]); return o; }
+function setupModel(car){
+  const ck=car+"|"+LEARN_VER; if (SM_CACHE[ck]!==undefined) return SM_CACHE[ck];
+  let R=Object.values(LEARN||{}).filter(r=>r.car===car && r.laps>=MIN_LAPS && r.date>=LEARN_CUTOFF && Number.isFinite(r.med) && r.setup && r.bal);
+  if (R.length<4) return SM_CACHE[ck]=null;
+  const V=R.map(r=>smVals(r.setup));
+  const keys=[...new Set(V.flatMap(o=>Object.keys(o)))].filter(k=>{ const v=V.map(o=>o[k]).filter(Number.isFinite); return v.length>=R.length*0.8 && new Set(v.map(x=>+x.toFixed(4))).size>=2; });
+  const info=keys.map(k=>{ const u=[...new Set(V.map(o=>o[k]).filter(Number.isFinite).map(x=>+x.toFixed(4)))].sort((a,b)=>a-b); let st=Infinity; for (let i=1;i<u.length;i++) st=Math.min(st,u[i]-u[i-1]);
+    if (/RideHeight$/i.test(k)) st=Math.max(st,1); else if (/Pressure$/i.test(k)) st=Math.max(st,1);   // per mm / per kPa reads better than the garage's finest step
+    return {k, label:learnLabel(k), step:st, mean:mean(V.map(o=>o[k]).filter(Number.isFinite)), values:u.length, n:V.filter(o=>Number.isFinite(o[k])&&Math.abs(o[k]-u[0])>1e-9).length}; });
+  // session order: the 1st, 2nd, 3rd... stint at that track that day (rubber going down, you learning the track)
+  const order=R.map(r=>R.filter(q=>q.track===r.track && Math.abs(q.date-r.date)<16*3600e3 && q.date<r.date).length);
+  const fit=(rows)=>{
+    const cols=[...info.map(c=>({c, f:i=>{ const v=V[i][c.k]; return Number.isFinite(v)? (v-c.mean)/c.step : 0; }})),
+      {cov:"temp", label:"track temperature +10°C", f:i=>Number.isFinite(R[i].trackT)? (R[i].trackT-30)/10 : 0},
+      {cov:"order", label:"next stint the same day", f:i=>Math.min(order[i],5)}];
+    const T={entry:i=>R[i].bal.entry, mid:i=>R[i].bal.mid, exit:i=>R[i].bal.exit, pace:i=>(R[i].med/median(R.filter(q=>q.track===R[i].track).map(q=>q.med))-1)*100};
+    const out={};
+    for (const [t,g] of Object.entries(T)){
+      const use=rows.filter(i=>Number.isFinite(g(i)));
+      // within each track: compare stints with each other (fixed effect per track), so a track's own balance or lap length never looks like a setting
+      const grp={}; use.forEach(i=>(grp[R[i].track]=grp[R[i].track]||[]).push(i));
+      const X=[], y=[]; for (const L of Object.values(grp)){ if (L.length<2) continue; const xm=cols.map(c=>mean(L.map(c.f))), ym=mean(L.map(g)); for (const i of L){ X.push(cols.map((c,j)=>c.f(i)-xm[j])); y.push(g(i)-ym); } }
+      if (X.length<4){ out[t]=null; continue; }
+      const tau=cols.map(c=>c.cov ? (t==="pace"?1.0:1.5) : (t==="pace"?0.3:0.5));
+      const b0=cols.map(c=>{ if (c.cov || t==="pace") return 0; const P=SM_PRIOR.find(([re])=>re.test(c.c.k)); return P ? (P[1][t]||0) : 0; });
+      out[t]=bayesRidge(X, y, tau, b0); if (out[t]) out[t].n=X.length; }
+    return {cols, out}; };
+  let rows=R.map((_,i)=>i), F=fit(rows), odd=[];
+  // odd stints: lap time far off what everything else explains (a different build, damage, a wet track...): left out and listed
+  if (F.out.pace && F.out.pace.sigma>0){ const P=F.out.pace, used=rows.filter(i=>Number.isFinite(R[i].med)); const z=P.res.map(r=>Math.abs(r)/P.sigma);
+    const grpUsed=[]; { const grp={}; used.forEach(i=>(grp[R[i].track]=grp[R[i].track]||[]).push(i)); for (const L of Object.values(grp)) if (L.length>=2) grpUsed.push(...L); }
+    grpUsed.forEach((i,k)=>{ if (z[k]>3) odd.push(i); });
+    if (odd.length && odd.length<=R.length/5){ rows=rows.filter(i=>!odd.includes(i)); F=fit(rows); } else odd=[]; }
+  return SM_CACHE[ck]={n:rows.length, info, cols:F.cols, eff:F.out, odd:odd.map(i=>R[i]), R}; }
+function setupModelHTML(run){
+  const M=setupModel(run.carPath);
+  if (!M) return `<section><h2>What each setting does on this car <small>all your stints at once</small></h2><p class="muted">Needs 4+ stints of ${MIN_LAPS}+ clean laps in this car (at tracks you've driven at least twice). Every stint you drive is added.</p></section>`;
+  const E=M.eff, trkMed=median(M.R.filter(r=>r.track===learnTrackOf(run)).map(r=>r.med)), lapS=Number.isFinite(trkMed)?trkMed:median(M.R.map(r=>r.med));
+  const cell=(t,j,k=1)=>{ const e=E[t]; if (!e) return "–"; const b=e.b[j], s=e.se[j], sure=Math.abs(b)>2*s; if (t==="pace"){ const bs=b*lapS/100, ss=s*lapS/100; return `<span class="${sure?(bs<0?"ok":"warn"):"muted"}">${bs>=0?"+":"−"}${Math.abs(bs).toFixed(2)} s</span> <span class="muted" style="font-size:11px">±${ss.toFixed(2)}</span>`; }
+    return `<span style="${sure?`color:${b>0?"#4a8fd8":"#e8803a"};font-weight:600`:""}" class="${sure?"":"muted"}">${b>=0?"+":"−"}${Math.abs(b).toFixed(k===1?2:1)}°</span> <span class="muted" style="font-size:11px">±${s.toFixed(2)}</span>`; };
+  const rows=M.cols.map((c,j)=>({c,j, score:Math.max(...["entry","mid","exit"].map(t=>E[t]?Math.abs(E[t].b[j])/(E[t].se[j]||1):0), E.pace?Math.abs(E.pace.b[j])/(E.pace.se[j]||1):0)})).sort((a,b)=>(!!a.c.cov-!!b.c.cov)||b.score-a.score);
+  return `<section><h2>What each setting does on this car <small>${M.n} stints, every track, all at once · per click, with how sure it is</small></h2>
+   <div class="tablewrap"><table style="font-size:12px"><tr><th>Setting</th><th>One step</th><th>Entry</th><th>Mid</th><th>Exit</th><th>Lap time</th><th>Stints off the lowest value</th></tr>
+   ${rows.map(({c,j})=>`<tr${c.cov?' style="background:rgba(127,127,127,.08)"':""}><td><b>${esc(c.cov?c.label:c.c.label)}</b></td><td>${c.cov?"–":`${+c.c.step.toFixed(3)}`}</td><td>${cell("entry",j)}</td><td>${cell("mid",j)}</td><td>${cell("exit",j)}</td><td>${cell("pace",j)}</td><td>${c.cov?"–":`${c.c.n} of ${M.R.length}`}</td></tr>`).join("")}</table></div>
+   <p class="muted" style="font-size:12px">Balance: + more understeer (blue), − more rotation (orange), in degrees of understeer angle per step of that setting. Lap time in seconds at this track. Bold = clearly more than its ± (twice the uncertainty), grey = not sure yet. How: one regression over every stint of 5+ clean laps in this car, comparing stints at the same track with each other, with the track temperature and how far into the day's session the stint was (the track rubbering in, you getting quicker) as their own effects, so they aren't blamed on a setting. Settings changed together are split between them, which the stint-by-stint table can't do. Anti-roll bars start from the physics (front stiffer = more understeer) until your stints say otherwise.${M.odd.length?` Left out as odd (lap time far from what everything else explains: a new build, damage, rain?): ${M.odd.map(r=>`${new Date(r.date).toLocaleDateString()} ${esc(r.trackName||"")} ${fmtTime(r.med)}`).join("; ")}.`:""}</p></section>`;
+}
+// --- 5) what to test next: the change that teaches the model most, given what's bothering the car ---
+function testNextHTML(run, A){
+  const M=setupModel(run.carPath); if (!A || A.error) return "";
+  const issue = (()=>{ const ph=["entry","mid","exit"].map(k=>({k, v:learnPhase(A,k)})).filter(x=>x.v!=null); if (!ph.length) return null; const w=ph.reduce((a,b)=>Math.abs(b.v)>Math.abs(a.v)?b:a); return w; })();
+  const cur=smVals(Object.fromEntries(run.setupFlat.filter(e=>!LEARN_SKIP.test(e.path)).map(e=>[e.path.replace(/^CarSetup\./,""), e.raw])));
+  const known=M?M.info.map(c=>c.k):[], t=issue?issue.k:"mid";
+  const BAL_RE=/Arb|Spring|Camber|Toe|Wing|Bump|Rebound|Compression|Damp|Diff|Preload|FrictionFaces|RideHeight|Pressure$/i;   // settings that move the balance (not brake hardware)
+  const cand=(M?M.cols:[]).map((c,j)=>c.cov||!BAL_RE.test(c.c.k)||/MasterCyl/i.test(c.c.k)?null:{label:c.c.label, se:M.eff[t]?M.eff[t].se[j]:NaN, b:M.eff[t]?M.eff[t].b[j]:NaN, sp:M.eff.pace?M.eff.pace.se[j]*(A.best.time/100):NaN}).filter(x=>x&&Number.isFinite(x.se)).sort((a,b)=>b.se-a.se).slice(0,3);
+  const never=Object.keys(cur).filter(k=>!known.includes(k) && BAL_RE.test(k) && !/MasterCyl/i.test(k)).map(k=>learnLabel(k)).filter((v,i,s)=>s.indexOf(v)===i).slice(0,8);
+  if (!cand.length && !never.length) return "";
+  return `<section><h2>What to test next <small>the change that teaches the most, ${issue?`with the car ${issue.v>US_PUSH?"pushing":issue.v<US_LOOSE?"loose":"near neutral"} at ${issue.k}`:""}</small></h2>
+   ${cand.length?`<ol style="margin:4px 0 6px 18px">${cand.map(c=>`<li><b>${esc(c.label)}</b>: its effect on ${t} balance is known only to ±${c.se.toFixed(2)}° per step${Number.isFinite(c.sp)?` and on lap time to ±${c.sp.toFixed(2)} s`:""}. One step${Number.isFinite(c.b)&&Math.abs(c.b)>0.05?` (it looks like ${c.b>0?"+":"−"}${Math.abs(c.b).toFixed(2)}° each)`:""} and 5 clean laps will pin it down.</li>`).join("")}</ol>`:""}
+   ${never.length?`<p style="margin:4px 0">Never changed on this car (so nothing is known about them yet): ${never.map(esc).join(", ")}.</p>`:""}
+   <p class="muted" style="font-size:12px">Change only one thing per stint, keep everything else the same, and drive at least ${MIN_LAPS} clean laps. The model splits changes made together, but one at a time is the quickest way to learn a car. The ± shrinks with every stint that varies a setting.</p></section>`;
+}
+// --- 9) starting setup at a track you haven't driven much: your best setup at the most similar track ---
+function similarSetupHTML(run, A){
+  if (!LEARN || !A || A.error) return ""; const trk=learnTrackOf(run), here=Object.values(LEARN).filter(r=>r.car===run.carPath && r.track===trk && r.laps>=MIN_LAPS && r.date>=LEARN_CUTOFF);
+  if (here.length>=3) return "";
+  let P; try { P=trackProfile(run,A); } catch(e){ return ""; }
+  const vec=p=>{ const w=p.w||{}, s=Object.values(w).reduce((a,b)=>a+b,0)||1; return [...["straight","slow","fast","braking","traction","kerbs"].map(k=>(w[k]||0)/s), (p.vmax||250)/300]; };
+  const me=vec({w:P.w, vmax:P.vmax}), by={};
+  for (const r of Object.values(LEARN)) if (r.car===run.carPath && r.track!==trk && r.prof && r.laps>=MIN_LAPS && r.date>=LEARN_CUTOFF) (by[r.track]=by[r.track]||[]).push(r);
+  const C=Object.values(by).map(L=>{ const d=Math.sqrt(vec(L[0].prof).reduce((a,v,i)=>a+(v-me[i])**2,0)); const best=L.reduce((a,b)=>b.med<a.med?b:a); return {L, d, best, name:L[0].trackName}; }).sort((a,b)=>a.d-b.d);
+  if (!C.length) return `<section><h2>Starting setup <small>for a track you haven't driven much</small></h2><p class="muted">Once you've driven this car at other tracks (from this version on), I'll suggest the setup from the most similar one here.</p></section>`;
+  const top=C[0], cur={}; for (const e of run.setupFlat) if (!LEARN_SKIP.test(e.path)) cur[e.path.replace(/^CarSetup\./,"")]=e.raw.trim();
+  const diff=learnDiff(cur, top.best.setup).slice(0,14), match=Math.max(0, Math.round(100-top.d*250));
+  return `<section><h2>Starting setup <small>${here.length} stint${here.length===1?"":"s"} here so far: borrowing from the most similar track</small></h2>
+   <p style="margin:4px 0">Most similar track you've driven in this car: <b>${esc(top.name)}</b> (${match}% similar: ${esc(C.slice(1,3).map(c=>c.name).join(", ")||"no others")} next). Your best stint there ran ${fmtTime(top.best.med)} typical on <b>${esc(top.best.setupName||"its setup")}</b>.</p>
+   ${diff.length?`<p style="margin:4px 0"><b>To start from it:</b> ${esc(diff.map(c=>c.txt.replace(/ → /," (now) → ")).join("; "))}.</p>`:`<p class="muted">Your setup already matches it.</p>`}
+   <p class="muted" style="font-size:12px">Similar = the same mix of straights, slow, fast and heavy-braking corners, traction zones, kerbs and top speed. It's a starting point: the gearing and the ride heights still need checking for this track's top speed.</p></section>`;
+}
+// --- lap rows from the database (async, cached): the fuel and tyre models need every lap, not just the stint summaries ---
+const LROWS={}; let LROWS_PEND=false, MODEL_VER=0;
+function lapRowsFor(recs){
+  const miss=recs.filter(r=>LROWS[r.id]===undefined);
+  if (miss.length && window.se && window.se.dataLaps && !LROWS_PEND){ LROWS_PEND=true;
+    (async()=>{ for (const r of miss.slice(0,120)){ try { LROWS[r.id]=(await window.se.dataLaps(r.id))||[]; } catch(e){ LROWS[r.id]=[]; } }
+      LROWS_PEND=false; MODEL_VER++; if (runs.length && ["tyres","hanna","graphs","learn"].includes(view)) rerender(); })(); }
+  return recs.map(r=>({r, rows:LROWS[r.id]})).filter(x=>Array.isArray(x.rows)); }
+const thisStintRows = (run, A) => { try { return {r:{id:"this", trackT:parseFloat((run.info.WeekendInfo||{}).TrackSurfaceTemp), airT:parseFloat((run.info.WeekendInfo||{}).TrackAirTemp), med:median(A.rep.map(l=>l.time))}, rows:lapRowsOf(run,A)}; } catch(e){ return null; } };
+// --- 3) the fuel effect, measured: lap time against fuel load, tyre age and track temperature over all your stints here ---
+function fuelModel(run, A){
+  const trk=learnTrackOf(run), recs=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===trk && r.date>=LEARN_CUTOFF && r.laps>=3);
+  const D=lapRowsFor(recs); if (!(LEARN||{})[run.learnedId]){ const t=thisStintRows(run,A); if (t) D.push(t); }
+  const P=[]; for (const {r,rows} of D) for (const x of rows||[]) if (x.used && !x.odd && Number.isFinite(x.fuelL) && Number.isFinite(x.age) && Number.isFinite(x.time)) P.push({t:x.time, f:x.fuelL, a:x.age, T:Number.isFinite(r.trackT)?r.trackT:NaN, s:r.id});
+  if (P.length<12) return {n:P.length, stints:new Set(P.map(p=>p.s)).size};
+  const Tm=mean(P.map(p=>p.T).filter(Number.isFinite))||30, fs=P.map(p=>p.f), as=P.map(p=>p.a);
+  // fuel and tyre age only separate when stints start at different fuel loads (short fuel runs vs full tanks)
+  const mf=mean(fs), ma=mean(as), cov=P.reduce((s,p)=>s+(p.f-mf)*(p.a-ma),0), vf=P.reduce((s,p)=>s+(p.f-mf)**2,0), va=P.reduce((s,p)=>s+(p.a-ma)**2,0), corr=Math.abs(cov)/Math.sqrt((vf*va)||1);
+  const range=Math.max(...fs)-Math.min(...fs);
+  const X=P.map(p=>[p.f-mf, p.a-ma, (Number.isFinite(p.T)?p.T:Tm)-Tm]), y=P.map(p=>p.t-mean(P.map(q=>q.t)));
+  const F=bayesRidge(X, y, [0.05, 0.1, 0.1], [0.03, 0, 0]);
+  const ok=F && corr<0.93 && range>=15 && F.se[0]<0.02;
+  return {n:P.length, stints:new Set(P.map(p=>p.s)).size, corr, range, ok, k:F?F.b[0]:NaN, kse:F?F.se[0]:NaN, d:F?F.b[1]:NaN, dse:F?F.se[1]:NaN, c:F?F.b[2]:NaN, cse:F?F.se[2]:NaN}; }
+function fuelModelHTML(run, A){
+  const F=fuelModel(run,A); if (!F) return "";
+  return `<section><h2>Fuel weight and tyre age, measured <small>every clean lap at this track: ${F.n} laps from ${F.stints} stint${F.stints===1?"":"s"}</small></h2>
+   ${F.ok?`<div class="grid"><div class="stat"><div class="k">Each litre of fuel</div><div class="v sm">+${F.k.toFixed(3)} s</div><div class="s">±${F.kse.toFixed(3)} per lap</div></div>
+     <div class="stat"><div class="k">Each lap on the tyres</div><div class="v sm">${F.d>=0?"+":"−"}${Math.abs(F.d).toFixed(3)} s</div><div class="s">±${F.dse.toFixed(3)}, fuel taken out</div></div>
+     <div class="stat"><div class="k">Track +10°C</div><div class="v sm">${F.c>=0?"+":"−"}${Math.abs(F.c*10).toFixed(2)} s</div><div class="s">±${(F.cse*10).toFixed(2)} per lap</div></div></div>
+     <p class="muted" style="font-size:12px">One fit over every clean lap: lap time against the fuel in the tank, the laps on the tyres and the track temperature. These replace the weight-based estimate in the endurance graphs, the Endurance test and the strategy.</p>`
+   :`<p class="muted">Not separable yet: ${F.n<12?`only ${F.n} laps with fuel recorded (from this version on every lap stores its fuel load)`:`within one stint the fuel goes down exactly as the tyres get older, so the two can't be told apart (${F.range<15?`fuel range only ${F.range.toFixed(0)} L`:`fuel and tyre age ${Math.round(F.corr*100)}% tied together`})`}. Do one short run on a light fuel load (say 20 L) and one on a full tank, on fresh tyres each time, and this measures the real seconds per litre for this car. Until then the weight-based estimate (about 0.03 s per litre) is used.</p>`}</section>`;
+}
+const fuelK = (run, A) => { try { const F=fuelModel(run,A); return F&&F.ok ? {k:F.k, d:F.d, measured:true} : null; } catch(e){ return null; } };
+// --- 4) tyre temperature model: each lap the tyre heats toward a track-temperature-dependent balance point ---
+// T(next lap) − T = α·(T∞ − T), with T∞ = a + b·track temperature; fitted per axle over every lap of your stints in this car
+function tyreThermal(run, A){
+  const recs=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.date>=LEARN_CUTOFF && r.laps>=3 && Number.isFinite(r.trackT));
+  const D=lapRowsFor(recs); if (!(LEARN||{})[run.learnedId]){ const t=thisStintRows(run,A); if (t && Number.isFinite(t.r.trackT)) D.push(t); }
+  const out={n:D.length};
+  for (const ax of ["F","R"]){ const X=[], y=[];
+    for (const {r,rows} of D){ const L=(rows||[]).filter(x=>Number.isFinite(x["tyre"+ax])).sort((a,b)=>a.lap-b.lap);
+      for (let i=1;i<L.length;i++) if (L[i].lap===L[i-1].lap+1){ X.push([r.trackT, L[i-1]["tyre"+ax]]); y.push(L[i]["tyre"+ax]-L[i-1]["tyre"+ax]); } }
+    if (X.length<10) continue; const c=fitLS(X, y); if (!c) continue; const al=-c[2]; if (!(al>0.03 && al<1.2)) continue;
+    const sp=Math.max(...X.map(x=>x[0]))-Math.min(...X.map(x=>x[0]));
+    out[ax]={alpha:al, a:c[0]/al, b:sp>=4 ? c[1]/al : NaN, b0:c[1]/al, n:X.length, spread:sp};
+    if (!Number.isFinite(out[ax].b)){ const mT=mean(X.map(x=>x[0])); out[ax].a=(c[0]+c[1]*mT)/al - 0.6*mT; out[ax].b=0.6; out[ax].bEst=true; }   // one track temperature only: assume +0.6° per °C of track
+  }
+  return out; }
+function tyreThermalHTML(run, A, S){
+  const M=tyreThermal(run,A); if (!M.F && !M.R) return "";
+  const TW=A.tw||tyreWindow(run,A,S), wi=run.info.WeekendInfo||{};
+  const tr=Number.isFinite(+RACE.trackT)&&RACE.trackT!==""?+RACE.trackT:parseFloat(wi.TrackSurfaceTemp), air=Number.isFinite(+RACE.airT)&&RACE.airT!==""?+RACE.airT:parseFloat(wi.TrackAirTemp);
+  const RP=(()=>{ try { return racePressure(run,A,S); } catch(e){ return null; } })(), laps=Math.max(20, Math.min(60, Math.round((+RACE.minutes||60)*60/(A.best.time||100)/((+RACE.minutes||60)>90?2:1))));
+  const sim=ax=>{ const m=M[ax]; if (!m) return null; const Tinf=m.a+m.b*tr; let T=air; const pts=[]; for (let l=1;l<=laps;l++){ T=T+m.alpha*(Tinf-T); pts.push([l,T]); } return {Tinf, pts, reach:(pts.find(p=>p[1]>=TW.lo)||[NaN])[0], settle:(pts.find(p=>Math.abs(Tinf-p[1])<1)||[NaN])[0]}; };
+  const F=sim("F"), R=sim("R"), all=[...(F?F.pts:[]),...(R?R.pts:[])].map(p=>p[1]);
+  let pr=null; if (RP && F){ const k=(RP.TeffRace-air)/((F.Tinf-air)||1); pr=F.pts.map(([l,T])=>[l, (RP.set+ATM)*((air+k*(T-air))+273.15)/(air+273.15)-ATM]); }
+  const w=(x,ax)=>x?`${ax}: settles at <b>${x.Tinf.toFixed(0)}°C</b> by about lap ${Number.isFinite(x.settle)?x.settle:"–"} (${x.Tinf<TW.lo-0.5?`<span class="bad">${(TW.lo-x.Tinf).toFixed(0)}° under the window</span>, so it never gets there`:x.Tinf>TW.hi+0.5?`<span class="bad">${(x.Tinf-TW.hi).toFixed(0)}° over the window</span>`:x.Tinf<TW.lo+2?`<span class="warn">only just inside the window</span>${Number.isFinite(x.reach)?`, from lap ${x.reach}`:""}`:`<span class="ok">in the window</span> from lap ${x.reach}`})`:"";
+  return `<section><h2>Tyre temperature model <small>a race stint at ${fmt(tr,0)}°C track / ${fmt(air,0)}°C air${Number.isFinite(+RACE.trackT)&&RACE.trackT!==""?" (the race temperatures you set)":" (today; set the race temperatures next to Endurance)"}</small></h2>
+   ${smallGrid([svgChart({title:"Predicted tyre temperature, lap by lap", w:420, h:230, xr:[1,laps], yr:[Math.floor(Math.min(air,TW.lo-3,...all)), Math.ceil(Math.max(TW.hi+3,...all))], xl:"lap of the stint", yl:"°C (garage-equivalent)", xticks:6,
+       bands:[{y0:TW.lo, y1:TW.hi, color:"#2a9d55", op:0.12}], series:[...(F?[{pts:F.pts, color:"#4a8fd8", width:2, label:"front"}]:[]), ...(R?[{pts:R.pts, color:"#e8803a", width:2, label:"rear"}]:[])]}),
+     ...(pr?[svgChart({title:`Predicted front hot pressure, starting at ${RP.set} kPa`, w:420, h:230, xr:[1,laps], yr:[Math.floor(Math.min(S.hotMin-4,...pr.map(p=>p[1]))), Math.ceil(Math.max(S.hotMax+4,...pr.map(p=>p[1])))], xl:"lap of the stint", yl:"kPa", xticks:6,
+       bands:Number.isFinite(S.hotMin)?[{y0:S.hotMin, y1:S.hotMax, color:"#2a9d55", op:0.12}]:[], series:[{pts:pr, color:"#4a8fd8", width:2, label:"front"}]})]:[])])}
+   <p style="margin:6px 0">${[w(F,"Front"), w(R,"Rear")].filter(Boolean).join(". ")}.</p>
+   <p class="muted" style="font-size:12px">How: each lap the tyre closes a share of the gap to the temperature it settles at, and that settling temperature rises with the track temperature. Both are fitted on every lap of your stints in this car (${(M.F||M.R).n} lap-to-lap steps, α ${fmt((M.F||M.R).alpha,2)} per lap${(M.F||M.R).bEst?"; only one track temperature in your data so far, so +0.6°C per °C of track is assumed":`, +${fmt((M.F||M.R).b,2)}°C per °C of track`}). Tyres start at the air temperature (no blankets). The pressure line uses the race starting pressure from the gas law above. Pressure and camber changes also move the temperature; this predicts the setup you're running.</p></section>`;
+}
+// --- 6) lift and coast planner: where to coast to save a target amount of fuel per lap for the least lap time ---
+function coastDecel(run, A){ const ch=run.ch, X=[], y=[]; for (const j of A.idx){ const v=ch.Speed[j]; if (ch.Throttle[j]<0.03 && ch.Brake[j]<0.02 && v>25 && Math.abs(ch.LatAccel[j])<3 && ch.LongAccel){ X.push([v*v]); y.push(-ch.LongAccel[j]); } }
+  if (X.length<run.tick*2) return v=>0.6+0.00045*v*v; const c=fitLS(X,y); return c&&c[1]>0 ? v=>Math.max(0.2,c[0]+c[1]*v*v) : v=>0.6+0.00045*v*v; }
+// flat out: how hard the car is still accelerating at each speed (what a lift gives up, on top of the coasting drag)
+function wotAccel(run, A){ const ch=run.ch, X=[], y=[]; if (!ch.LongAccel) return v=>0; for (const j of A.idx){ const v=ch.Speed[j]; if (ch.Throttle[j]>0.97 && ch.Brake[j]<0.02 && v>25 && Math.abs(ch.LatAccel[j])<3){ X.push([v*v]); y.push(ch.LongAccel[j]); } }
+  if (X.length<run.tick*2) return v=>0; const c=fitLS(X,y); return c ? v=>Math.max(0,c[0]+c[1]*v*v) : v=>0; }
+function liftPlan(run, A, target){
+  const ch=run.ch, lc=A._lc!==undefined?A._lc:(A._lc=liftCoastOf(run,A)), burn=lc&&lc.fuelPerS>0?lc.fuelPerS:0.035, dec=A._dec||(A._dec=coastDecel(run,A)), secs=cornerSections(run,A), L=A.best;
+  const Z=secs.map((s,i)=>{ let jb=-1; for (let j=L.s;j<L.e;j++) if (ch.LapDistPct[j]>=s.b[0]){ jb=j; break; } if (jb<0) return null; const v=ch.Speed[jb], zl=(lc&&lc.zones||[]).find(z=>Math.abs(z.p-s.b[0])<0.015);
+    const acc=A._acc||(A._acc=wotAccel(run,A));
+    return {n:i+1, v, a:dec(v)+acc(v), slow:dec(v), t:0, now:zl?zl.coast:0}; }).filter(z=>z && z.v*3.6>130);   // a: the speed you give up per second of lifting (drag and engine braking, plus the acceleration you'd still have)   // lifting before slow corners off low speed saves little and costs a lot
+  if (!Z.length) return null;
+  // greedy: keep adding a tenth of coasting where it costs the least time (cost of one more tenth ≈ a·t/v)
+  let saved=0, lost=0, guard=0; const step=0.1;
+  while (saved<target-1e-9 && guard++<400){ const z=Z.filter(z=>z.t<3).reduce((a,b)=>(!a|| b.a*(b.t+step/2)/b.v < a.a*(a.t+step/2)/a.v) ? b : a, null); if (!z) break;
+    lost+=z.a*((z.t+step)**2-z.t**2)/(2*z.v); z.t+=step; saved+=burn*step; }
+  for (const z of Z){ z.dist=z.v*z.t-z.slow*z.t*z.t/2; z.dv=z.slow*z.t*3.6; z.fuel=burn*z.t; z.cost=z.a*z.t*z.t/(2*z.v); }
+  return {Z:Z.filter(z=>z.t>0).sort((a,b)=>a.n-b.n), saved, lost, burn, maxed:saved<target-1e-9, measured:!!(lc&&lc.fuelPerS>0)}; }
+function liftPlanHTML(run, A){
+  if (!A || A.error || !A.fuelPerLap) return "";
+  const target=Number.isFinite(+RACE.lcTarget)&&+RACE.lcTarget>0?+RACE.lcTarget:0.1, P=liftPlan(run,A,target); if (!P) return "";
+  return `<section><h2>Lift and coast planner <small>where to coast to save fuel for the least lap time</small></h2>
+   <p style="margin:0 0 6px">Fuel to save: <input id="lctarget" type="number" min="0.02" max="0.8" step="0.02" value="${target}" style="width:70px;padding:2px 4px"> L per lap <span class="muted">(you use ${fmt(A.fuelPerLap,2)} L; the strategy below works out what the race needs)</span></p>
+   ${P.Z.length?`<div class="tablewrap"><table><tr><th>Corner</th><th>Lift before the brake point</th><th>Coast</th><th>Speed at the brake point</th><th>Fuel saved</th><th>Time lost</th></tr>
+    ${P.Z.map(z=>`<tr><td><b>T${z.n}</b></td><td><b>${Math.round(z.dist)} m</b> before</td><td>${z.t.toFixed(1)} s</td><td>−${z.dv.toFixed(0)} km/h <span class="muted">(${(z.v*3.6).toFixed(0)} → ${(z.v*3.6-z.dv).toFixed(0)})</span></td><td>${z.fuel.toFixed(3)} L</td><td>${z.cost.toFixed(3)} s</td></tr>`).join("")}
+    <tr style="font-weight:700"><td>Lap</td><td></td><td>${P.Z.reduce((a,z)=>a+z.t,0).toFixed(1)} s</td><td></td><td>${P.saved.toFixed(3)} L</td><td>${P.lost.toFixed(2)} s</td></tr></table></div>
+    <p style="margin:6px 0">Saves <b>${P.saved.toFixed(2)} L a lap for about ${P.lost.toFixed(2)} s a lap</b>${A.fuelPerLap?` (fuel use ${A.fuelPerLap.toFixed(2)} → ${(A.fuelPerLap-P.saved).toFixed(2)} L a lap)`:""}.${P.maxed?` <span class="warn">That's as much as lift and coast can sensibly give (3 s per corner); the rest has to come from short-shifting or a leaner engine map.</span>`:""}</p>`:`<p class="muted">Nothing to save.</p>`}
+   <p class="muted" style="font-size:12px">How: coasting saves ${P.burn.toFixed(3)} L a second (${P.measured?"measured on this stint":"estimate"}), and costs time because you arrive at the braking zone slower: the car slows at ${coastDecel(run,A)(70).toFixed(1)} m/s² at 250 km/h off the throttle (measured). Spreading the coasting over many fast braking zones costs far less than one long lift, so the planner adds it a tenth at a time where it hurts least, which is before the fastest braking zones. Time lost is the physics for a perfectly judged lift (the speed you give up, and the acceleration you'd still have had flat out); in a race the lift points are less exact, so expect it to cost somewhat more. The fuel and lap time against coasting graph (Graphs) shows what it really cost you.</p></section>`;
+}
+const liftCost = (run, A, s) => { if (!(s>0)) return 0; const c=A._lcost||(A._lcost={}), k=s.toFixed(3); if (c[k]!==undefined) return c[k];
+  try { const P=liftPlan(run,A,s); return c[k]=P ? (P.maxed ? Infinity : P.lost) : Infinity; } catch(e){ return c[k]=Infinity; } };
+// --- 7) race strategy: stops, fuel saving and tyres, every plan simulated lap by lap; and each driver's pace ---
+function strategy(run, A, S, who){
+  const mins=+RACE.minutes||60, R=mins*60, pit=+RACE.pitLoss||60, tyreT=Number.isFinite(+RACE.tyreLoss)?+RACE.tyreLoss:0;
+  const di=run.info.DriverInfo||{}, mx=parseFloat(di.DriverCarFuelMaxLtr), pc=parseFloat(di.DriverCarMaxFuelPct), tank=mx>0?mx*(pc>0&&pc<=1?pc:1):NaN;
+  const lap=who&&who.med?who.med:median(A.rep.map(l=>l.time)), fuel=who&&who.fuel?who.fuel:A.fuelPerLap;
+  if (!(tank>0) || !(fuel>0) || !(lap>0)) return null;
+  const FK=fuelK(run,A), k=FK?FK.k:0.5*0.75*lap/1300, tyre=FK?Math.max(0,FK.d):(()=>{ const L=A.rep.slice().sort((a,b)=>a.lap-b.lap); if (L.length<5) return 0.02; const c=fitLS(L.map(l=>[l.lap]),L.map(l=>l.time)); return c?Math.max(0, c[1]+k*fuel):0.02; })();
+  const wearMax=A.wear&&A.wear.t?Math.max(...Object.values(A.wear.t).map(t=>t.perLap||0)):0, life=wearMax>0?Math.floor(30/wearMax):Infinity;
+  const plans=[];
+  for (let stops=0; stops<=Math.max(2, Math.ceil(R/lap*fuel/tank)+2); stops++){
+    const estLaps=(R-stops*pit)/lap, stint=Math.ceil((estLaps+1)/(stops+1)), need=stint*fuel+0.3*fuel, save=need>tank ? (need-tank)/stint : 0;
+    const cost=save>0 ? liftCost(run,A,save) : 0; if (!Number.isFinite(cost)) continue;
+    for (const every of [1,2]){ if (every===2 && (stops<1 || stint*2>life)) continue;
+      // lap by lap: base pace + fuel weight + tyre age + the fuel-save cost, pit stops at the end of each stint
+      let t=0, n=0, s=0, age=0, fuelIn=Math.min(tank, need);
+      while (t<R && n<2000){ const lt=lap + k*(fuelIn-tank/2) + tyre*age + cost; t+=lt; n++; age++; fuelIn-=fuel-save;
+        if (n%stint===0 && s<stops && t<R){ s++; const change=(s%every)===0; t+=pit+(change?tyreT:0); if (change) age=0; fuelIn=Math.min(tank, (R-t)/lap*fuel+fuel); } }
+      const over=t-R, done=n-(over>0?over/lap:0);
+      plans.push({stops, stint, save, cost, every, laps:Math.floor(n), frac:done, finish:t}); } }
+  if (!plans.length) return null;
+  plans.sort((a,b)=>b.laps-a.laps || a.finish-b.finish);
+  return {plans, tank, fuel, lap, k, tyre, kMeasured:!!FK, life, pit, tyreT, mins}; }
+function strategyHTML(run, A, S){
+  const X=strategy(run,A,S); if (!X) return "";
+  const best=X.plans[0], seen=new Set(), list=X.plans.filter(p=>{ const k=p.stops+"|"+p.every; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0,6);
+  const drv=[{driver:"You", med:X.lap, fuel:X.fuel}, ...(typeof TEAMSTINTS!=="undefined"?TEAMSTINTS:[]).filter(r=>r.car===run.carPath && r.track===learnTrackOf(run) && r.laps>=MIN_LAPS)
+    .reduce((a,r)=>{ const o=a.find(x=>x.driver===r.driver); if (!o) a.push({driver:r.driver, med:r.med, fuel:r.fuel, sd:r.sd}); else if (r.med<o.med) Object.assign(o,{med:r.med, fuel:r.fuel, sd:r.sd}); return a; }, [])];
+  const D=drv.map(d=>{ const s=strategy(run,A,S,d); return {...d, laps:s?s.plans[0].laps:NaN, plan:s?s.plans[0]:null}; });
+  return `<section><h2>Race strategy <small>${X.mins} minutes · every plan simulated lap by lap</small></h2>
+   <p class="muted" style="margin:0 0 6px;font-size:12px">Pit lane loss ${X.pit} s (set above, with the race length) · extra for a tyre change <input id="tyreloss" type="number" min="0" max="60" value="${X.tyreT}" style="width:55px;padding:2px 4px"> s · tank ${X.tank.toFixed(0)} L · ${X.fuel.toFixed(2)} L a lap · ${fmtTime(X.lap)} typical.</p>
+   <div class="tablewrap"><table><tr><th>Plan</th><th>Stint</th><th>Fuel save</th><th>Tyres</th><th>Laps</th><th>vs best</th></tr>
+    ${list.map(p=>`<tr style="${p===best?"font-weight:700;background:rgba(80,140,255,.10)":""}"><td>${p.stops} stop${p.stops===1?"":"s"}${p===best?' <span class="tag">best</span>':""}</td><td>${p.stint} laps</td>
+      <td>${p.save>0?`${p.save.toFixed(2)} L/lap <span class="muted">(+${p.cost.toFixed(2)} s/lap)</span>`:"none"}</td><td>${p.stops===0?"no change":p.every===1?"new every stop":"every 2nd stop (double stint)"}</td><td>${p.laps} <span class="muted">(${p.frac.toFixed(1)})</span></td><td>${p===best?"–":Math.abs(p.frac-best.frac)<0.05?"same":`${(p.frac-best.frac).toFixed(1)} laps`}</td></tr>`).join("")}</table></div>
+   ${D.length>1?`<h3 style="margin:10px 0 4px">By driver <small class="muted">each one's best long run here (team folder), driving the whole race</small></h3><div class="tablewrap"><table><tr><th>Driver</th><th>Typical lap</th><th>Fuel / lap</th><th>Best plan</th><th>Laps</th></tr>
+    ${D.map(d=>`<tr><td><b>${esc(d.driver)}</b></td><td>${fmtTime(d.med)}${d.sd?` <span class="muted">±${d.sd.toFixed(2)}</span>`:""}</td><td>${fmt(d.fuel,2)} L</td><td>${d.plan?`${d.plan.stops} stops, ${d.plan.save>0?d.plan.save.toFixed(2)+" L/lap save":"no save"}`:"–"}</td><td>${fmt(d.laps,0)}</td></tr>`).join("")}</table></div>
+    <p class="muted" style="font-size:12px">Put the fastest, most consistent driver (smallest ±) in the longest stints and the stints that decide the race; someone who saves fuel more cheaply is worth the stints where the plan needs saving.</p>`:""}
+   <p class="muted" style="font-size:12px">Each lap = typical pace + fuel weight (${X.k.toFixed(3)} s per litre, ${X.kMeasured?"measured":"estimated"}) + tyre age (${X.tyre.toFixed(3)} s per lap on the tyres) + the lift-and-coast cost from the planner when a stint needs fuel saving. ${Number.isFinite(X.life)?`The tyres last about ${X.life} laps to 70% tread, which decides whether a double stint is possible.`:"Tyre wear isn't measured yet (a run that pits shows it), so double stints are allowed."} Traffic, safety cars and a fuel-save stint driven better or worse than planned all move it, so check the laps after the first stint.</p></section>`;
+}
+// --- 8) temperature over the race: the track cools or heats with the time of day; pressure, lap time and balance follow ---
+function raceTempsHTML(run, A, S){
+  const mins=+RACE.minutes||60; if (mins<90) return "";
+  const wi=run.info.WeekendInfo||{}, h0=Number.isFinite(+RACE.startH)&&RACE.startH!==""?+RACE.startH:todHour(wi); if (!Number.isFinite(h0)) return "";
+  const t0=Number.isFinite(+RACE.trackT)&&RACE.trackT!==""?+RACE.trackT:parseFloat(wi.TrackSurfaceTemp), a0=Number.isFinite(+RACE.airT)&&RACE.airT!==""?+RACE.airT:parseFloat(wi.TrackAirTemp); if (!Number.isFinite(t0)||!Number.isFinite(a0)) return "";
+  const sun=h=>{ const x=((h%24)+24)%24; return Math.max(0, Math.sin(Math.PI*(x-6)/12)); }, airC=h=>Math.cos(2*Math.PI*(h-15)/24);
+  // how much the sun heats the track over the air, learned from your stints (with their time of day)
+  const pts=Object.values(LEARN||{}).filter(r=>r.track===learnTrackOf(run) && Number.isFinite(r.tod) && Number.isFinite(r.trackT) && Number.isFinite(r.airT) && sun(r.tod)>0.25).map(r=>(r.trackT-r.airT)/sun(r.tod));
+  const K=pts.length>=2 ? median(pts) : 18, kSrc=pts.length>=2 ? `learned from ${pts.length} stints here` : "estimate";
+  // today's start fixes the sun's strength (clouds, season): the race starts at exactly the temperatures you set
+  const Ke = sun(h0)>0.25 ? Math.max(0, (t0-a0)/sun(h0)) : K, night=sun(h0)>0.25 ? 0 : Math.max(0, (t0-a0) - K*sun(h0));   // at night: what the track still holds from the day
+  const RP=(()=>{ try { return racePressure(run,A,S); } catch(e){ return null; } })(), SM=setupModel(run.carPath);
+  const j=SM?SM.cols.findIndex(c=>c.cov==="temp"):-1, sure=e=>e&&j>=0&&Math.abs(e.b[j])>2*e.se[j];   // only effects the data is sure of
+  const lapPer10=SM&&sure(SM.eff.pace)?SM.eff.pace.b[j]*(A.best.time/100):NaN, midPer10=SM&&sure(SM.eff.mid)?SM.eff.mid.b[j]:NaN;
+  const step=mins>=360?60:30, rows=[];
+  for (let m=0;m<=mins;m+=step){ const h=h0+m/60, air=a0+4*(airC(h)-airC(h0)), tr=air+Ke*sun(h)+night*Math.exp(-m/120);
+    let p=NaN; if (RP){ const Te=RP.TeffRace+RP.slope*(tr-RP.tRace); p=Math.max(+S.minPress||0, Math.round((RP.target+ATM)*(air+273.15)/(Te+273.15)-ATM)); }
+    rows.push({m, h, air, tr, p, dl:Number.isFinite(lapPer10)?lapPer10*(tr-t0)/10:NaN, db:Number.isFinite(midPer10)?midPer10*(tr-t0)/10:NaN}); }
+  const hh=h=>{ const x=((h%24)+24)%24; return `${String(Math.floor(x)).padStart(2,"0")}:${String(Math.round((x%1)*60)).padStart(2,"0")}`; };
+  return `<section><h2>Temperature over the race <small>${mins/60>=1?(mins/60).toFixed(mins%60?1:0)+" h":mins+" min"} from ${hh(h0)} (sim time)</small></h2>
+   <p class="muted" style="margin:0 0 6px;font-size:12px">Race start (sim time of day) <input id="racestart" type="number" min="0" max="24" step="0.5" value="${Number.isFinite(+RACE.startH)&&RACE.startH!==""?RACE.startH:h0.toFixed(1)}" style="width:60px;padding:2px 4px"> h · start temperatures are the race temperatures next to Endurance.</p>
+   <div class="tablewrap"><table><tr><th>Race time</th><th>Sim time</th><th>Air</th><th>Track</th><th>Starting pressure for a tyre change</th><th>Lap time vs the start</th><th>Balance vs the start</th></tr>
+    ${rows.map(r=>`<tr><td>${Math.floor(r.m/60)}:${String(r.m%60).padStart(2,"0")}</td><td>${hh(r.h)}</td><td>${r.air.toFixed(0)}°C</td><td><b>${r.tr.toFixed(0)}°C</b></td><td>${Number.isFinite(r.p)?r.p+" kPa":"–"}</td>
+      <td>${Number.isFinite(r.dl)?`${r.dl>=0?"+":"−"}${Math.abs(r.dl).toFixed(2)} s`:"–"}</td><td>${Number.isFinite(r.db)&&Math.abs(r.db)>=0.05?`<span style="color:${r.db>0?"#4a8fd8":"#e8803a"}">${r.db>0?"more understeer":"more rotation"} (${r.db>0?"+":"−"}${Math.abs(r.db).toFixed(2)}°)</span>`:"–"}</td></tr>`).join("")}</table></div>
+   <p class="muted" style="font-size:12px">The sun heats the track over the air by up to ${Ke.toFixed(0)}°C at midday (${sun(h0)>0.25?"from the start temperatures you set":kSrc}); the air follows a day-night swing of ±4°C, warmest mid-afternoon. Starting pressures use the race-pressure model (a cooler track needs more pressure). Lap time and balance per °C come from the all-stints setup model, shown only once it's sure of them${SM?"":" (not enough stints yet)"}. iRacing's dynamic weather and clouds can change this; recheck at each stop with the garage hot pressures.</p></section>`;
 }
 // ---------- endurance testing: every car you've tested here, projected over the race you've set ----------
 // Pace = typical clean lap; it drops by "deg" seconds a lap over a stint (tyres going off, partly offset by burning fuel);

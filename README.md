@@ -77,6 +77,18 @@ Overlays can be moved and resized in edit mode.
 - **GP → vs teammate:** time slip, speed and brake/throttle overlays, and per corner: brake point, peak brake, brake at turn-in (trail), apex speed and gear, throttle back on, plus plain-words tips ("he brakes 12 m later, carries 11 km/h more"). His setup vs yours.
 - Teammate data is **never** used for your own setup learning, only for driving and endurance comparison.
 
+### Models (learned from every stint, each with its ±)
+- **All-stints setup model (Learning):** what each setting does to entry / mid / exit balance and lap time on this car, fitted over every stint at once (Bayesian ridge regression, stints compared within each track). Track temperature and the session's rubbering-in are separate effects, so they're not blamed on a setting. Anti-roll bars start from physics until your data takes over. Odd stints (lap time far from what everything else explains) are left out and listed.
+- **What to test next (Learning):** the change the model knows least about, plus settings never changed on this car.
+- **Fuel weight and tyre age, measured (Hanna):** lap time against fuel in the tank, laps on the tyres and track temperature, over every clean lap at the track. Needs runs at different fuel loads; replaces the weight-based estimate once it can.
+- **Tyre temperature model (Tyres):** each lap the tyre heats toward a track-temperature-dependent balance point; predicts temperature and hot pressure lap by lap for the race temperatures.
+- **Lift-and-coast planner (Hanna):** for a fuel target per lap, where to lift before which braking zones for the least lap time, from the measured burn rate, coasting drag and acceleration.
+- **Race strategy (Hanna):** every plan (stops, fuel saving, new tyres every stop or double stints) simulated lap by lap; each teammate's best plan and laps.
+- **Temperature over the race (Hanna, races of 90 min+):** track and air temperature through the race from the sim time of day, with the starting pressure for each tyre change and the lap-time and balance shift.
+- **Starting setup at a new track (Home):** your best setup at the most similar track you've driven (straights, slow / fast corners, braking, kerbs, top speed).
+- **Realistic target lap (GP):** each sector at the time you beat on one lap in three.
+- **Odd laps:** laps clearly slower than your typical (traffic, a moment) are left out of the analysis and listed.
+
 ### Data, reports and history
 - **Database:** everything (stints, laps, setups, aero map) in a local SQLite database: `Documents\Setup Engineer\database\setup-engineer.db`. Optional CSV per car + track (off by default).
 - **Compare stints:** every stint for this car and track side by side, what changed in the setup, without loading files.
@@ -145,6 +157,7 @@ Not in the repo: `node_modules`, installers, `.ibt` telemetry, the database, and
 
 | Version | Changes |
 |---|---|
+| 0.14.0 | Models: all-stints setup model with track conditions, what to test next, measured fuel effect, tyre temperature model, lift-and-coast planner, race strategy, temperature over the race, starting setup from the most similar track, realistic target lap, odd lap / stint detection. |
 | 0.13.7 | Tab list scrolls on its own, independent of the page. |
 | 0.13.6 | Rake against speed: measured vs aero-only (acceleration squat removed). |
 | 0.13.5 | 11 new graphs: setup (shocks, balance and ride height along the lap, tread temps), driving (brake traces, apex speed, throttle on exit, shifting), endurance (stint pace fuel vs tyres, fuel vs coasting, tyres over the run). |
