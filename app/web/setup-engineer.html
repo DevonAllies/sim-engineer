@@ -2555,6 +2555,7 @@ function render(){
     const rb=$("#tprebase"); if (rb) rb.onclick=()=>{ if (!confirm("Use this stint's setup as the new baseline? The programme starts again from this stint.")) return; rebase(); };
     const rb2=$("#tprebase2"); if (rb2) rb2.onclick=rebase;
     const rs=$("#tpreset"); if (rs) rs.onclick=()=>{ if (!confirm("Stop this test programme? Your stints stay; only the checklist goes.")) return; tpSet(run, null); rerender(); };
+    { const sh=$("#tpshow"); if (sh) sh.onchange=()=>{ TP_SHOW=sh.value; rerender(); }; const dd=$("#tpsheet"); if (dd) dd.ontoggle=()=>{ TP_SHEET_OPEN=dd.open; }; }
     document.querySelectorAll(".tpcheck").forEach(c=>c.onchange=()=>{ const P=tpGet(run); if (!P) return; P.manual=P.manual||{}; P.manual[c.dataset.id]=c.checked; tpSet(run, P); rerender(); }); }
   for (const [id,key] of [["lctarget","lcTarget"],["tyreloss","tyreLoss"],["racestart","startH"]]){ const el=$("#"+id); if (el) el.onchange=()=>{ RACE[key]=el.value===""?"":+el.value; PREFS.set("race", RACE); rerender(); }; }
   if (view==="aero" && A.rh) drawRH(run,A,S);
@@ -5970,6 +5971,48 @@ function tpNearHit(run, s, ch){
 const tpExtraWords = extra => { const seen=new Set(); for (const c of extra){ const k=c.k;
     seen.add(/Arb/i.test(k)?"anti-roll bars":/Camber/i.test(k)?"camber":/Toe/i.test(k)?"toe":/Pressure/i.test(k)?"tyre pressures":/Spring/i.test(k)?"springs":/Wing/i.test(k)?"wing":/Comp|Reb|Damp/i.test(k)?"dampers":/Diff|Preload|Friction/i.test(k)?"diff":learnLabel(k)); }
   return [...seen]; };
+// the garage for one step: what to change, what to put back, and what stays at the baseline, laid out like iRacing's garage
+let TP_SHOW=null, TP_SHEET_OPEN=true;
+const TP_FREE=/InCarAdjustments|InCarDials|BrakePressureBias|TractionControl|ABSsetting|DashDisplay|StartingPressure|ColdPressure/i;
+function tpTarget(run, s, path, baseRaw){
+  const e0=run.setupFlat.find(x=>x.path==="CarSetup."+path), e=Object.assign({path:"CarSetup."+path, key:path.split(".").pop()}, e0||{}, {raw:baseRaw});
+  const withV=v=>/^-?\d/.test(String(v)) && /-?\d+(\.\d+)?/.test(baseRaw) ? baseRaw.replace(/-?\d+(\.\d+)?/, String(v)) : String(v);
+  if (s.kind==="min"||s.kind==="max"||s.kind==="wmin"||s.kind==="wmax") return s.lim!=null ? withV(s.lim) : (s.kind==="min"||s.kind==="wmin" ? "the lowest the garage allows" : "the highest the garage allows");
+  if (s.kind==="more"||s.kind==="less"){ const r=resolve(run,{e, d:(s.kind==="less"?-1:1)*(s.amount||1)}); return r?r.raw:`${s.amount||1} step${(s.amount||1)>1?"s":""} ${s.kind==="less"?"softer":"stiffer"}`; }
+  if (s.kind==="wless"||s.kind==="wmore"){ const r=resolve(run,{e, d:s.kind==="wless"?-2:2}); return r?r.raw:`2 steps ${s.kind==="wless"?"lower":"higher"}`; }
+  if (s.kind==="between") return "the app's suggestion (Changes)";
+  return baseRaw; }
+function tpSheetHTML(run, P, steps){
+  const s=steps.find(x=>x.id===TP_SHOW) || steps.find(x=>!x.complete) || steps[steps.length-1]; if (!s || !P.base) return "";
+  const cur=tpSetup(run), isSpr=/^spr/.test(s.id)||s.id==="sprApp";
+  const rows=Object.entries(P.base).filter(([path])=>!SM_DERIVED.test(learnNorm(path)) || /PerchOffset/i.test(path)).map(([path,raw])=>{ const k=learnNorm(path), key=path.split(".").pop(); raw=String(raw).trim();
+    let st="keep", to=raw, note="";
+    if (s.kind!=="base" && s.re && s.re.test(k)){ st="set"; to=tpTarget(run,s,path,raw); }
+    else if (isSpr && /RideHeight$/i.test(key)){ st="back"; note="put back to the baseline"; }
+    else if (isSpr && /PerchOffset|SpringPerch/i.test(key)){ st="adjust"; note="adjust to get the ride height back"; }
+    else if (isSpr && /Camber|Toe/i.test(key)){ note="moves a little with the spring: fine"; }
+    else if (TP_FREE.test(path)){ st="free"; note="your call each stint"; }
+    const now=cur[path]!=null?String(cur[path]).trim():null;
+    const off = now!=null && st!=="free" && st!=="adjust" && !(isSpr && /Camber|Toe/i.test(key)) && (st==="set" ? (/^-?\d/.test(to) && now!==to) : (/RideHeight$/i.test(key) && Number.isFinite(learnNum(now)) ? Math.abs(learnNum(now)-learnNum(raw))>0.5 : now!==raw));
+    const sd=path.match(/(Left|Right)(Front|Rear)/), label=sd?`${sd[1][0]}${sd[2][0]} ${pretty(key).toLowerCase()}`:learnLabel(path);
+    return {label, path, parts:path.split("."), key, raw, to, st, note, now, off}; });
+  const groups=[], gm={};
+  for (const r of rows){ const gk=r.parts[0]+"."+r.parts[1]; if (!gm[gk]){ gm[gk]={tab:r.parts[0], name:r.parts.length>2?r.parts[1]:r.parts[0], rows:[]}; groups.push(gm[gk]); } gm[gk].rows.push(r); }
+  groups.sort((a,b)=>{ const i=x=>{ const j=GROUP_ORDER.indexOf(x.tab); return j<0?99:j; }; return i(a)-i(b); });
+  let lastTab="";
+  const sheet=groups.map(g=>{ const n=g.rows.filter(r=>r.st==="set"||r.st==="back"||r.st==="adjust").length; let h="";
+    if (g.tab!==lastTab){ h+=`<div class="sheettab">${g.tab==="TiresAero"?"Tires & Aero":esc(g.tab)}</div>`; lastTab=g.tab; }
+    return h+`<div class="gcard ${n?"has":""}"><div class="gtitle">${pretty(g.name)}${n?` <span class="badge">${n}</span>`:""}</div><table>${g.rows.map(r=>`<tr class="${r.st==="set"||r.st==="back"||r.st==="adjust"?"chg":""}"><td>${pretty(r.key)}${r.note?`<div class="muted" style="font-size:11px">${esc(r.note)}</div>`:""}</td><td>${
+      r.st==="set"?`<span class="old">${esc(r.raw)}</span> <span class="new">${esc(r.to)}</span>`:r.st==="free"?`<span class="muted">${esc(r.raw)}</span>`:esc(r.raw)}${r.off?`<div class="warn" style="font-size:11px">this stint: ${esc(r.now)}</div>`:""}</td></tr>`).join("")}</table></div>`; }).join("");
+  const set=rows.filter(r=>r.st==="set"), keepN=rows.filter(r=>r.st==="keep").length, off=rows.filter(r=>r.off);
+  const uniq=a=>a.filter((v,i,x)=>x.indexOf(v)===i);
+  return `<details id="tpsheet" ${TP_SHEET_OPEN?"open":""} style="margin:0 0 10px"><summary><b>Garage for this step</b> <span class="muted" style="font-size:12px">what to change and what stays at the baseline</span></summary>
+    <div class="row" style="gap:8px;align-items:center;margin:8px 0">Show the garage for <select id="tpshow">${steps.map(x=>`<option value="${x.id}"${x===s?" selected":""}>${esc(x.block)}: ${esc(x.label)}${x.complete?" ✓":""}</option>`).join("")}</select></div>
+    <p style="margin:4px 0;font-size:13px">${set.length?`<b>Change:</b> ${esc(uniq(set.map(r=>`${learnLabel(r.path)} ${r.raw} → ${r.to}`)).join("; "))}${s.ran&&s.ran.length?` <span class="ok">(you ran ${esc(s.ran.join(", "))} for this)</span>`:""}.`:"<b>Change nothing:</b> drive the baseline as it is."}
+      ${isSpr?" Then put the static ride heights back to the baseline with the spring perch offsets.":""} <b>Leave at the baseline:</b> the other ${keepN} settings below${baseNameOf(P)?` (as in <b>${esc(baseNameOf(P))}</b>)`:""}. Pressures, brake bias, TC and ABS are yours to trim.</p>
+    ${off.length?`<p class="warn" style="margin:4px 0;font-size:12px">The open stint isn't set up for this step in ${off.length} setting${off.length>1?"s":""}: ${esc(uniq(off.map(r=>`${r.label} ${r.now} (should be ${r.st==="set"?r.to:r.raw})`)).slice(0,8).join(", "))}${off.length>8?"…":""}. Marked in orange below.</p>`:`<p class="ok" style="margin:4px 0;font-size:12px">The open stint matches this step.</p>`}
+    <div class="sheet" style="margin-top:8px">${sheet}</div></details>`; }
+const baseNameOf = P => P.baseName || "";
 function testProgHTML(run){
   const P=tpGet(run), trk=((run.info.WeekendInfo||{}).TrackDisplayName)||"this track";
   const nt=schedNextTracks(true), tw=schedThisTracks(true), here=((run.info.WeekendInfo||{}).TrackDisplayName||"").toLowerCase(), isHere=x=>here && x.track.toLowerCase().startsWith(here.split(" ")[0]);
@@ -5999,6 +6042,7 @@ function testProgHTML(run){
      <div class="row" style="gap:8px;margin-top:6px"><button id="tprebase2">Make ${esc(setupName(run).name||"this setup")} the baseline</button></div></div>` : "";
   return `<section><h2>Test programme <small>${esc(run.carName)} at ${esc(trk)} · ${doneN} of ${steps.length} done · started ${dt(P.created)}${baseName?` · baseline ${esc(baseName)}`:""}</small></h2>${away}${away?"":other}${away?"":nextNote}${listNote}
    ${next?`<div class="sugg p3" style="margin:0 0 10px"><h3>Next: ${esc(next.label)}</h3><p style="margin:4px 0 0">${next.how} Drive <b>${next.laps} clean laps</b>${next.done?` (${next.done} so far)`:""}.</p></div>`:`<div class="sugg p3" style="margin:0 0 10px"><h3>Programme complete</h3><p style="margin:4px 0 0">Every step is done: the models in this tab now know each of these settings on this car. "What to test next" below shows anything still uncertain.</p></div>`}
+   ${(()=>{ try { return tpSheetHTML(run,P,steps); } catch(e){ console.error("tpsheet",e); return ""; } })()}
    <div class="tablewrap"><table style="font-size:12px"><tr><th></th><th>Step</th><th>What to set</th><th>Clean laps</th><th>Stints found</th></tr>
     ${steps.map(s=>{ const head=s.block!==blk?`<tr><td colspan="5" style="background:rgba(127,127,127,.08);font-weight:700">${esc(s.block)}</td></tr>`:""; blk=s.block;
       return head+`<tr${s===next?' style="background:rgba(80,140,255,.12)"':""}><td><input type="checkbox" class="tpcheck" data-id="${s.id}" ${s.complete?"checked":""} title="${s.manual===undefined?"ticked automatically when the laps are in; click to set it yourself":"set by you; click to change"}"></td>
