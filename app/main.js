@@ -127,7 +127,8 @@ function applyOverlays() {
 const VOICE_OF = { engineer: 'bono', fuel: 'hanna', gp: 'gp' };
 function radioCfg() {
   const r = cfg.settings.radio = cfg.settings.radio || {};
-  if (r.on === undefined) r.on = true; if (r.quiet === undefined) r.quiet = false; if (r.beep === undefined) r.beep = true; if (!(r.rate > 0)) r.rate = 1.05;
+  // voices are off unless you switch them on (Settings → Team radio); once from 0.15.10 an existing install is switched off too
+  if (r.on === undefined || !r.offDefault) { r.on = false; r.offDefault = 1; saveCfg(); } if (r.quiet === undefined) r.quiet = false; if (r.beep === undefined) r.beep = true; if (!(r.rate > 0)) r.rate = 1.05;
   r.who = r.who || {};
   for (const [k, v] of Object.entries({ bono: 'George', hanna: 'Hazel', gp: 'Susan' })) r.who[k] = Object.assign({ on: true, voice: v, vol: 1 }, r.who[k] || {});
   return r;
