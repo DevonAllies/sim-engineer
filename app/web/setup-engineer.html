@@ -791,8 +791,13 @@ function analyze(run){
     const sh=["LF","RF","LR","RR"].filter(c=>ch[c+"shockVel"]);
     // every on-track sample counts here, out laps included: bumps don't depend on tyre temperature
     const onTrack=[]; for (let j=0;j<n;j++) if (ch.Speed[j]>10 && !(ch.OnPitRoad&&ch.OnPitRoad[j]) && !(ch.IsOnTrack&&!ch.IsOnTrack[j])) onTrack.push(j);
+    // kerbs: one side of an axle moving 0.15 m/s faster than the other (a kerb hits one side, a bump both); marked ±0.15 s around each strike
+    const kerb=new Uint8Array(n); let kStrikes=0, kLast=-1e9; const kHz=run.tick||60;
+    if (sh.length===4) for (const j of onTrack){ if (ch.Speed[j]*3.6<60) continue; const a=Math.max(Math.abs(ch.LFshockVel[j]-ch.RFshockVel[j]), Math.abs(ch.LRshockVel[j]-ch.RRshockVel[j]));
+      if (a>0.15){ if (j-kLast>kHz*0.4) kStrikes++; kLast=j; for (let q=Math.max(0,j-Math.round(kHz*0.15)); q<=Math.min(n-1,j+Math.round(kHz*0.15)); q++) kerb[q]=1; } }
+    A.kerbMask = sh.length===4 ? kerb : null;
     for (const j of onTrack){ const v=ch.Speed[j]*3.6;
-      if (v>150 && Math.abs(ch.LatAccel[j])<2 && ch.Brake[j]<0.02 && Math.abs(ch.SteeringWheelAngle[j])<0.05){
+      if (v>150 && !kerb[j] && Math.abs(ch.LatAccel[j])<2 && ch.Brake[j]<0.02 && Math.abs(ch.SteeringWheelAngle[j])<0.05){
         if (sh.length){ let m=0; for (const c of sh) m+=Math.abs(ch[c+"shockVel"][j]); rough.push(m/sh.length*1000); }
         if (ch.VertAccel) vert.push(ch.VertAccel[j]); } }
     const mv=mean(vert), sd = vert.length? Math.sqrt(mean(vert.map(x=>(x-mv)*(x-mv)))) : NaN;
@@ -806,7 +811,10 @@ function analyze(run){
       A.ffb = {clip: k? c/k : NaN, maxNm: ch.SteeringWheelMaxForceNm ? ch.SteeringWheelMaxForceNm[idx[0]||0] : NaN,
                peakNm: pct(nm,.99), p95pct: pct(pc,.95), samples:k};
     }
-    A.surface = {n:rough.length, p90:pct(rough,.9), med:median(rough), vertSd:sd, fastShare: all? fast/all : NaN, slowShare: all? slow/all : NaN};
+    let kOn=0, kAll=0; if (A.kerbMask) for (const j of idx){ if (ch.Speed[j]*3.6<60) continue; kAll++; if (kerb[j]) kOn++; }
+    const lapsN = Math.max(1, (A.rep||[]).length);
+    A.surface = {n:rough.length, p90:pct(rough,.9), med:median(rough), vertSd:sd, fastShare: all? fast/all : NaN, slowShare: all? slow/all : NaN,
+      kerbPct: A.kerbMask && kAll ? kOn/kAll*100 : NaN, kerbPerLap: A.kerbMask ? (()=>{ let s=0, last=-1e9; for (const j of idx){ if (!kerb[j]) continue; if (j-last>kHz*0.4) s++; last=j; } return s/lapsN; })() : NaN};
   }
 
   // ---- bump rubbers: where each corner's rubber engages (shock travel from its no-downforce position ≥ the garage gap),
@@ -2180,6 +2188,10 @@ function drDefs(){ const pk=drPeak();
       f:t=>({brk: t<0.5?0 : t<0.6?pk*seg(t,0.5,0.6) : t<1.8?pk : t<2.0?pk*(1-seg(t,1.8,2.0)) : 0})},
     {id:"trail", name:"Brake: trail off", ch:["brk"], rep:4, reps:3, what:`Peak (${Math.round(pk*100)}%), then bleed the brake off steadily to nothing, like trailing into the apex. Keeps the front loaded on turn-in.`,
       f:t=>({brk: t<0.4?0 : t<0.5?pk*seg(t,0.4,0.5) : t<0.9?pk : t<2.6?pk*(1-ease(seg(t,0.9,2.6))) : 0})},
+    {id:"trailLong", name:"Brake: long trail (slow corners)", ch:["brk"], rep:5, reps:3, what:`Peak, then a long, slow release over about 2.5 s, the last bit of brake held right to the apex. Hairpins and slow corners, where the car needs rotating.`,
+      f:t=>({brk: t<0.4?0 : t<0.5?pk*seg(t,0.4,0.5) : t<0.9?pk : t<3.4?pk*Math.pow(1-seg(t,0.9,3.4),1.6) : 0})},
+    {id:"trailShort", name:"Brake: short trail (fast corners)", ch:["brk"], rep:3, reps:4, what:`A lighter stop (${Math.round(pk*60)}%) and a quick release in under a second. Fast corners, where you only settle the nose before turning in.`,
+      f:t=>({brk: t<0.4?0 : t<0.5?pk*0.6*seg(t,0.4,0.5) : t<0.8?pk*0.6 : t<1.6?pk*0.6*(1-ease(seg(t,0.8,1.6))) : 0})},
     {id:"thrRamp", name:"Throttle: squeeze on", ch:["thr"], rep:4, reps:3, what:"From nothing to full over about two seconds, with no lift and no stab. The exit that doesn't slide.",
       f:t=>({thr: t<0.5?0 : t<2.4?ease(seg(t,0.5,2.4)) : t<3.2?1 : 0})},
     {id:"thrHold", name:"Throttle: hold a part throttle", ch:["thr"], rep:4.5, reps:3, what:"Settle on 35% and hold it dead still (the mid-corner balance throttle), then squeeze to full.",
@@ -2205,6 +2217,72 @@ function drForYou(){ const run=runs[current]; if (!run) return null; if (!run.A)
   return {run:run.short, list:Object.values(hit).sort((a,b)=>b.at.size-a.at.size)}; }
 const drScores = () => PREFS.get("drills", {}) || {};
 const drDev = id => (id||"").replace(/\(.*?\)/g,"").trim() || "device";
+// ---- corner drills: each corner of the open stint, with your fastest pass through it as the target ----
+// A pass runs from 0.6 s before you touch the brake to half a second after full throttle. Steering is turned into wheel rotation
+// (your wheel's degrees, set above), positive = right, like the drills.
+function drCorners(run){
+  if (!run || !run.ch || !run.ch.Brake || !run.ch.SteeringWheelAngle) return [];
+  let A=run.A; if (!A){ try { A=run.A=analyze(run); } catch(e){ return []; } } if (!A || A.error || !A.rep) return [];
+  if (A._drc) return A._drc;
+  let secs=[]; try { secs=cornerSections(run,A); } catch(e){ return A._drc=[]; }
+  const ch=run.ch, hz=run.tick||60, TL=(parseFloat((run.info.WeekendInfo||{}).TrackLength)||0)*1000, dist=j=>ch.LapDist?ch.LapDist[j]:ch.LapDistPct[j]*TL;
+  const out=[];
+  secs.forEach((s,i)=>{ const passes=[];
+    for (const l of A.rep){
+      let j0=-1, j3=-1; for (let j=l.s;j<l.e;j++){ const p=ch.LapDistPct[j]; if (j0<0 && p>=s.b[0]-0.004) j0=j; if (j0>=0 && p>=s.b[3]){ j3=j; break; } }
+      if (j0<0 || j3<=j0) continue;
+      let jb=-1; for (let j=j0;j<=j3;j++) if (ch.Brake[j]>0.08){ jb=j; break; }
+      let apex=j0; for (let j=j0;j<=j3;j++) if (ch.Speed[j]<ch.Speed[apex]) apex=j;
+      let smax=0; for (let j=j0;j<=j3;j++) smax=Math.max(smax, Math.abs(ch.SteeringWheelAngle[j]));
+      let ti=-1; for (let j=j0;j<=apex;j++) if (Math.abs(ch.SteeringWheelAngle[j])>0.33*smax){ ti=j; break; }
+      const start = Math.max(l.s, (jb>=0 ? jb : (ti>=0 ? ti : j0)) - Math.round(0.6*hz));
+      let full=-1; for (let j=apex;j<l.e;j++) if (ch.Throttle[j]>0.95){ full=j; break; }
+      const end = Math.min(l.e-1, (full>=0 ? full : j3) + Math.round(0.5*hz), start+Math.round(9*hz));
+      if (end-start < hz) continue;
+      const tr={t:[], brk:[], thr:[], steer:[]}, rad=d=>d*Math.PI/180;
+      for (let j=start;j<=end;j++){ tr.t.push((j-start)/hz); tr.brk.push(ch.Brake[j]); tr.thr.push(ch.Throttle[j]); tr.steer.push(-ch.SteeringWheelAngle[j]); }   // iRacing: + = left; drills: + = right
+      // the moments that matter, in seconds from the start of the pass
+      const at=j=>j>=0?(j-start)/hz:NaN; let rel=-1, pick=-1, pk=0;
+      for (let j=(jb>=0?jb:start);j<=end;j++) pk=Math.max(pk, ch.Brake[j]);
+      if (jb>=0){ let seenPk=false; for (let j=jb;j<=end;j++){ if (ch.Brake[j]>=0.9*pk) seenPk=true; if (seenPk && ch.Brake[j]<0.05){ rel=j; break; } } }
+      for (let j=apex;j<=end;j++) if (ch.Throttle[j]>0.2 && ch.Brake[j]<0.05){ pick=j; break; }
+      passes.push({lap:l.lap, time:ch.SessionTime[j3]-ch.SessionTime[j0], tr, dur:(end-start)/hz, brkD:jb>=0?dist(jb):NaN, peak:pk,
+        ev:{brake:at(jb), turn:at(ti), release:at(rel), apex:at(apex), pick:at(pick), full:at(full)}, trailT: jb>=0&&rel>=0&&ti>=0 ? (rel-ti)/hz : NaN, vmin:ch.Speed[apex]*3.6, lockMax:smax});
+    }
+    if (passes.length<2) return;
+    const best=passes.reduce((a,b)=>b.time<a.time?b:a), others=passes.filter(p=>p!==best), M=k=>{ const v=others.map(k).filter(Number.isFinite); return v.length?median(v):NaN; };
+    const typ={time:M(p=>p.time), brkD:M(p=>p.brkD), peak:M(p=>p.peak), trailT:M(p=>p.trailT), vmin:M(p=>p.vmin), turn:M(p=>p.ev.turn-p.ev.brake), release:M(p=>p.ev.release-p.ev.brake), pick:M(p=>p.ev.pick-p.ev.brake)};
+    // how your typical pass differs from the best one, in words (the biggest differences first)
+    const d=[], bt=k=>best.ev[k]-best.ev.brake;
+    if (Number.isFinite(typ.brkD-best.brkD) && Math.abs(typ.brkD-best.brkD)>=5) d.push({w:Math.abs(typ.brkD-best.brkD)/10, t:`you brake ${Math.round(Math.abs(typ.brkD-best.brkD))} m ${typ.brkD<best.brkD?"earlier":"later"}`});
+    if (Number.isFinite(typ.peak-best.peak) && Math.abs(typ.peak-best.peak)>=0.06) d.push({w:Math.abs(typ.peak-best.peak)*10, t:`${typ.peak<best.peak?"less":"more"} brake pressure (${Math.round(typ.peak*100)}% vs ${Math.round(best.peak*100)}%)`});
+    if (Number.isFinite(typ.trailT-best.trailT) && Math.abs(typ.trailT-best.trailT)>=0.15) d.push({w:Math.abs(typ.trailT-best.trailT)*5, t: typ.trailT<0.05 ? `off the brake before you turn in (your best trails ${best.trailT.toFixed(1)} s past turn-in)` : `${typ.trailT<best.trailT?"shorter":"longer"} trail after turn-in (${typ.trailT.toFixed(1)} s vs ${best.trailT.toFixed(1)} s)`});
+    if (Number.isFinite(typ.pick-bt("pick")) && Math.abs(typ.pick-bt("pick"))>=0.15) d.push({w:Math.abs(typ.pick-bt("pick"))*4, t:`throttle ${typ.pick>bt("pick")?"later":"earlier"} (${Math.abs(typ.pick-bt("pick")).toFixed(1)} s)`});
+    if (Number.isFinite(typ.vmin-best.vmin) && Math.abs(typ.vmin-best.vmin)>=2) d.push({w:Math.abs(typ.vmin-best.vmin)/3, t:`${Math.round(Math.abs(typ.vmin-best.vmin))} km/h ${typ.vmin<best.vmin?"slower":"faster"} at the apex`});
+    d.sort((a,b)=>b.w-a.w);
+    const shape = best.trailT>=1.2 ? "long trail" : best.trailT>=0.4 ? "medium trail" : Number.isFinite(best.ev.brake) ? "short trail" : "no braking";
+    out.push({n:s.n||i+1, best, typ, loss:typ.time-best.time, n_pass:passes.length, diff:d.map(x=>x.t), shape}); });
+  return A._drc=out; }
+// a drill whose target is a recorded pass (3 reps, a second of rest between)
+function drCornerDef(run, c){
+  const tr=c.best.tr, rot=+PREFS.get("drillRot",540)||540, half=rot/2*Math.PI/180, n=tr.t.length, hz=n>1?1/(tr.t[1]-tr.t[0]):60;
+  const at=(arr,t)=>{ const x=t*hz, i=Math.floor(x); if (i<0) return arr[0]; if (i>=n-1) return arr[n-1]; return arr[i]+(arr[i+1]-arr[i])*(x-i); };
+  const dur=c.best.dur, rest=1;
+  return {id:`corner|${run.carPath}|${learnTrackOf(run)}|${c.n}`, corner:c.n, name:`T${c.n}: your fastest pass`, ch:["brk","steer","thr"], rep:dur+rest, reps:3,
+    what:`Brake, steering and throttle exactly as on your fastest pass through T${c.n} (lap ${c.best.lap}).`,
+    f:t=> t>dur ? {brk:0, thr:0, steer:0} : {brk:at(tr.brk,t), thr:at(tr.thr,t), steer:Math.max(-1, Math.min(1, at(tr.steer,t)/half))}}; }
+function drCornersHTML(){
+  const run=runs[current]; if (!run) return `<section><h3 style="margin:0 0 6px">4. Corner drills</h3><p class="muted" style="margin:4px 0;font-size:13px">Open a stint (or drive one) and every corner of that track becomes a drill: your fastest pass through it is the target.</p></section>`;
+  const C=drCorners(run); if (!C.length) return `<section><h3 style="margin:0 0 6px">4. Corner drills</h3><p class="muted" style="margin:4px 0;font-size:13px">Not enough clean laps in ${esc(run.short)} to build corner drills (two passes through a corner are needed).</p></section>`;
+  const fy=drForYou(), mine=new Set(fy?fy.list.flatMap(x=>[...x.at]):[]), have=["brk","thr","steer"].every(k=>!!drMap()[k]), sc=drScores();
+  const rows=[...C].sort((a,b)=>(b.loss||0)-(a.loss||0)).map(c=>{ const def=drCornerDef(run,c), h=sc[def.id]||[], last=h[h.length-1], best=h.length?Math.max(...h.map(x=>x.s)):null;
+    return `<tr${mine.has("T"+c.n)?' style="background:color-mix(in srgb,var(--accent) 10%,transparent)"':""}><td><b>T${c.n}</b>${mine.has("T"+c.n)?' <span class="badge">for you</span>':""}</td>
+      <td>${Number.isFinite(c.loss)?`${c.loss.toFixed(2)} s`:"–"}</td><td>${esc(c.shape)}${Number.isFinite(c.best.trailT)?` (${c.best.trailT.toFixed(1)} s)`:""}</td>
+      <td style="font-size:12px">${c.diff.length?esc(c.diff.slice(0,3).join("; ")):'<span class="muted">your typical pass is close to your best</span>'}</td>
+      <td style="white-space:nowrap">${last?`<span class="muted" style="font-size:12px">last ${last.s}, best ${best}</span> `:""}<button class="drcorner" data-n="${c.n}" style="padding:2px 10px" ${have?"":"disabled title=\"set up throttle, brake and steering first\""}>Drill</button></td></tr>`; }).join("");
+  return `<section><h3 style="margin:0 0 6px">4. Corner drills <small class="muted" style="font-weight:400">from ${esc(run.short)}: your fastest pass through each corner is the target</small></h3>
+    <div class="tablewrap"><table style="font-size:13px"><tr><th>Corner</th><th>Typical pass loses</th><th>Braking</th><th>Your typical pass against your best</th><th></th></tr>${rows}</table></div>
+    <p class="muted" style="font-size:12px;margin:4px 0">Corners where you lose most are at the top. The drill plays your best pass's brake, steering and throttle: follow it and the score shows how close you get, and whether you're early, late, or too much or too little on each control. Set the wheel rotation above to match your wheel so the steering angles are real.</p></section>`; }
 function renderDrills(){
   const box=$("#drillsbox"); if (!box) return;
   const P=drPads(), m=drMap(), defs=drDefs(), fy=drForYou(), sc=drScores(), rot=+PREFS.get("drillRot", 540)||540;
@@ -2228,6 +2306,7 @@ function renderDrills(){
     ${fy && fy.list.length?`<section><h3 style="margin:0 0 6px">2. For you</h3><p style="margin:4px 0;font-size:13px">From ${esc(fy.run)}: ${fy.list.slice(0,3).map(x=>`<b>${esc(defs.find(d=>d.id===x.id).name)}</b>, because ${esc(x.why)} (${[...x.at].slice(0,5).join(", ")})`).join("; ")}. These are marked below.</p></section>`
       : `<section><h3 style="margin:0 0 6px">2. For you</h3><p class="muted" style="margin:4px 0;font-size:13px">Open a stint (or drive one) and the drills that match where you lose time are marked here. The rest are good for anyone.</p></section>`}
     <section><h3 style="margin:0 0 6px">3. Drills</h3><div class="sheet">${defs.map(card).join("")}</div></section>
+    ${drCornersHTML()}
     <section id="drstage" class="${DR.drill?"":"hidden"}"><h3 id="drtitle" style="margin:0 0 6px"></h3>
       <canvas id="drcv" style="width:100%;height:280px;display:block;background:var(--panel);border:1px solid var(--line);border-radius:8px"></canvas>
       <div id="drmsg" style="margin:8px 0;font-size:14px"></div><div class="row" style="gap:8px"><button class="ghost" id="drstop" style="padding:3px 10px">Stop</button></div></section>`;
@@ -2236,6 +2315,7 @@ function renderDrills(){
     if (b.dataset.k==="steer") c.full=2*c.rest-c.full; else { const r=c.rest; c.rest=c.full; c.full=r; }
     PREFS.set("drillMap", m); renderDrills(); const mm=$("#drcalmsg"); if (mm) mm.innerHTML=`<span class="ok">${DR_NAME[b.dataset.k]} inverted.</span> Check the bar moves the right way.`; });
   document.querySelectorAll(".drgo").forEach(b=>b.onclick=()=>drStart(defs[+b.dataset.i]));
+  document.querySelectorAll(".drcorner").forEach(b=>b.onclick=()=>{ const run=runs[current], c=drCorners(run).find(x=>String(x.n)===b.dataset.n); if (c) drStart(drCornerDef(run,c)); });
   { const r=$("#drrot"); if (r) r.onchange=()=>{ PREFS.set("drillRot", +r.value||540); }; }
   for (const [id,key] of [["drdzb","drillDzB"],["drdzt","drillDzT"]]){ const el=$("#"+id); if (el) el.onchange=()=>{ PREFS.set(key, Math.min(30, Math.max(0, +el.value||0))); }; }
   { const s=$("#drstop"); if (s) s.onclick=()=>{ DR.drill=null; renderDrills(); }; }
@@ -4671,7 +4751,7 @@ function learnRecord(run, A, opts){
     for (const [c,t] of Object.entries(A.endTyres.t)) if (Number.isFinite(t.inner)) rec.tread[c]={i:num(t.inner+off), m:num(t.mid+off), o:num(t.outer+off), p:num(t.hot)}; }
   // the suspension's working conditions: how bumpy, how hard the dampers work per axle, bottoming and kerb slides (the cross-track damper model)
   try { const D=A.damp||{}, ax=cs=>{ const v=cs.filter(c=>D[c]); return v.length?{hs:num(mean(v.map(c=>D[c].hsB+D[c].hsR))), p95:num(mean(v.map(c=>Math.max(D[c].p95B||0,D[c].p95R||0))))}:null; };
-    rec.susp={rough:num(A.surface&&A.surface.vertSd), p90:num(A.surface&&A.surface.p90), F:ax(["LF","RF"]), R:ax(["LR","RR"]), bottom:Array.isArray(A.bottom)?A.bottom.filter(p=>p.hardLaps).length:null, kerbSlides:num(A.osKerb)}; } catch(e){}
+    rec.susp={rough:num(A.surface&&A.surface.vertSd), p90:num(A.surface&&A.surface.p90), F:ax(["LF","RF"]), R:ax(["LR","RR"]), bottom:Array.isArray(A.bottom)?A.bottom.filter(p=>p.hardLaps).length:null, kerbSlides:num(A.osKerb), kerbPct:num(A.surface&&A.surface.kerbPct), kerbPerLap:num(A.surface&&A.surface.kerbPerLap), FnoKerb:num(kerbFree(run,A,"F")), RnoKerb:num(kerbFree(run,A,"R"))}; } catch(e){}
   if (!dry) try { refLapUpdate(run, A, rec); } catch(e){}   // the reference lap: the fastest clean lap you've ever done here
   try { const P=trackProfile(run, A), s=A.surface||{}, len=parseFloat(wi.TrackLength);
     rec.prof={w:Object.fromEntries(Object.entries(P.w).map(([k,v])=>[k,+v.toFixed(3)])), vmax:num(P.vmax), corners:P.corners,
@@ -6056,6 +6136,9 @@ function aeroCrossHTML(run, A, S){
 function dampKeys(vals, ax){ const o={}; for (const [k,v] of Object.entries(vals)){ if (!new RegExp(ax==="F"?"Front|LF|RF":"Rear|LR|RR").test(k) || !/Damp|Shock|Bump|Rebound|Comp/i.test(k)) continue;
     const hs=/HighSpeed|(^|\.)Hs|HS[A-Z]/.test(k), ls=/LowSpeed|(^|\.)Ls|LS[A-Z]/.test(k), comp=/Comp|Bump/i.test(k)&&!/Rubber|Gap/i.test(k), reb=/Reb/i.test(k);
     const id=(hs?"hs":ls?"ls":"")+(comp?"c":reb?"r":""); if (id.length===3) o[id]=v; } return o; }
+// fast-damper share (% of samples at 0.04 m/s or more, the same measure as the table) with the kerb strikes left out
+function kerbFree(run, A, ax){ const K=A.kerbMask, ch=run.ch; if (!K || !A.rep) return NaN; const cs=ax==="F"?["LF","RF"]:["LR","RR"]; if (!cs.every(c=>ch[c+"shockVel"])) return NaN;
+  let hs=0, N=0; for (const l of A.rep) for (let j=l.s;j<l.e;j++){ if (K[j]) continue; N++; for (const c of cs) if (Math.abs(ch[c+"shockVel"][j])>=0.04) hs+=1/cs.length; } return N ? hs/N*100 : NaN; }
 function dampCross(run, A){
   const recs=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.date>=LEARN_CUTOFF && !r.wet && r.laps>=3 && r.susp && Number.isFinite(r.susp.rough) && r.setup);
   const cv=smVals(Object.fromEntries(run.setupFlat.filter(e=>!LEARN_SKIP.test(e.path)).map(e=>[e.path.replace(/^CarSetup\./,""), e.raw])));
@@ -6081,12 +6164,14 @@ function dampCrossHTML(run, A){
   const block=ax=>{ const x=X[ax]; if (!x) return ""; const F=x.F, name=ax==="F"?"Front":"Rear";
     const diff=x.pred-x.typ, best=x.varied.map((k,i)=>({k, b:F.b[1+i], se:F.se[1+i]})).filter(e=>Math.abs(e.b)>2*e.se && /^hs/.test(e.k)).sort((a,b)=>Math.abs(b.b)-Math.abs(a.b))[0];
     const fix=best && diff>2 && best.b<0 ? `${Math.max(1,Math.round(diff/-best.b))} click${Math.round(diff/-best.b)>1?"s":""} more ${DK_LABEL[best.k]} brings it back to your usual` : best && diff<-2 && best.b<0 ? `there's room to soften ${DK_LABEL[best.k]} for more grip over the bumps`
+      : (()=>{ const ex=Math.max(diff, x.now-x.typ), nk=kerbFree(run,A,ax), kp=x.now-nk; return ex>2 && Number.isFinite(kp) && kp>=0.6*ex; })() ? `working ${fmt(Math.max(diff, x.now-x.typ),1)} points harder than usual, and ${x.now-kerbFree(run,A,ax)>=Math.max(diff, x.now-x.typ) ? `all of that is kerbs (they add ${fmt(x.now-kerbFree(run,A,ax),1)} points)` : `${fmt(x.now-kerbFree(run,A,ax),1)} points of that is kerbs`}. That's your line, not the dampers: only go stiffer on high-speed bump if the car is unsettled over the kerbs you need`
       : Math.max(diff, x.now-x.typ)>2 ? `working ${fmt(Math.max(diff, x.now-x.typ),1)} points harder than usual. Rule of thumb: 2 clicks stiffer high-speed bump, both sides. What one click does on this car isn't learned yet (the Dampers steps of the Test programme measure it)`
       : Math.min(diff, x.now-x.typ)<-2 ? `working less than usual: 1–2 clicks softer high-speed bump may give more grip over the bumps (rule of thumb; the click effect isn't learned yet)` : "";
     return `<tr><td><b>${name}</b></td><td>${fmt(x.now,1)}%</td><td>${fmt(x.pred,1)}%</td><td>${fmt(x.typ,1)}%</td><td>${sg(F.b[0],F.se[0],1)}</td>${["hsc","hsr","lsc","lsr"].map(k=>{ const i=x.varied.indexOf(k); return `<td>${i>=0?sg(F.b[1+i],F.se[1+i],2):'<span class="muted">not varied</span>'}</td>`; }).join("")}<td style="font-size:12px">${fix||'<span class="muted">nothing to change</span>'}</td></tr>`; };
   return `<section><h2>Dampers across tracks <small>learned from ${X.n} stints at ${X.tracks} track${X.tracks===1?"":"s"}: how hard the dampers work, by track roughness and your clicks</small></h2>
    <p style="margin:4px 0">This track is <b>${rel>1.15?`${Math.round((rel-1)*100)}% bumpier`:rel<0.87?`${Math.round((1-rel)*100)}% smoother`:"about as bumpy"}</b> than your usual track in this car.</p>
    <div class="tablewrap"><table style="font-size:12px"><tr><th></th><th>Fast-damper share now</th><th>Predicted here</th><th>Your usual</th><th>Per unit of roughness</th>${["hsc","hsr","lsc","lsr"].map(k=>`<th>Per click ${DK_LABEL[k]}</th>`).join("")}<th>Suggestion</th></tr>${block("F")}${block("R")}</table></div>
+   ${A.surface && Number.isFinite(A.surface.kerbPerLap) ? `<p style="margin:6px 0;font-size:13px"><b>Kerbs:</b> about ${Math.round(A.surface.kerbPerLap)} strikes a lap, ${fmt(A.surface.kerbPct,0)}% of the lap on them. With the kerbs taken out the dampers work front ${fmt(kerbFree(run,A,"F"),1)}%, rear ${fmt(kerbFree(run,A,"R"),1)}% (against ${X.F?fmt(X.F.now,1):"–"}% and ${X.R?fmt(X.R.now,1):"–"}% with them). Track roughness is measured on the straights with the kerbs left out.</p>` : ""}
    ${X.kerb?`<p style="margin:6px 0;font-size:13px">Kerb and bump slides: ${fmt(X.kerb.now,1)} per lap now, ${fmt(X.kerb.pred,1)} predicted for this track's roughness with your current rear high-speed clicks.</p>`:""}
    <p class="muted" style="font-size:12px">Fast-damper share = how much of the lap the dampers spend at high shaft speed (bumps and kerbs). A share well above your usual means the tyres are being bounced off the road there: more high-speed bump calms it (at some cost to grip over the kerbs). Bold = the effect is clearly bigger than its ±, grey = not sure yet. Each click effect is learned with the track's roughness taken out, so a bumpy track isn't blamed on a click.</p></section>`;
 }
