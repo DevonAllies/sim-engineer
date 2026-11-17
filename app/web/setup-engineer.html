@@ -194,6 +194,7 @@ tr.chg td{color:var(--ink)}
       <p class="muted" style="font-size:12px;margin:8px 0 0">Each time you leave the pits a new stint starts and appears under Session. The analysis updates every lap. When you drive into the pit lane or back to the garage, the stint ends and the tyre temperatures are read.</p>
     </section>
     <section id="p-schedule" class="panel hidden"><div id="schedbox"><p class="muted">Loading the schedule…</p></div></section>
+    <section id="p-tracks" class="panel hidden"><div id="tracksbox"></div></section>
     <section id="p-settings" class="panel hidden">
       <h2>Settings <small>targets and assumptions</small></h2>
       <div class="settings" id="settings"></div>
@@ -1999,7 +2000,7 @@ const TAB_GROUPS = [
 const AREAS = { tyres:["Tyres","Tyre wear"], aero:["Aero platform","Aero trim","Gearing"], balance:["Balance","Corner entry","Corner exit"], brakes:["Brakes"], dampers:["Dampers","Track"], fuel:["Fuel"] };
 const areaSug = (run,k) => run.sug.filter(s=>AREAS[k].includes(s.area));
 // ---------- sidebar: App panels (always) + Session windows (when a session is selected) ----------
-const PANELS = [["live","Live"],["drivers","Drivers"],["recordings","Recordings"],["schedule","Schedule"],["overlays","Overlays"],["settings","Settings"]];
+const PANELS = [["live","Live"],["drivers","Drivers"],["recordings","Recordings"],["schedule","Schedule"],["tracks","Tracks"],["overlays","Overlays"],["settings","Settings"]];
 // ---------- the iRacing season schedule (parsed from iRacing's season schedule PDF into schedule.json: app/scripts/parse-schedule.js) ----------
 let SCHED=null, SCHED_LOAD=null;
 function schedLoad(){ if (SCHED || SCHED_LOAD) return SCHED_LOAD; SCHED_LOAD=fetch("schedule.json",{cache:"no-store"}).then(r=>r.ok?r.json():null).then(j=>{ SCHED=j||{series:[]}; if (view==="schedule") renderSchedule(); if (view==="learn" && runs.length) render(); return SCHED; }).catch(()=>{ SCHED={series:[]}; }); return SCHED_LOAD; }
@@ -2033,26 +2034,95 @@ function ownedHTML(){ const L=contentLists(), O=owned(), B={t:t=>BASE_TRACKS.som
     <p class="muted" style="font-size:12px;margin:6px 0">Tick what you own. Base content is ticked to start with (the base list is my best knowledge: untick anything that isn't), plus every car and track in your recordings. Saved as soon as you tick. The schedule then shows which races you can enter, and "test for next week" only points at tracks you own.</p>
     <div class="row" style="gap:8px"><button class="ghost" id="ownreset" style="padding:2px 10px">Back to base content + what I've driven</button></div>
     <h4 style="margin:8px 0 0">Tracks</h4>${box("tracks",L.tracks,O.tracks,B.t)}<h4 style="margin:8px 0 0">Cars</h4>${box("cars",L.cars,O.cars,B.c)}</details>`; }
-function schedWeek(s, t){ const ts=t||Date.now(); let cur=null, next=null; for (const w of s.weeks){ const st=Date.parse(w.start+"T00:00:00Z"); if (st<=ts) cur=w; else if (!next) next=w; } return {cur, next}; }
+// iRacing weeks run Tuesday 00:00 UTC → Monday. Weekly series start on the Tuesday; endurance rounds are dated by their race weekend,
+// so each round belongs to the iRacing week (Tuesday → Monday) its date falls in, and only counts as "this week" in that week.
+const DAY=864e5, tueOf=ms=>{ const d=Math.floor(ms/DAY), dow=(d+4)%7; return (d-((dow-2+7)%7))*DAY; };   // 1 Jan 1970 was a Thursday
+function schedWeek(s, t){ const ts=t||Date.now(), now=tueOf(ts), event=s.weeks.some(w=>new Date(w.start+"T00:00:00Z").getUTCDay()!==2); let cur=null, next=null;
+  for (const w of s.weeks){ const st=Date.parse(w.start+"T00:00:00Z"), wt=tueOf(st);
+    if (event){ if (wt===now) cur=w; else if (wt>now && !next) next=w; }
+    else { if (st<=ts) cur=w; else if (!next) next=w; } }
+  return {cur, next}; }
 function schedMine(){ let sel=null; try { sel=PREFS.get("schedSeries"); } catch(e){} const all=(SCHED&&SCHED.series)||[]; return Array.isArray(sel) ? all.filter(s=>sel.includes(s.name)) : all.filter(s=>SCHED_DEFAULT.some(re=>re.test(s.name))); }
 // tracks for next week in your series (the test programme points you there)
-function schedNextTracks(all){ if (!SCHED) { schedLoad(); return []; } const o={}; for (const s of schedMine()){ const {next}=schedWeek(s); if (next && (all || (ownsTrack(next.track) && ownsCarIn(s)))) (o[next.track]=o[next.track]||[]).push(s.name.replace(/ - 2026.*| by .*| 2026.*/,"")); } return Object.entries(o).map(([track,series])=>({track, series})); }
+// which: "next" (default) or "cur" = this week, both from the PC's clock
+function schedNextTracks(all, which){ if (!SCHED) { schedLoad(); return []; } const o={}; for (const s of schedMine()){ const w=schedWeek(s)[which||"next"]; if (w && (all || (ownsTrack(w.track) && ownsCarIn(s)))) (o[w.track]=o[w.track]||{series:[],start:w.start}).series.push(s.name.replace(/ - 2026.*| by .*| 2026.*/,"")); } return Object.entries(o).map(([track,v])=>({track, series:v.series, start:v.start})); }
+const schedThisTracks = all => schedNextTracks(all, "cur");
+// ---------- Tracks: every track you've driven, measured from your stints (bumps, corners, straights, top speed) ----------
+// The track's character comes from every stint there (any car); top speed, best lap and wing from the chosen car.
+// Downforce call (a starting point; your own wing sweep at the track decides): time in fast corners wants downforce,
+// time at full throttle wants less drag. Calibrated on Suzuka (high), Spa / Fuji / Imola (medium), Le Mans / Montreal / Spielberg (low).
+function dfLevel(t){ if (!Number.isFinite(t.full) || !Number.isFinite(t.fastSh)) return null;
+  const i=t.fastSh*100 + 0.4*(t.slowSh||0)*100 - 2.5*t.full*100;
+  return {i, lvl: i>-12 ? "high" : i>-40 ? "medium" : "low"}; }
+function trackTable(car){
+  const g={}; for (const r of Object.values(LEARN||{})) if (r.track && r.date>=LEARN_CUTOFF) (g[r.track]=g[r.track]||[]).push(r);
+  const M=(L,f)=>{ const v=L.map(f).filter(Number.isFinite); return v.length?median(v):NaN; };
+  return Object.entries(g).map(([track,L0])=>{
+    // only full-length laps: a race start or a cut-short lap can leave a "best" of 27 s at Le Mans; judged per car, against that car's usual lap here
+    const ok=new Set(); for (const c of new Set(L0.map(r=>r.car))){ const R=L0.filter(r=>r.car===c), ref=pct(R.map(r=>r.best).filter(Number.isFinite),.75); for (const r of R) if (!Number.isFinite(ref) || (Number.isFinite(r.best) && r.best>=0.85*ref)) ok.add(r); }
+    const L=L0.filter(r=>ok.has(r)); if (!L.length) return null;
+    const P=L.filter(r=>r.prof), mine=L.filter(r=>r.car===car), dry=mine.filter(r=>!r.wet && Number.isFinite(r.best));
+    const t={track, name:(L.find(r=>r.trackName)||{}).trackName||track, n:L.length, nCar:mine.length, cars:new Set(L.map(r=>r.carName||r.car)).size, last:Math.max(...L.map(r=>r.date||0)),
+      rough:M(L,r=>r.prof&&Number.isFinite(r.prof.rough)?r.prof.rough:r.susp?r.susp.rough:NaN), roughN:L.filter(r=>(r.prof&&Number.isFinite(r.prof.rough))||(r.susp&&Number.isFinite(r.susp.rough))).length,
+      full:M(P,r=>r.prof.full), slowN:M(P,r=>r.prof.slowN), fastN:M(P,r=>r.prof.fastN), heavy:M(P,r=>r.prof.heavy), corners:M(P,r=>r.prof.corners), slowSh:M(P,r=>r.prof.slowSh), fastSh:M(P,r=>r.prof.fastSh), len:M(P,r=>r.prof.len),
+      vmax:mine.length?Math.max(...mine.map(r=>r.prof&&Number.isFinite(r.prof.vmax)?r.prof.vmax:r.aero&&Number.isFinite(r.aero.vmax)?r.aero.vmax:-1)):NaN};
+    if (!(t.vmax>0)) t.vmax=NaN;
+    const b=dry.reduce((a,r)=>!a||r.best<a.best?r:a,null); if (b){ t.best=b.best; t.wing=b.aero&&Number.isFinite(b.aero.w)?b.aero.w:NaN; }
+    t.wings=[...new Set(mine.filter(r=>r.aero&&Number.isFinite(r.aero.w)).map(r=>r.aero.w))].sort((a,b)=>a-b);
+    t.df=dfLevel(t); return t; }).filter(Boolean).sort((a,b)=>a.name.localeCompare(b.name)); }
+function renderTracks(){
+  const box=$("#tracksbox"); if (!box) return;
+  if (!LEARN){ box.innerHTML=`<h2>Tracks</h2><p class="muted">Loading your history…</p>`; return; }
+  const cars={}; for (const r of Object.values(LEARN)) if (r.car) cars[r.car]=cars[r.car]||{name:r.carName||r.car, n:0}, cars[r.car].n++;
+  let car=null; try { car=PREFS.get("tracksCar"); } catch(e){}
+  if (!cars[car]) car=(runs[current]&&cars[runs[current].carPath]) ? runs[current].carPath : (Object.entries(cars).sort((a,b)=>b[1].n-a[1].n)[0]||[])[0];
+  const T=trackTable(car), cn=cars[car]?cars[car].name:"";
+  const surf=v=>!Number.isFinite(v)?"–":v<1.0?`<b class="ok">smooth</b>`:v<1.35?`<b class="warn">medium</b>`:`<b class="bad">bumpy</b>`;
+  const DF={high:`<b style="color:var(--us)">high</b>`, medium:`<b class="warn">medium</b>`, low:`<b class="ok">low</b>`};
+  const p=v=>Number.isFinite(v)?Math.round(v*100)+"%":"–", day=ms=>ms?new Date(ms).toLocaleDateString([], {day:"2-digit", month:"short"}):"–";
+  const old=T.filter(t=>!Number.isFinite(t.full)).length;
+  box.innerHTML = `<h2>Tracks <small>measured from your stints: every time you drive a track it's measured again and the numbers update</small></h2>
+   <div class="row" style="align-items:center;gap:10px;margin:0 0 10px"><label class="muted">Top speed, best lap and wing for <select id="trkcar">${Object.entries(cars).sort((a,b)=>b[1].n-a[1].n).map(([k,v])=>`<option value="${esc(k)}" ${k===car?"selected":""}>${esc(v.name)} (${v.n})</option>`).join("")}</select></label></div>
+   ${T.length?`<div class="tablewrap"><table style="font-size:12px"><tr><th>Track</th><th>Length</th><th>Surface</th><th>Corners: slow / fast</th><th>Hard cornering: slow / fast</th><th>Full throttle</th><th>Heavy stops</th><th>Top speed</th><th>Downforce</th><th>Best lap</th><th>Wing</th><th>Stints</th><th>Last</th></tr>
+    ${T.map(t=>`<tr><td><b>${esc(t.name)}</b></td><td>${Number.isFinite(t.len)?fmt(t.len,2)+" km":"–"}</td>
+      <td>${surf(t.rough)} <span class="muted">${fmt(t.rough,2)}</span></td>
+      <td>${Number.isFinite(t.slowN)?`${Math.round(t.slowN)} / ${Math.round(t.fastN)}`:"–"}</td>
+      <td>${Number.isFinite(t.slowSh)?`${p(t.slowSh)} / ${p(t.fastSh)}`:"–"}</td>
+      <td>${p(t.full)}</td><td>${Number.isFinite(t.heavy)?Math.round(t.heavy):"–"}</td>
+      <td>${Number.isFinite(t.vmax)?Math.round(t.vmax)+" km/h":`<span class="muted">not with this car</span>`}</td>
+      <td>${t.df?DF[t.df.lvl]:"–"}</td>
+      <td>${Number.isFinite(t.best)?fmtTime(t.best):"–"}</td>
+      <td>${Number.isFinite(t.wing)?`${fmt(t.wing,1)}${t.wings.length>1?` <span class="muted" style="font-size:11px">(tried ${t.wings.map(w=>fmt(w,1)).join(", ")})</span>`:""}`:"–"}</td>
+      <td>${t.n}${t.nCar!==t.n?` <span class="muted" style="font-size:11px">(${t.nCar} this car)</span>`:""}</td><td>${day(t.last)}</td></tr>`).join("")}</table></div>`:`<p class="muted">No stints yet. Drive, or let the app read your recordings (Learning (dev)).</p>`}
+   ${old?`<p class="muted" style="font-size:12px"><span class="learnstatus"></span> ${old} track${old===1?"":"s"} ${old===1?"has":"have"} no corner and straight figures yet: the app re-reads your recordings in the background to fill them in. Stints whose .ibt you've deleted keep everything else (surface, top speed, best lap, wing); the corner figures come back the next time you drive there.</p>`:""}
+   <ul class="muted" style="font-size:12px;margin:8px 0 0 18px;line-height:1.6">
+    <li><b>Surface</b>: how much the car moves up and down on the straights (vertical acceleration, m/s²): under 1.0 smooth, 1.0–1.35 medium, above that bumpy. Bumpy tracks want softer high-speed bump damping and a little more ride height.</li>
+    <li><b>Corners</b>: braking corners under 125 km/h are slow; fast ones are braking corners and bends above 175 km/h. <b>Hard cornering</b> is the share of the time spent cornering hard that is slow or fast; the rest is medium speed.</li>
+    <li><b>Full throttle</b>: the share of the lap flat out in a straight line. <b>Heavy stops</b>: braking zones that lose more than 80 km/h.</li>
+    <li><b>Downforce</b>: a starting point from the track's shape (time in fast corners vs flat out). Low = less wing for top speed, high = more wing for the fast corners. The <b>wing</b> column is the wing on your fastest dry stint; the wing sweep (Aero tab, at that track) shows what each angle actually did.</li>
+    <li>Surface and corners come from every stint at the track, whatever the car; top speed, best lap and wing are for the car you pick above.</li>
+   </ul>`;
+  const s=$("#trkcar"); if (s) s.onchange=()=>{ try { PREFS.set("tracksCar", s.value); } catch(e){} renderTracks(); };
+}
 function renderSchedule(){
   const box=$("#schedbox"); if (!box) return; if (!SCHED){ schedLoad(); return; }
   const all=SCHED.series||[], mine=schedMine(), carCodes=[...new Set(runs.map(r=>BOP_CODE[r.carPath]).filter(Boolean))], myCode=carCodes[0]||"NSXE22";
   const d=s=>new Date(s+"T12:00:00Z").toLocaleDateString([], {day:"2-digit", month:"short"});
   const stints=track=>Object.values(LEARN||{}).filter(r=>r.trackName && track.toLowerCase().startsWith(r.trackName.toLowerCase().split(" ")[0]) ).length;
-  const row=s=>{ const {cur,next}=schedWeek(s), w=cur||s.weeks[0];
+  const row=s=>{ const {cur,next}=schedWeek(s);
     const bop=x=>x&&x.bop&&x.bop[myCode]?` <span class="muted" style="font-size:11px">${myCode}: ${esc(x.bop[myCode])}</span>`:"";
     const own=x=>x?(ownsTrack(x.track)?' <span class="ok" title="you own this track">✓</span>':' <span class="warn" style="font-size:11px">not owned</span>'):"", car=ownsCarIn(s);
     return `<tr${car?"":' style="opacity:.6"'}><td><b>${esc(s.name.replace(/ - 2026 Season 4| 2026 Season 4| - 2026 Season/,""))}</b><div class="muted" style="font-size:11px">${esc(s.every||"")}${car?"":" · no car you own"}</div></td>
-      <td>${cur?`<b>${esc(cur.track)}</b>${own(cur)}<div class="muted" style="font-size:11px">week ${cur.week} from ${d(cur.start)} · ${esc(cur.length||"")}${cur.simTime?` · sim ${esc(cur.simTime.slice(11))}`:""}</div>${bop(cur)}`:"–"}</td>
+      <td>${cur?`<b>${esc(cur.track)}</b>${own(cur)}<div class="muted" style="font-size:11px">week ${cur.week} from ${d(cur.start)} · ${esc(cur.length||"")}${cur.simTime?` · sim ${esc(cur.simTime.slice(11))}`:""}</div>${bop(cur)}`:'<span class="muted">no round this week</span>'}</td>
       <td>${next?`<b>${esc(next.track)}</b>${own(next)}<div class="muted" style="font-size:11px">week ${next.week} from ${d(next.start)} · ${esc(next.length||"")}</div>${bop(next)}`:'<span class="muted">season ends</span>'}</td></tr>`; };
   const endu=mine.filter(s=>/Endurance|Creventic|Global Endurance/i.test(s.name));
-  const nt=schedNextTracks(), ntAll=schedNextTracks(true), missing=ntAll.filter(x=>!nt.some(y=>y.track===x.track));
-  const sportsAll=all.filter(s=>s.discipline==="SPORTS CAR");
-  box.innerHTML = `<h2>Schedule <small>${esc(SCHED.source||"")} · iRacing weeks start on Tuesday (00:00 UTC)</small></h2>
-   ${nt.length?`<div class="sugg p3" style="margin:0 0 10px"><h3>Test for next week</h3><p style="margin:4px 0 0">${nt.map(x=>`<b>${esc(x.track)}</b> (${esc(x.series.join(", "))})`).join(" · ")}. Open a stint there (Test Drive or a practice) and start the test programme for that track (Learning (dev)).${missing.length?` <span class="muted">Not owned: ${missing.map(x=>esc(x.track)).join(", ")}.</span>`:""}</p></div>`:ntAll.length?`<div class="sugg p1" style="margin:0 0 10px"><h3>Next week</h3><p style="margin:4px 0 0">Your series go to ${ntAll.map(x=>`<b>${esc(x.track)}</b>`).join(", ")}, none of which you own (or no car of yours races there). Tick what you own under "Your cars and tracks".</p></div>`:""}
+  const sportsAll=all.filter(s=>s.discipline==="SPORTS CAR"), today=new Date().toLocaleDateString([], {weekday:"long", day:"numeric", month:"short"});
+  // this week and next week, by the PC's date: what you can race now, and what to test for
+  const wkBox=(title, which, cls)=>{ const own=schedNextTracks(false,which), any=schedNextTracks(true,which), miss=any.filter(x=>!own.some(y=>y.track===x.track)); if (!any.length) return "";
+    const ds=[...new Set(any.map(x=>x.start))].sort().map(s=>d(s)).join(" / ");
+    return `<div class="sugg ${own.length?cls:"p2"}" style="margin:0 0 10px"><h3>${title} <small class="muted" style="font-weight:400">from ${ds}</small></h3><p style="margin:4px 0 0">${own.length?own.map(x=>`<b>${esc(x.track)}</b> (${esc(x.series.join(", "))})`).join(" · ")+(which==="next"?". Open a stint there (Test Drive or a practice) and start the test programme for that track (Learning (dev)).":". Race or practise here now; the test programme for this track is in Learning (dev)."):"None of these tracks are ticked as yours (or no car of yours races there)."}${miss.length?` <span class="muted">Not owned: ${miss.map(x=>esc(x.track)).join(", ")}. Tick them under "Your cars and tracks" if you have them.</span>`:""}</p></div>`; };
+  box.innerHTML = `<h2>Schedule <small>${esc(SCHED.source||"")} · today is ${esc(today)} (your PC's clock) · iRacing weeks start on Tuesday (00:00 UTC)</small></h2>
+   ${wkBox("This week","cur","p1")}${wkBox("Test for next week","next","p3")}
    <div class="tablewrap"><table style="font-size:13px"><tr><th>Series</th><th>This week</th><th>Next week</th></tr>${mine.map(row).join("")||`<tr><td colspan="3" class="muted">Pick your series below.</td></tr>`}</table></div>
    ${endu.length?`<h3 style="margin:14px 0 4px">Endurance rounds</h3><div class="tablewrap"><table style="font-size:12px"><tr><th>Series</th><th>Coming up</th></tr>${endu.map(s=>`<tr><td><b>${esc(s.name.replace(/ - 2026.*| 2026.*/,""))}</b><div class="muted" style="font-size:11px">${esc(s.every||"")}</div></td><td>${s.weeks.filter(w=>Date.parse(w.start+"T23:59:59Z")>=Date.now()-6*864e5).map(w=>`${d(w.start)}: <b>${esc(w.track)}</b> (${esc(w.length||"")})`).join("<br>")||'<span class="muted">none left this season</span>'}</td></tr>`).join("")}</table></div>`:""}
    <h3 style="margin:14px 0 4px">Special events</h3><div class="tablewrap"><table style="font-size:12px"><tr><th>Event</th><th>When</th><th>Track</th><th>Length</th><th>Cars</th></tr>
@@ -2097,6 +2167,7 @@ function showPanels(){
   if (view==="drivers") drawTiming(true);
   $("#p-settings").classList.toggle("hidden", view!=="settings");
   { const p=$("#p-schedule"); if (p){ p.classList.toggle("hidden", view!=="schedule"); if (view==="schedule") renderSchedule(); } }
+  { const p=$("#p-tracks"); if (p){ p.classList.toggle("hidden", view!=="tracks"); if (view==="tracks") renderTracks(); } }
   $("#sessbar").classList.toggle("hidden", !isA || runs.length<2);
 }
 function render(){
@@ -3628,10 +3699,13 @@ function inputsAnalysis(run, A){
       let b5=-1, b90=-1; if (pk>0.3) for (let j=j0;j<=jp;j++){ if (b5<0 && ch.Brake[j]>0.05*pk) b5=j; if (b90<0 && ch.Brake[j]>=0.9*pk){ b90=j; break; } }
       let t1=-1, t2=-1, lifts=0, hi=0; for (let j=ap;j<Math.min(l.e,ex+run.tick*2);j++){ const th=ch.Throttle[j]; if (t1<0 && th>0.1) t1=j; if (t1>=0 && t2<0 && th>0.95) t2=j; if (t1>=0){ if (th>hi) hi=th; else if (hi>0.5 && hi-th>0.15){ lifts++; hi=th; } } }
       let usPk=-9; if (A.us) for (let j=ti;j<=ap;j++) if (Number.isFinite(A.us[j])) usPk=Math.max(usPk, A.us[j]);
-      P.push({wind, tWind, corr:Math.max(0,rev-1) /* one reversal is the normal unwind out of the corner */, brkRise:b5>=0&&b90>b5?(b90-b5)*dt:NaN, thrRamp:t1>=0&&t2>t1?(t2-t1)*dt:NaN, lifts, usPk, v:ch.Speed[ap]*3.6}); }
+      // how hard the wheel pushed back while you wound on lock (share of the wheel's full force, 0–1)
+      let rim=NaN; if (ch.SteeringWheelPctTorque){ let s=0,n=0; for (let j=ti;j<=ap;j++){ s+=Math.abs(ch.SteeringWheelPctTorque[j]); n++; } if (n) rim=Math.min(1,s/n); }
+      P.push({wind, tWind, corr:Math.max(0,rev-1) /* one reversal is the normal unwind out of the corner */, brkRise:b5>=0&&b90>b5?(b90-b5)*dt:NaN, thrRamp:t1>=0&&t2>t1?(t2-t1)*dt:NaN, lifts, usPk, v:ch.Speed[ap]*3.6, rim, lap:l.lap}); }
     if (P.length<2) return null; const md=k=>median(P.map(p=>p[k]).filter(Number.isFinite));
     const L=lim.find(r=>r.n===i+1);
-    return {n:i+1, wind:md("wind"), tWind:md("tWind"), corr:mean(P.map(p=>p.corr)), brkRise:md("brkRise"), thrRamp:md("thrRamp"), lifts:mean(P.map(p=>p.lifts)), spike:P.filter(p=>p.usPk>US_PUSH_BAD).length/P.length, v:md("v"), verdict:L?L.verdict:null}; }).filter(Boolean);
+    return {n:i+1, wind:md("wind"), tWind:md("tWind"), corr:mean(P.map(p=>p.corr)), brkRise:md("brkRise"), thrRamp:md("thrRamp"), lifts:mean(P.map(p=>p.lifts)), spike:P.filter(p=>p.usPk>US_PUSH_BAD).length/P.length, v:md("v"), rim:md("rim"), verdict:L?L.verdict:null,
+      perLap:P.map(p=>({lap:p.lap, tWind:p.tWind}))}; }).filter(Boolean);
   if (!rows.length) return A._inp=null;
   const m=k=>median(rows.map(r=>r[k]).filter(Number.isFinite)), avg=k=>mean(rows.map(r=>r[k]).filter(Number.isFinite));
   const S={tWind:m("tWind"), wind:m("wind"), corr:avg("corr"), brkRise:m("brkRise"), thrRamp:m("thrRamp"), lifts:avg("lifts"), spike:avg("spike"), under:rows.filter(r=>r.verdict==="under").length/rows.length, over:rows.filter(r=>r.verdict==="over").length/rows.length};
@@ -3658,11 +3732,14 @@ function inputsHTML(run, A, S0){
   const heat=[]; if (cold){ heat.push(`<b>Tyres are cold (fronts ${Math.round(TW.front)}°C, window ${TW.lo}–${TW.hi}°C):</b> quicker, more committed inputs are the fastest way to heat them. ${H&&H.F?`On this car the fronts get ${Math.round((H.F.share.corner||0)*100)}% of their heat from cornering load and ${Math.round((H.F.share.brake||0)*100)}% from braking, so carry speed in and brake harder at the start.`:"Brake harder at the start of each zone and carry more speed in."} On the out lap, a few hard stops from speed and quick direction changes at speed do more than gentle weaving.`); }
   else if (hot) heat.push(`<b>Tyres are hot (fronts ${Math.round(TW.front)}°C):</b> smoother inputs keep them in the window: less sliding at turn-in, a slightly gentler first brake, a smoother throttle.`);
   // force feedback: what to change on the wheel to suit this
-  const ffb=[];
-  if (clip) ffb.push(`The wheel <b>clips</b> ${Math.round(F.clip*100)}% of hard cornering: you can't feel the front going, which ${I.steer==="aggressive"?"is part of why the turn-in is too sharp":"hides the limit"}. Raise <b>max force</b> to about ${Number.isFinite(F.peakNm)?Math.ceil(F.peakNm*1.1):"–"} Nm (or Auto).`);
-  if (I.steer==="smooth" && weak) ffb.push(`The forces are light (95% of the time under ${Math.round(F.p95pct*100)}%): a stronger wheel (lower max force, towards ${Number.isFinite(F.peakNm)?Math.ceil(F.peakNm*1.1):"–"} Nm) gives you more to lean on and builds the confidence to turn in harder.`);
+  const ffb=[], FS=(()=>{ try { return ffbStrength(run,A); } catch(e){ return null; } })();
+  if (FS) ffb.push(FS.verdict==="lighter" ? `<b>Wheel strength: lighter.</b> ${FS.heavy.map(h=>h.t.replace(/<[^>]+>/g,"")).slice(0,1).join("")} Raise max force${Number.isFinite(FS.rec)?` to about ${FS.rec} Nm`:""} (higher = lighter). Details in the Force feedback tab.`
+    : FS.verdict==="stronger" ? `<b>Wheel strength: stronger.</b> ${FS.light.map(h=>h.t.replace(/<[^>]+>/g,"")).slice(0,1).join("")} Lower max force${Number.isFinite(FS.rec)?` to about ${FS.rec} Nm`:""}. Details in the Force feedback tab.`
+    : `<b>Wheel strength: keep it.</b> Your turn-in isn't slower in the heavy corners and the front isn't hidden by weak forces.`);
+  if (clip && !FS) ffb.push(`The wheel <b>clips</b> ${Math.round(F.clip*100)}% of hard cornering: you can't feel the front going, which ${I.steer==="aggressive"?"is part of why the turn-in is too sharp":"hides the limit"}. Raise <b>max force</b> to about ${Number.isFinite(F.peakNm)?Math.ceil(F.peakNm*1.1):"–"} Nm (or Auto).`);
+  if (I.steer==="smooth" && weak && !FS) ffb.push(`The forces are light (95% of the time under ${Math.round(F.p95pct*100)}%): a stronger wheel (lower max force, towards ${Number.isFinite(F.peakNm)?Math.ceil(F.peakNm*1.1):"–"} Nm) gives you more to lean on and builds the confidence to turn in harder.`);
   if (I.steer==="busy" || (I.steer==="aggressive" && S.corr>2)) ffb.push(`Lots of small corrections: a little <b>damping</b> in iRacing (10–20%) or the wheel's own damper / smoothing calms the rim. Too much hides the detail, so add a little at a time.`);
-  if (I.steer==="smooth" && !weak && !clip) ffb.push(`The wheel strength looks fine. If the car feels vague at turn-in, lower iRacing's <b>min force</b> only if your wheel has a dead zone around the centre (belt and gear wheels); otherwise leave it at 0.`);
+  if (I.steer==="smooth" && !weak && !clip && FS && FS.verdict==="keep") ffb.push(`If the car feels vague at turn-in, lower iRacing's <b>min force</b> only if your wheel has a dead zone around the centre (belt and gear wheels); otherwise leave it at 0.`);
   return `<section><h2>Your inputs <small>smooth or aggressive, judged by what the car did (${A.rep.length} clean laps, ${I.rows.length} corners)</small></h2>
    <div class="grid" style="margin-bottom:8px"><div class="stat"><div class="k">Steering</div><div class="v sm">${W[I.steer]}</div><div class="s">${fmt(S.tWind,2)} s to wind on lock · ${fmt(S.corr,1)} corrections/corner</div></div>
     <div class="stat"><div class="k">Brake</div><div class="v sm">${W[I.brake]}</div><div class="s">${Number.isFinite(S.brkRise)?Math.round(S.brkRise*1000)+" ms":"–"} to peak pressure</div></div>
@@ -3674,6 +3751,56 @@ function inputsHTML(run, A, S0){
    <div class="tablewrap"><table style="font-size:12px"><tr><th>Corner</th><th>Apex speed</th><th>Wind on lock</th><th>Corrections</th><th>Brake to peak</th><th>Throttle to flat</th><th>Front washes out</th><th>Grip used</th></tr>
     ${I.rows.map(r=>`<tr><td><b>T${r.n}</b></td><td>${fmt(r.v,0)} km/h</td><td style="color:${r.tWind<0.3?"var(--warn)":r.tWind>0.8?"var(--us)":""}">${fmt(r.tWind,2)} s</td><td style="color:${r.corr>2.5?"var(--warn)":""}">${fmt(r.corr,1)}</td><td>${Number.isFinite(r.brkRise)?Math.round(r.brkRise*1000)+" ms":"–"}</td><td>${fmt(r.thrRamp,2)} s</td><td style="color:${r.spike>0.3?"var(--bad)":""}">${Math.round(r.spike*100)}%</td><td>${r.verdict?{under:"under",at:"at the limit",over:"over"}[r.verdict]:"–"}</td></tr>`).join("")}</table></div>
    <p class="muted" style="font-size:12px">Wind on lock = time from the start of the turn-in to the apex steering angle at your quickest steering rate (shorter = more aggressive). Corrections = the wheel reversing by a real amount (a quarter of the corner's lock, at least 12°) while the car is still turning the same way, apart from the normal unwind; direction changes through chicanes don't count. Brake to peak = 5% → 90% of the peak pressure. Throttle to flat = first touch after the apex → 95%. "Too aggressive" only shows when the car paid for it (the front washing out, corrections, lock-ups, exit slides); "too smooth" only when there was grip left. Quick inputs aren't wrong on their own: a GT3 likes a positive turn-in.</p></section>`; }
+// ---------- wheel strength: lighter, stronger, or keep it? judged by how you turned in and what the front did ----------
+// iRacing: a HIGHER max force (Nm) = a LIGHTER wheel. Signs the wheel is too heavy: clipping; you wind on lock more slowly in the
+// corners where it pushes back hardest (after allowing for speed); your turn-in slows down over the stint; more force in your hands
+// than the feel you chose. Signs it's too light: small forces while the front washes out or you correct a lot (you can't feel the limit).
+function ffbStrength(run, A){
+  if (A._ffbS!==undefined) return A._ffbS;
+  const I=inputsAnalysis(run,A), F=A.ffb; if (!I || !F || !Number.isFinite(F.clip)) return A._ffbS=null;
+  const P=ffbPref(), wheel=WHEELS.find(w=>w[0]===P.wheel), wNm=+P.nm||(wheel?wheel[2]:0), feel=FEEL[P.feel||"medium"], S=I.S;
+  const heavy=[], light=[], clip=F.clip>0.05, weak=F.p95pct<0.55, strong=F.p95pct>0.85;
+  if (clip) heavy.push({w:2, t:`The wheel is at full force for <b>${Math.round(F.clip*100)}%</b> of hard cornering. While it clips you can't feel the front start to slide.`});
+  // heavier corners → slower turn-in? tWind = a + b·force + c·speed across corners (speed in, because fast corners load the wheel AND use small, slow inputs)
+  const R=I.rows.filter(r=>Number.isFinite(r.tWind) && Number.isFinite(r.rim) && Number.isFinite(r.v)); let slope=null;
+  if (R.length>=6){ const X=R.map(r=>[1, r.rim, r.v/100]), y=R.map(r=>r.tWind), M=[0,1,2].map(a=>[0,1,2].map(b=>X.reduce((s,x)=>s+x[a]*x[b],0))), bv=[0,1,2].map(a=>X.reduce((s,x,i)=>s+x[a]*y[i],0)), sol=solveSPD(M,bv);
+    if (sol){ const e=y.map((v,i)=>v-X[i].reduce((s,x,j)=>s+x*sol.x[j],0)), s2=e.reduce((s,v)=>s+v*v,0)/Math.max(1,R.length-3), se=Math.sqrt(Math.max(0,s2*sol.diag[1]));
+      const lo=pct(R.map(r=>r.rim),.25), hi=pct(R.map(r=>r.rim),.75);
+      slope={b:sol.x[1]/10, se:se/10, n:R.length, lo, hi, gap:sol.x[1]*(hi-lo)};   // seconds per 10% of full force; gap = heaviest vs lightest corners
+      if (slope.b>0.02 && slope.b>1.5*slope.se && slope.gap>0.06) heavy.push({w:1.5, t:`In the corners where the wheel pushes back hardest (about ${Math.round(hi*100)}% of full force vs ${Math.round(lo*100)}% in the light ones) you take <b>${slope.gap.toFixed(2)} s longer</b> to wind on lock, even after allowing for corner speed (${R.length} corners). That's what a wheel that's physically too heavy looks like.`});
+      else if (slope.b<-0.02 && -slope.b>1.5*slope.se) light.push({w:0.5, t:`You turn in <b>quicker</b> in the corners where the wheel is heavier (${R.length} corners): the extra force seems to help you, not slow you down.`}); } }
+  // fatigue: turn-in time per lap compared with that corner's usual, first third of the stint vs the last third
+  let fat=null; const byLap={}; for (const r of I.rows) for (const p of r.perLap||[]) if (Number.isFinite(p.tWind) && r.tWind>0) (byLap[p.lap]=byLap[p.lap]||[]).push(p.tWind/r.tWind);
+  const laps=Object.keys(byLap).map(Number).sort((a,b)=>a-b).filter(l=>byLap[l].length>=3);
+  if (laps.length>=8){ const k=Math.floor(laps.length/3), early=median(laps.slice(0,k).map(l=>median(byLap[l]))), late=median(laps.slice(-k).map(l=>median(byLap[l])));
+    fat={laps:laps.length, ch:late/early-1};
+    if (fat.ch>0.12) heavy.push({w:1, t:`Your turn-in gets <b>${Math.round(fat.ch*100)}% slower</b> from the start of the stint to the end (${laps.length} laps). Tyre wear can do some of that, but over a long stint it's often tired arms.`}); }
+  // force in your hands vs the feel you chose
+  let rimPk=NaN; if (wNm>0 && Number.isFinite(F.maxNm) && F.maxNm>0 && Number.isFinite(F.peakNm)){ rimPk=Math.min(1,F.peakNm/F.maxNm)*wNm;
+    if (rimPk>feel.nm*1.25) heavy.push({w:1, t:`You get up to <b>${rimPk.toFixed(1)} Nm</b> in your hands, more than the ${feel.l.toLowerCase()} feel you chose (about ${feel.nm} Nm).`});
+    else if (!clip && rimPk<feel.nm*0.6) light.push({w:1, t:`You only get up to <b>${rimPk.toFixed(1)} Nm</b> in your hands, well under the ${feel.l.toLowerCase()} feel you chose (about ${feel.nm} Nm).`}); }
+  if (!clip && strong && I.steer==="smooth") heavy.push({w:1, t:`Your turn-in is slow (${S.tWind.toFixed(2)} s) with grip left over, and the wheel is above ${Math.round(F.p95pct*100)}% of its force 5% of the time: it may be too heavy to turn in quickly.`});
+  if (weak && S.spike>0.3) light.push({w:1.5, t:`The front washes out at turn-in in <b>${Math.round(S.spike*100)}%</b> of corners while the forces stay small (95% of the time under ${Math.round(F.p95pct*100)}%): the wheel goes light when the front lets go, but a small force going a bit lighter is hard to feel.`});
+  if (weak && S.corr>2) light.push({w:1, t:`<b>${S.corr.toFixed(1)} corrections</b> per corner with light forces: a bit more weight steadies your hands.`});
+  if (weak && I.steer==="smooth" && !heavy.length) light.push({w:0.5, t:`Your turn-in is slow and the forces are small: a bit more weight gives you something to lean on.`});
+  const hs=heavy.reduce((s,x)=>s+x.w,0), ls=light.reduce((s,x)=>s+x.w,0), score=hs-ls;
+  const verdict = clip ? "lighter" : score>=1 ? "lighter" : score<=-1 ? "stronger" : "keep";
+  let rec=NaN; const m=F.maxNm, pk=F.peakNm;
+  if (verdict==="lighter") rec = Math.max(Number.isFinite(m)?m*1.15:0, Number.isFinite(pk)?pk*1.1:0) || NaN;
+  else if (verdict==="stronger" && Number.isFinite(m)) rec = Math.max(Number.isFinite(pk)?pk*1.05:0, m*0.85);   // never so strong it clips
+  return A._ffbS={verdict, score, heavy, light, slope, fat, rimPk, rec:Number.isFinite(rec)?Math.round(rec):NaN, maxNm:m}; }
+function ffbStrengthHTML(run, A){
+  const X=ffbStrength(run,A); if (!X) return "";
+  const head = X.verdict==="lighter" ? `<b class="warn">Make the wheel lighter</b>: raise iRacing's max force${Number.isFinite(X.rec)?` from ${fmt(X.maxNm,0)} to about <b>${X.rec} Nm</b>`:""}.`
+    : X.verdict==="stronger" ? `<b style="color:var(--us)">Make the wheel stronger</b>: lower iRacing's max force${Number.isFinite(X.rec)?` from ${fmt(X.maxNm,0)} to about <b>${X.rec} Nm</b>`:""}.`
+    : `<b class="ok">Keep the wheel strength as it is</b>${Number.isFinite(X.maxNm)?` (${fmt(X.maxNm,0)} Nm max force)`:""}: nothing in how you turned in says it's too heavy or too light.`;
+  const li = (a,c) => a.map(x=>`<li style="color:${c}">${x.t}</li>`).join("");
+  return `<section><h2>Lighter or stronger? <small>from your turn-in, the front and the forces in this run</small></h2>
+   <p class="summary">${head}</p>
+   ${X.heavy.length||X.light.length?`<ul style="margin:6px 0 0 18px;line-height:1.6">${X.heavy.length?`<li><b>Too heavy:</b><ul>${li(X.heavy,"inherit")}</ul></li>`:""}${X.light.length?`<li><b>Too light:</b><ul>${li(X.light,"inherit")}</ul></li>`:""}</ul>`:""}
+   ${X.slope&&!X.heavy.some(h=>/pushes back hardest/.test(h.t))&&!X.light.some(h=>/quicker/.test(h.t))?`<p class="muted" style="font-size:12px">Heavy vs light corners: no clear difference in how quickly you wind on lock (${X.slope.n} corners), so the weight isn't holding your hands back.</p>`:""}
+   ${X.fat&&X.fat.ch<=0.12?`<p class="muted" style="font-size:12px">Over the stint (${X.fat.laps} laps) your turn-in ${X.fat.ch<-0.05?"got quicker":"stayed about the same"}: no sign of tiring.</p>`:""}
+   <p class="muted" style="font-size:12px">Remember: in iRacing a <b>higher</b> max force means a <b>lighter</b> wheel. Change it in steps of 10–15%, drive 5 laps, and this check runs again. Force feedback doesn't change the car's grip: a too-heavy wheel slows your hands, a too-light one hides the moment the front lets go. Choose your wheel and feel below so the check also knows how many Nm reach your hands.</p></section>`; }
 function ffbHTML(run, A){
   const F=A.ffb;
   if (!F || !Number.isFinite(F.clip)) return `<section><h2>Force feedback</h2><p class="muted">No steering-force data in this run.</p></section>`;
@@ -3695,7 +3822,10 @@ function ffbHTML(run, A){
     <div class="stat"><div class="k">Wheel max force (iRacing)</div><div class="v">${fmt(F.maxNm,1)} Nm</div><div class="s">the "max force" setting</div></div>
     <div class="stat"><div class="k">Suggested max force</div><div class="v">${Number.isFinite(target)?target+" Nm":"–"}</div><div class="s">peak + 10% headroom</div></div>
    </div>
-   ${clipping||weak ? `<p>${clipping?`Raise iRacing's <b>max force</b> to about <b>${target} Nm</b>, or press <b>Auto</b> in the force feedback settings while driving this car on this track. The wheel will feel lighter overall, but you'll feel the grip again.`:`Lower iRacing's <b>max force</b> towards <b>${target} Nm</b> (or press Auto) to get stronger, more detailed forces.`}</p>` : ""}
+   ${clipping ? `<p>Raise iRacing's <b>max force</b> to about <b>${target} Nm</b>, or press <b>Auto</b> in the force feedback settings while driving this car on this track. The wheel will feel lighter overall, but you'll feel the grip again.</p>` : ""}
+  </section>
+  ${ffbStrengthHTML(run,A)}
+  <section>
    ${per.length?`<h3 style="margin:14px 0 6px">Per corner</h3><div class="tablewrap"><table><tr><th>Corner</th><th>Where</th><th>Time at full force</th></tr>
      ${per.map(p=>`<tr><td>T${p.n}</td><td>${fmt(p.at/1000,2)} km</td><td style="color:${p.clip>0.1?"var(--bad)":p.clip>0.03?"var(--warn)":"var(--good)"}">${fmt(p.clip*100,0)}%</td></tr>`).join("")}</table></div>`:""}
   </section>
@@ -3941,7 +4071,10 @@ function learnRecord(run, A, opts){
   try { const D=A.damp||{}, ax=cs=>{ const v=cs.filter(c=>D[c]); return v.length?{hs:num(mean(v.map(c=>D[c].hsB+D[c].hsR))), p95:num(mean(v.map(c=>Math.max(D[c].p95B||0,D[c].p95R||0))))}:null; };
     rec.susp={rough:num(A.surface&&A.surface.vertSd), p90:num(A.surface&&A.surface.p90), F:ax(["LF","RF"]), R:ax(["LR","RR"]), bottom:Array.isArray(A.bottom)?A.bottom.filter(p=>p.hardLaps).length:null, kerbSlides:num(A.osKerb)}; } catch(e){}
   if (!dry) try { refLapUpdate(run, A, rec); } catch(e){}   // the reference lap: the fastest clean lap you've ever done here
-  try { const P=trackProfile(run, A); rec.prof={w:Object.fromEntries(Object.entries(P.w).map(([k,v])=>[k,+v.toFixed(3)])), vmax:num(P.vmax), corners:P.corners}; } catch(e){}   // lift and coast: where and how long you coast before each braking zone, and what it saves in fuel
+  try { const P=trackProfile(run, A), s=A.surface||{}, len=parseFloat(wi.TrackLength);
+    rec.prof={w:Object.fromEntries(Object.entries(P.w).map(([k,v])=>[k,+v.toFixed(3)])), vmax:num(P.vmax), corners:P.corners,
+      // the Tracks tab: full throttle share, slow / fast corners, heavy stops, how bumpy, and the lap length
+      full:num(P.full), slowN:P.slowN, fastN:P.fastN, heavy:P.heavy, slowSh:num(s.slowShare), fastSh:num(s.fastShare), rough:num(s.vertSd), len:Number.isFinite(len)?len:null}; } catch(e){}   // lift and coast: where and how long you coast before each braking zone, and what it saves in fuel
   if (dry) return rec;
   run.learnedId=rec.id; learnStore.put(rec);
   // push to the team folder: every clean lap (GP's driving comparison) and, for long runs, the stint summary (endurance: fuel, lift and coast, tyre wear)
@@ -4260,12 +4393,13 @@ let LEARN_SCAN=false;
 // 7: grip and tyre temperature per lap, fuel load, tyre age, wet / dry, track profile, time of day (0.14.x)
 // 8: tread temperatures per stint, and the reference lap (fastest clean lap per car + track, with its trace)
 // 9: the speed the at-speed ride heights were measured at, and the suspension summary (cross-track aero and damper models)
-const SCAN_KEY="se.learnFiles9";
+// 10: the track's character per stint (full throttle, slow / fast corners, heavy stops, bumpiness, length) for the Tracks tab
+const SCAN_KEY="se.learnFiles10";
 async function learnScan(statusEl){
   if (LEARN_SCAN || !LEARN) return; LEARN_SCAN=true;
   const say = t => { document.querySelectorAll(".learnstatus").forEach(e=>e.textContent=t); if (statusEl) statusEl.textContent=t; };
   let done={}; try { done=JSON.parse(localStorage.getItem(SCAN_KEY)||"{}"); } catch(e){}
-  let seen={}; for (const k of ["se.learnFiles6","se.learnFiles7","se.learnFiles8"]) try { Object.assign(seen, JSON.parse(localStorage.getItem(k)||"{}")); } catch(e){}   // read by an older version: only refresh stints that are still remembered (never bring back one you forgot)
+  let seen={}; for (const k of ["se.learnFiles6","se.learnFiles7","se.learnFiles8","se.learnFiles9"]) try { Object.assign(seen, JSON.parse(localStorage.getItem(k)||"{}")); } catch(e){}   // read by an older version: only refresh stints that are still remembered (never bring back one you forgot)
   try {
     const d=await (await fetch("/api/files",{cache:"no-store"})).json();
     const files=(d.files||[]).filter(f=>f.size>1500000 && !done[f.name+"|"+f.size]);
@@ -5252,8 +5386,9 @@ function tpStatus(run, P){
   return steps; }
 function testProgHTML(run){
   const P=tpGet(run), trk=((run.info.WeekendInfo||{}).TrackDisplayName)||"this track";
-  const nt=schedNextTracks(), here=((run.info.WeekendInfo||{}).TrackDisplayName||"").toLowerCase(), nextHere=nt.some(x=>here && x.track.toLowerCase().startsWith(here.split(" ")[0]));
-  const nextNote = nt.length ? `<p class="muted" style="margin:4px 0;font-size:12px">${nextHere?`<b class="ok">This is next week's track</b> in ${esc(nt.find(x=>x.track.toLowerCase().startsWith(here.split(" ")[0])).series.join(", "))}.`:`Next week (Schedule): ${nt.map(x=>`<b>${esc(x.track)}</b> (${esc(x.series.join(", "))})`).join(" · ")}. A programme is kept per track: open a stint there to test for next week.`}</p>` : "";
+  const nt=schedNextTracks(), tw=schedThisTracks(), here=((run.info.WeekendInfo||{}).TrackDisplayName||"").toLowerCase(), isHere=x=>here && x.track.toLowerCase().startsWith(here.split(" ")[0]);
+  const hereNext=nt.find(isHere), hereNow=tw.find(isHere), lst=a=>a.map(x=>`<b>${esc(x.track)}</b> (${esc(x.series.join(", "))})`).join(" · ");
+  const nextNote = nt.length||tw.length ? `<p class="muted" style="margin:4px 0;font-size:12px">${hereNow?`<b class="ok">This is this week's track</b> in ${esc(hereNow.series.join(", "))}. `:""}${hereNext?`<b class="ok">This is next week's track</b> in ${esc(hereNext.series.join(", "))}. `:""}${!hereNow&&tw.length?`This week (Schedule): ${lst(tw)}. `:""}${!hereNext&&nt.length?`Next week: ${lst(nt)}. `:""}${!hereNow&&!hereNext?"A programme is kept per track: open a stint there to test.":""}</p>` : "";
   if (!P) return `<section><h2>Test programme <small>one change at a time from a baseline, so the app learns this car properly</small></h2>${nextNote}
     <p style="margin:4px 0">A list of stints to drive: a baseline, then each spring, damper, anti-roll bar and wing change on its own, with exactly what to set and how many clean laps. Each step ticks itself off when a stint with only that change comes in.</p>
     <button id="tpstart">Start a test programme for the ${esc(run.carName)} at ${esc(trk)}, with this stint's setup as the baseline</button></section>`;
