@@ -2135,8 +2135,10 @@ function renderTracks(){
     <li><b>Downforce</b>: a starting point from the track's shape (time in fast corners vs flat out). Low = less wing for top speed, high = more wing for the fast corners. The <b>wing</b> column is the wing on your fastest dry stint; the wing sweep (Aero tab, at that track) shows what each angle actually did.</li>
     <li>Surface and corners come from every stint at the track, whatever the car; top speed, best lap and wing are for the car you pick above.</li>
     <li><b>Best of your GT3s</b>: the GT3s you own (Schedule → Your cars and tracks), rated by how well each car's strengths (straights, slow corners, fast corners, braking, traction, kerbs) match what decides a lap here. An estimate: iRacing's Balance of Performance evens the cars out, and your own lap times beat it.</li>
-   </ul>`;
+   </ul>
+   ${(()=>{ try { return startSetupSection(car); } catch(e){ console.error(e); return `<p class="bad">Starting setup failed: ${esc(e.message)}</p>`; } })()}`;
   const s=$("#trkcar"); if (s) s.onchange=()=>{ try { PREFS.set("tracksCar", s.value); } catch(e){} renderTracks(); };
+  const ss=$("#sstrack"); if (ss) ss.onchange=()=>{ try { PREFS.set("ssTrack", ss.value); } catch(e){} renderTracks(); };
 }
 // ---------- Wind tunnel: the car's aero, learned from your own stints ----------
 // Downforce: measured per stint from how far the suspension compresses at speed (× spring rates), as a coefficient C = N per (100 km/h)²,
@@ -5824,8 +5826,175 @@ function similarSetupHTML(run, A){
   return `<section><h2>Starting setup <small>${here.length} stint${here.length===1?"":"s"} here so far: borrowing from the most similar track</small></h2>
    <p style="margin:4px 0">Most similar track you've driven in this car: <b>${esc(top.name)}</b> (${match}% similar: ${esc(C.slice(1,3).map(c=>c.name).join(", ")||"no others")} next). Your best stint there ran ${fmtTime(top.best.med)} typical on <b>${esc(top.best.setupName||"its setup")}</b>.</p>
    ${diff.length?`<p style="margin:4px 0"><b>To start from it:</b> ${esc(diff.map(c=>c.txt.replace(/ → /," (now) → ")).join("; "))}.</p>`:`<p class="muted">Your setup already matches it.</p>`}
-   <p class="muted" style="font-size:12px">Similar = the same mix of straights, slow, fast and heavy-braking corners, traction zones, kerbs and top speed. It's a starting point: the gearing and the ride heights still need checking for this track's top speed.</p></section>`;
+   <p class="muted" style="font-size:12px">Similar = the same mix of straights, slow, fast and heavy-braking corners, traction zones, kerbs and top speed. It's a starting point: the gearing and the ride heights still need checking for this track's top speed.</p>
+   ${(()=>{ try { const S=startSetup(run.carPath, {id:trk, name:(run.info.WeekendInfo||{}).TrackDisplayName||""}); return S&&S.rows.length?`<p style="margin:6px 0 0"><b>The full model-based starting setup</b> (wing, ride heights at this track's speed, dampers for its bumps, bars toward your balance, pressures) is in <b>Tracks → Starting setup</b>.</p>`:""; } catch(e){ return ""; } })()}</section>`;
 }
+// ================= starting setup from the models: for a car + track, including a track you've never driven =================
+// 1) base: your best setup at the most similar tracks in this car, blended by how alike the tracks are (your own best here counts most)
+// 2) wing: from how much downforce the track wants (your wing at each track against its downforce index)
+// 3) static ride heights: iRacing's max-downforce window at speed + how far this car sinks at this track's speed (aero platform model)
+// 4) dampers: high-speed clicks so the dampers work as hard as on your usual track, given this track's bumps (damper model)
+// 5) anti-roll bar: the balance your similar-track stints had, moved by every setting that differs (setup model), toward your target
+// 6) starting pressures: the hot-pressure window − how much the tyres rise at this track temperature; 7) fuel per lap
+// Everything is per car (and the pressure window per car + track): nothing spills between cars.
+const SS_KEYS=["straight","slow","fast","braking","traction","kerbs"];
+const ssNorm = s => String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+function ssSettings(car, trackId){ return Object.assign({}, PROFILES[car]||PROFILES._default, userSettings, (PREFS.get("car",{})[car])||{}, trackId?(PREFS.get("carTrack",{})[`${car}|${trackId}`])||{}:{}); }
+function ssFmt(raw, x, step){ const m=String(raw).match(/-?\d+(\.\d+)?/); if (!m || /^\d-\d$/.test(String(raw).trim())) return String(raw);
+  const sd=Number.isFinite(step)&&step>0 ? Math.max(0, -Math.floor(Math.log10(step)+1e-9)) : 0, dec=Math.max(m[1]?m[1].length-1:0, Math.min(sd,3));
+  let s=x.toFixed(dec); if (Object.is(+s,-0)) s=(0).toFixed(dec); return String(raw).replace(m[0], s); }
+function ssTargetRecs(track){ return Object.values(LEARN||{}).filter(r=>r.date>=LEARN_CUTOFF && (track.id ? r.track===track.id : r.trackName && sameName(trackBase(track.name), trackBase(r.trackName)))); }
+function startSetup(car, track){
+  if (!LEARN || !car) return null;
+  const all=Object.values(LEARN).filter(r=>r.car===car && r.date>=LEARN_CUTOFF);
+  const hereAny=ssTargetRecs(track), trackId=track.id || (hereAny[0]&&hereAny[0].track) || null, tname=track.name || (hereAny.find(r=>r.trackName)||{}).trackName || trackId || "";
+  const isHere=r=>trackId ? r.track===trackId : hereAny.includes(r);
+  const dryOK=r=>!r.wet && r.laps>=MIN_LAPS && r.setup && Number.isFinite(r.med);
+  // the track's character: measured from your laps here (any car), or the general estimate for a track you haven't driven
+  const measW=L=>{ const P=L.filter(r=>r.prof&&r.prof.w); if (!P.length) return null; const w={}; for (const k of SS_KEYS) w[k]=median(P.map(r=>r.prof.w[k]).filter(Number.isFinite)); return SS_KEYS.every(k=>Number.isFinite(w[k]))?w:null; };
+  const estW=name=>{ const T=TRACK_CHAR.find(([re])=>re.test(ssNorm(name))||re.test(name)); return T?T[1]:null; };
+  const vec=w=>{ const s=SS_KEYS.reduce((a,k)=>a+(w[k]||0),0)||1; return SS_KEYS.map(k=>(w[k]||0)/s); };
+  const vmaxOf=L=>{ const v=L.map(r=>r.prof&&Number.isFinite(r.prof.vmax)?r.prof.vmax:r.aero&&Number.isFinite(r.aero.vmax)?r.aero.vmax:NaN).filter(Number.isFinite); return v.length?median(v):NaN; };
+  const tW=measW(hereAny), measured=!!tW, tw=tW||estW(tname); if (!tw) return {car, tname, trackId, rows:[], none:"track"};
+  const tV=vec(tw), tVmax=vmaxOf(hereAny.filter(r=>r.car===car));
+  // candidate tracks: this car's dry stints, the quickest one per track
+  const by={}; for (const r of all) if (dryOK(r)) (by[r.track]=by[r.track]||[]).push(r);
+  const C=[]; for (const [tk,L] of Object.entries(by)){ const own=trackId?tk===trackId:L.some(isHere), best=L.reduce((a,b)=>b.med<a.med?b:a), nm=(L.find(r=>r.trackName)||{}).trackName||tk;
+    let d; if (own) d=0; else { const LA=Object.values(LEARN).filter(r=>r.track===tk), w=measured?measW(LA):estW(nm); if (!w) continue;
+      d=Math.sqrt(vec(w).reduce((a,v,i)=>a+(v-tV[i])**2,0)); const vm=vmaxOf(L); if (measured && Number.isFinite(tVmax) && Number.isFinite(vm)) d=Math.sqrt(d*d+((vm-tVmax)/300)**2); }
+    C.push({track:tk, name:nm, L, best, d, own, w:own?4:Math.max(0.02, 1-d*2.5)**2, vF:median(L.map(r=>r.aero&&(Number.isFinite(r.aero.vF)?r.aero.vF:Number.isFinite(r.aero.vmax)?r.aero.vmax*0.86:NaN)).filter(Number.isFinite))}); }
+  C.sort((a,b)=>a.d-b.d); const use=C.slice(0,3); if (!use.length) return {car, tname, trackId, rows:[], none:"car"};
+  const W=use.reduce((a,c)=>a+c.w,0);
+  // 1) the blend, setting by setting (raw garage keys; the first track's setup is the template)
+  const steps={}; const stepOf=k=>{ if (steps[k]!==undefined) return steps[k]; const u=[...new Set(all.map(r=>r.setup&&learnNum(r.setup[k])).filter(Number.isFinite).map(v=>+v.toFixed(4)))].sort((a,b)=>a-b);
+    let s=Infinity; for (let i=1;i<u.length;i++) if (u[i]-u[i-1]>1e-4) s=Math.min(s,u[i]-u[i-1]); return steps[k]=Number.isFinite(s)?s:NaN; };
+  // never-changed settings have no known step: round to the garage's own decimals (and pressures, ride heights to a sensible step)
+  const snap=(k,x,ref)=>{ let s=stepOf(k); if (!Number.isFinite(s)){ const m=String((out[k]||{}).raw||tpl[k]||"").match(/-?\d+(\.(\d+))?/); s=/Pressure$/i.test(k)?0.5:/RideHeight$/i.test(k)?0.1:m&&m[2]?10**-m[2].length:1; }
+    return Number.isFinite(ref) ? +(ref+Math.round((x-ref)/s)*s).toFixed(4) : +(Math.round(x/s)*s).toFixed(4); };
+  const tpl=use[0].best.setup, out={};   // out[rawKey] = {v, raw, src, sure, why}
+  for (const k of Object.keys(tpl)){ if (LEARN_SKIP.test(k) || /Dash|Display|Page$/i.test(k)) continue; const P=use.map(c=>({v:learnNum(c.best.setup[k]), w:c.w})).filter(p=>Number.isFinite(p.v)); if (!P.length) continue;
+    const ws=P.reduce((a,p)=>a+p.w,0), m=P.reduce((a,p)=>a+p.v*p.w,0)/ws, v0=learnNum(tpl[k]), v=/^\d-\d$/.test(String(tpl[k]).trim())?v0:snap(k,m,v0);
+    const s=stepOf(k), spread=Math.max(...P.map(p=>p.v))-Math.min(...P.map(p=>p.v)), agree=spread<1e-6 || (Number.isFinite(s) && spread<=s+1e-6);
+    out[k]={v, raw:tpl[k], src:use[0].own&&use[0].w/W>0.6?"your quickest setup here":"blend of your best setups at the similar tracks", sure:use[0].own?"sure":agree?"sure":"estimate"}; }
+  const setK=(k,v,src,sure,why)=>{ if (!out[k]) return; out[k]=Object.assign(out[k],{v:snap(k,v,learnNum(out[k].raw)), src, sure, why, model:true}); };
+  const keysOf=re=>Object.keys(out).filter(k=>re.test(k));
+  const ruleName=(/nordschleife|gesamtstrecke|industriefahrten|\bvln\b/i.test(ssNorm(tname))?"nurburgring ":"")+ssNorm(tname);
+  const S=ssSettings(car, trackId), rule=TRACK_RULES.find(r=>r.re.test(ruleName) && r.car.test(car))||null;
+  // 2) wing: against the downforce index of each track you've driven in this car
+  const T=trackTable(car), tRow=T.find(t=>trackId?t.track===trackId:sameName(trackBase(tname), trackBase(t.name))), wingK=keysOf(/Wing/i).find(k=>!/Gurney|Flap/i.test(k));
+  if (wingK && !(use[0].own && Number.isFinite(learnNum(use[0].best.setup[wingK])))){
+    const P=T.filter(t=>t!==tRow && t.df && Number.isFinite(t.wing)), wv=new Set(P.map(t=>t.wing)).size;
+    if (tRow && tRow.df && P.length>=3 && wv>=2){ const F=fitCentred(P.map(t=>[t.df.i]), P.map(t=>t.wing), [1]);
+      if (F && F.b[0]>0){ const lo=Math.min(...P.map(t=>t.wing)), hi=Math.max(...P.map(t=>t.wing)), x=Math.max(lo-1, Math.min(hi+1, F.f([tRow.df.i])));
+        setK(wingK, x, `${tRow.df.lvl} downforce track: your wing against each track's downforce need (${P.length} tracks)`, F.sigma<1?"sure":"estimate"); } } }
+  const wing=wingK&&out[wingK]?out[wingK].v:NaN;
+  // 3) static ride heights from the aero platform: window at speed + how far it sinks at this track's speed
+  const AW=(PROFILES[car]||{}).aeroWin, rhF=keysOf(/(Front|LF|RF)[A-Za-z]*\.RideHeight$|Front.*RideHeight$/i), rhR=keysOf(/(Rear|LR|RR)[A-Za-z]*\.RideHeight$|Rear.*RideHeight$/i);
+  const vT=(()=>{ const own=hereAny.filter(r=>r.car===car&&r.aero).map(r=>Number.isFinite(r.aero.vF)?r.aero.vF:r.aero.vmax*0.86).filter(Number.isFinite); if (own.length) return {v:median(own), src:"measured here"};
+    const P=use.filter(c=>Number.isFinite(c.vF)); return P.length?{v:P.reduce((a,c)=>a+c.vF*c.w,0)/P.reduce((a,c)=>a+c.w,0), src:"estimated from the similar tracks"}:null; })();
+  const sinkOf=(()=>{ const recs=all.filter(r=>!r.wet && r.laps>=3 && r.aero && ["sF","fA","sR","rA"].every(k=>Number.isFinite(r.aero[k]))); if (recs.length<4) return null;
+    const vOf=a=>Number.isFinite(a.vF)?a.vF:Number.isFinite(a.vmax)?a.vmax*0.86:NaN, kRef={F:median(recs.map(r=>r.aero.kF).filter(v=>v>0)), R:median(recs.map(r=>r.aero.kR).filter(v=>v>0))}, wRef=median(recs.map(r=>r.aero.w).filter(Number.isFinite));
+    const feat=(v,k,w,ax)=>{ const q=(v/100)**2, kk=k>0&&kRef[ax]>0?kRef[ax]/k:1, ww=Number.isFinite(w)&&Number.isFinite(wRef)?w-wRef:0; return [q*kk, q*ww]; }, M={n:recs.length};
+    for (const ax of ["F","R"]){ const P=recs.filter(r=>Number.isFinite(vOf(r.aero))), y=P.map(r=>r.aero["s"+ax]-r.aero[ax==="F"?"fA":"rA"]), X=P.map(r=>feat(vOf(r.aero), r.aero["k"+ax], r.aero.w, ax)); if (P.length<4) continue;
+      const wv=new Set(P.map(r=>r.aero.w)).size>1, F=fitCentred(wv?X:X.map(x=>[x[0]]), y, wv?[50,5]:[50]);
+      M[ax]= F && F.b[0]>0 ? {f:(v,k,w)=>{ const x=feat(v,k,w,ax); return F.f(wv?x:[x[0]]); }, se:F.sigma} : {f:()=>median(y), se:Math.sqrt(mean(y.map(v=>(v-median(y))**2))), flat:true}; }
+    return M; })();
+  if (AW && vT && sinkOf){ const kAx=ax=>{ const v=keysOf(ax==="F"?/(LeftFront|RightFront|LF|RF|Front)[A-Za-z.]*SpringRate$/i:/(LeftRear|RightRear|LR|RR|Rear)[A-Za-z.]*SpringRate$/i).map(k=>out[k].v).filter(Number.isFinite); return v.length?mean(v):NaN; };
+    for (const [ax,keys,win] of [["F",rhF,AW.df.f],["R",rhR,AW.df.r]]){ const M=sinkOf[ax]; if (!M || !keys.length) continue;
+      const sq=M.f(vT.v, kAx(ax), wing), want=(win[0]+win[1])/2+sq, lowest=Math.min(...all.map(r=>r.aero&&r.aero["s"+ax]).filter(Number.isFinite));
+      let x=want, why=""; if (rule && x<rule.minRH){ x=rule.minRH; why=`raised to the ${rule.minRH} mm minimum here`; }
+      if (Number.isFinite(lowest) && x<lowest-0.5){ x=lowest; why=why||"the lowest you've run in this car (the garage may stop you going lower)"; }
+      for (const k of keys) setK(k, x, `iRacing's max-downforce window (${win[0]}–${win[1]} mm at speed) + ${fmt(sq,1)} mm it sinks at ${Math.round(vT.v)} km/h (${vT.src})${M.flat?", resting on the bump rubbers at speed":""}`, vT.src==="measured here"&&M.se<2?"sure":"estimate", why); } }
+  else if (rule) for (const k of [...rhF,...rhR]) if (out[k].v<rule.minRH) setK(k, rule.minRH, `the ${rule.minRH} mm minimum here`, "sure");
+  // the splitter height follows from the front ride height and rake in the garage: only a check
+  for (const k of keysOf(/SplitterHeight$/i)){ const mn=Math.max(rule?rule.minRH:0, +S.minSplitter||0);
+    if (rule && out[k].v<rule.minRH) setK(k, rule.minRH, `the ${rule.minRH} mm minimum here`, "sure");
+    else Object.assign(out[k], {src:`follows from the ride heights: check it reads ${mn?`${mn} mm or more`:"legal"} in the garage`, sure:"estimate"}); }
+  // 4) dampers: this track's bumps against your usual, with the clicks' learned effect on how hard the dampers work
+  const rough=(()=>{ const v=hereAny.map(r=>r.prof&&Number.isFinite(r.prof.rough)?r.prof.rough:r.susp?r.susp.rough:NaN).filter(Number.isFinite); return v.length?median(v):NaN; })();
+  const dampTxt=[]; if (Number.isFinite(rough)){ const recs=all.filter(r=>!r.wet && r.laps>=3 && r.susp && Number.isFinite(r.susp.rough) && r.setup);
+    const nk=Object.keys(out).reduce((o,k)=>{ (o[learnNorm(k)]=o[learnNorm(k)]||[]).push(k); return o; },{}), nv=Object.fromEntries(Object.entries(nk).map(([n,ks])=>[n,mean(ks.map(k=>out[k].v))]));
+    for (const ax of ["F","R"]){ const P=recs.filter(r=>r.susp[ax] && Number.isFinite(r.susp[ax].hs)); if (P.length<5) continue;
+      const varied=["hsc","hsr","lsc","lsr"].filter(k=>new Set(P.map(r=>dampKeys(smVals(r.setup),ax)[k])).size>1);
+      const F=fitCentred(P.map(r=>{ const d=dampKeys(smVals(r.setup),ax); return [r.susp.rough, ...varied.map(k=>Number.isFinite(d[k])?d[k]:0)]; }), P.map(r=>r.susp[ax].hs*100), [20, ...varied.map(()=>1.5)]); if (!F) continue;
+      const cd=dampKeys(nv,ax), typ=median(P.map(r=>r.susp[ax].hs*100)), pred=F.f([rough, ...varied.map(k=>Number.isFinite(cd[k])?cd[k]:0)]), diff=pred-typ;
+      const best=varied.map((k,i)=>({k, b:F.b[1+i], se:F.se[1+i]})).filter(e=>/^hs/.test(e.k) && Math.abs(e.b)>2*e.se).sort((a,b)=>Math.abs(b.b)-Math.abs(a.b))[0];
+      if (best && Math.abs(diff)>2){ const dc=Math.max(-4, Math.min(4, Math.round(-diff/best.b))); if (!dc) continue;
+        const norm=Object.keys(nv).find(n=>dampKeys({[n]:1},ax)[best.k]!==undefined);
+        if (norm) for (const k of nk[norm]) setK(k, out[k].v+dc, `${diff>0?"bumpier":"smoother"} than your usual track: the ${ax==="F"?"front":"rear"} dampers would work ${Math.abs(diff).toFixed(1)} points ${diff>0?"harder":"less"} than usual (damper model, ${P.length} stints)`, "estimate");
+        dampTxt.push(ax); } } }
+  // 5) anti-roll bar toward your balance target, from the balance of your similar-track stints and the setup model
+  const SM=setupModel(car); let bal=null;
+  if (SM && SM.eff.mid){ const E=SM.eff.mid, nvals=smVals(Object.fromEntries(Object.entries(out).map(([k,o])=>[k,String(o.v)])));
+    const predFor=(r)=>{ const vi=smVals(r.setup); let p=r.bal&&Number.isFinite(r.bal.mid)?r.bal.mid:NaN; if (!Number.isFinite(p)) return NaN;
+      SM.cols.forEach((c,j)=>{ if (c.cov) return; const a=nvals[c.c.k], b=vi[c.c.k]; if (Number.isFinite(a)&&Number.isFinite(b)) p+=E.b[j]*(a-b)/c.c.step; }); return p; };
+    const P=use.map(c=>({p:predFor(c.best), w:c.w})).filter(x=>Number.isFinite(x.p));
+    if (P.length){ const exp=P.reduce((a,x)=>a+x.p*x.w,0)/P.reduce((a,x)=>a+x.w,0), tgt=(US_BASE.loose+US_BASE.push)/2;
+      bal={exp, tgt, after:exp};
+      const arb=SM.cols.map((c,j)=>({c,j})).filter(({c})=>!c.cov && SM_PRIOR.some(([re])=>re.test(c.c.k))).map(({c,j})=>({c, b:E.b[j], se:E.se[j]})).filter(x=>Math.abs(x.b)>0.05).sort((a,b)=>Math.abs(b.b)/(b.se||1)-Math.abs(a.b)/(a.se||1))[0];
+      if (arb && Math.abs(exp-tgt)>0.4){ const lim=measured?3:2, n=Math.max(-lim, Math.min(lim, Math.round((tgt-exp)/arb.b)));   // a track you haven't driven: at most 2 steps on a guess
+        if (n){ const ks=Object.keys(out).filter(k=>learnNorm(k)===arb.c.k); for (const k of ks) setK(k, out[k].v+n*arb.c.step, `the similar tracks' balance (${exp>=0?"+":"−"}${Math.abs(exp).toFixed(1)}° mid-corner understeer with this setup) toward your target (${tgt>=0?"+":"−"}${Math.abs(tgt).toFixed(1)}°): ${Math.abs(n)} step${Math.abs(n)>1?"s":""} ${n*arb.b>0?"towards understeer":"towards rotation"}`, Math.abs(arb.b)>2*arb.se?"estimate":"guess");
+          bal.after=exp+n*arb.b; bal.arb=arb.c.label; bal.n=n; } } } }
+  // 6) starting pressures: the middle of your hot window minus how much the tyres rise at this track temperature
+  const tT=(()=>{ const v=hereAny.map(r=>r.trackT).filter(Number.isFinite); if (v.length) return {t:median(v), src:"your sessions here"}; const a=all.map(r=>r.trackT).filter(Number.isFinite); return a.length?{t:median(a), src:"your usual track temperature (none measured here yet)"}:null; })();
+  if (tT && Number.isFinite(S.hotMin) && Number.isFinite(S.hotMax)) for (const ax of ["F","R"]){
+    const cs=ax==="F"?["LF","RF"]:["LR","RR"], P=all.filter(r=>!r.wet && r.tyreT && Number.isFinite(r.tyreT["sP"+ax]) && r.tread && cs.every(c=>r.tread[c]&&Number.isFinite(r.tread[c].p)) && Number.isFinite(r.trackT) && r.laps>=3)
+      .map(r=>({T:r.trackT, y:mean(cs.map(c=>r.tread[c].p))-r.tyreT["sP"+ax]})); if (P.length<3) continue;
+    const spread=Math.max(...P.map(p=>p.T))-Math.min(...P.map(p=>p.T)), F=spread>=5?fitCentred(P.map(p=>[p.T]), P.map(p=>p.y), [3]):null, rise=F&&F.b[0]>0?F.f([tT.t]):median(P.map(p=>p.y));
+    let x=(S.hotMin+S.hotMax)/2-rise, why=""; if (Number.isFinite(+S.minPress) && x<+S.minPress){ x=+S.minPress; why=`the ${S.minPress} kPa minimum`; }
+    for (const k of keysOf(new RegExp(`(${ax==="F"?"LeftFront|RightFront":"LeftRear|RightRear"}).*(StartingPressure|ColdPressure)$`,"i")).filter(k=>!/Last/i.test(k)))
+      setK(k, x, `hot window ${S.hotMin}–${S.hotMax} kPa − ${fmt(rise,0)} kPa rise at ${Math.round(tT.t)}°C track (${tT.src}; ${P.length} stints)`, P.length>=6?"sure":"estimate", why); }
+  // 7) fuel per lap: measured here, else this car's fuel per km × the lap length
+  const fuel=(()=>{ const own=hereAny.filter(r=>r.car===car&&Number.isFinite(r.fuel)&&r.fuel>0).map(r=>r.fuel); if (own.length) return {l:median(own), src:"measured here"};
+    const len=median(hereAny.map(r=>r.prof&&r.prof.len).filter(v=>v>0)), pk=all.filter(r=>r.fuel>0 && r.prof && r.prof.len>0).map(r=>r.fuel/r.prof.len);
+    return Number.isFinite(len)&&pk.length?{l:median(pk)*len, src:`your ${fmt(median(pk),2)} L per km in this car × ${fmt(len,2)} km`}:null; })();
+  const tank=median(all.map(r=>r.tankL).filter(v=>v>0));
+  // what to check on the first laps
+  const check=["Drive 2–3 laps, then look at Aero → ride height at speed: the platform model is checked against the real thing.",
+    "The balance after 5 clean laps (Balance tab) before changing the bars: the first laps are you learning the track.",
+    "Hot pressures after 3–4 laps against your window.",
+    ...(Number.isFinite(tVmax)||vT?[`Gearing: top gear should just reach the end of the longest straight${Number.isFinite(tVmax)?` (${Math.round(tVmax)} km/h measured)`:""}.`]:["Gearing: unknown top speed here, check top gear on the longest straight."]),
+    ...(rule?[rule.note]:[])];
+  const rows=Object.entries(out).filter(([k])=>!SM_DERIVED.test(learnNorm(k)) || /RideHeight$/i.test(k) || /SplitterHeight$/i.test(k));
+  return {car, tname, trackId, measured, use, W, out, rows, bal, fuel, tank, check, rough, tT, rule, vT, S}; }
+// starting setup table; with a run, the "now" column shows your current setup
+function startSetupHTML(car, track, run){
+  const X=startSetup(car, track); if (!X) return "";
+  const cn=(Object.values(LEARN||{}).find(r=>r.car===car&&r.carName)||{}).carName||car;
+  if (!X.rows.length) return `<p class="muted">${X.none==="track"?`I don't know ${esc(X.tname||"this track")}'s character yet: drive a few laps there in any car and it's measured.`:`No dry stints of ${MIN_LAPS}+ clean laps in the ${esc(cn)} yet: the starting setup is built from your best setups at other tracks.`}</p>`;
+  const cur={}; if (run) for (const e of run.setupFlat) if (!LEARN_SKIP.test(e.path)) cur[e.path.replace(/^CarSetup\./,"")]=e.raw.trim();
+  // left and right together when they're the same
+  const G={}; for (const [k,o] of X.rows){ const n=learnNorm(k); (G[n]=G[n]||{n, label:learnLabel(k), keys:[], o}).keys.push(k); }
+  const val=k=>ssFmt(X.out[k].raw, X.out[k].v, NaN);
+  const L=Object.values(G).map(g=>{ const vs=[...new Set(g.keys.map(val))], now=run?[...new Set(g.keys.map(k=>cur[k]).filter(Boolean))]:[];
+    const side=k=>(k.match(/(Left|Right)(Front|Rear)/)||[])[0], txt=vs.length===1?vs[0]:g.keys.map(k=>`${(side(k)||"").replace("Left","L").replace("Right","R").replace("Front","F").replace("Rear","R")} ${val(k)}`).join(" · ");
+    const changed=run && now.length && (now.length!==vs.length || now.some((v,i)=>Math.abs(learnNum(v)-learnNum(vs[i]))>1e-6));
+    return {g, txt, now:now.join(" · "), changed, model:!!g.o.model, sure:g.keys.map(k=>X.out[k].sure).reduce((a,s)=>({sure:0,estimate:1,guess:2}[s]>{sure:0,estimate:1,guess:2}[a]?s:a),"sure"), src:g.o.src, why:g.o.why}; })
+    .sort((a,b)=>(b.model-a.model) || a.g.label.localeCompare(b.g.label, undefined, {sensitivity:"base"}));
+  for (const r of L) r.g.label=r.g.label.replace(/^./,c=>c.toUpperCase());
+  const SC={sure:`<span class="ok">sure</span>`, estimate:`<span class="warn">estimate</span>`, guess:`<span class="bad">guess</span>`};
+  const sims=X.use.map(c=>`${esc(c.name)}${c.own?" (here)":` ${Math.max(0,Math.round(100-c.d*250))}%`} <span class="muted">${Math.round(c.w/X.W*100)}% weight, ${fmtTime(c.best.med)} typical</span>`).join(" · ");
+  return `<p style="margin:4px 0">${esc(cn)} at <b>${esc(X.tname)}</b>: built from ${sims}. Track character ${X.measured?"measured from your laps there":"estimated (you haven't driven it yet)"}${Number.isFinite(X.rough)?`, surface ${X.rough<1?"smooth":X.rough<1.35?"medium":"bumpy"}`:""}.</p>
+   <div class="tablewrap"><table style="font-size:12px"><tr><th>Setting</th><th>Start with</th>${run?"<th>Now</th>":""}<th>Where it comes from</th><th>How sure</th></tr>
+    ${L.map(r=>`<tr${r.model?' style="background:rgba(80,140,255,.08)"':""}><td><b>${esc(r.g.label)}</b></td><td><b>${esc(r.txt)}</b></td>${run?`<td class="${r.changed?"warn":"muted"}">${esc(r.now||"–")}</td>`:""}<td style="font-size:11px">${esc(r.src)}${r.why?` <span class="warn">(${esc(r.why)})</span>`:""}</td><td>${SC[r.sure]}</td></tr>`).join("")}</table></div>
+   ${X.bal?`<p style="margin:6px 0;font-size:13px">Expected mid-corner balance: <b>${X.bal.after>=0?"+":"−"}${Math.abs(X.bal.after).toFixed(1)}°</b> (your target ${X.bal.tgt>=0?"+":"−"}${Math.abs(X.bal.tgt).toFixed(1)}°)${X.bal.arb?`, after ${esc(X.bal.arb)} ${X.bal.n>0?"+":"−"}${Math.abs(X.bal.n)}`:""}. + is understeer.</p>`:""}
+   ${X.fuel?`<p style="margin:6px 0;font-size:13px">Fuel: about <b>${fmt(X.fuel.l,2)} L a lap</b> (${esc(X.fuel.src)})${X.tank>0?`, a full tank (${fmt(X.tank,0)} L) lasts about ${Math.floor(X.tank/X.fuel.l)} laps`:""}. The Strategy tab works out the race fuel once you've driven.</p>`:""}
+   <p style="margin:6px 0 2px"><b>Check first</b></p><ul style="margin:0 0 6px 18px;font-size:12px">${X.check.map(c=>`<li>${esc(c)}</li>`).join("")}</ul>
+   <p class="muted" style="font-size:12px">Blue rows were moved by a model; the rest come from your best setups at the most similar tracks, weighted by how alike they are (your own quickest setup here counts most when you have one). <b>Sure</b> = the tracks agree or the model is well measured, <b>estimate</b> = one model with some spread, <b>guess</b> = little data. Values you've never changed on this car stay as you've always run them. Type these into the garage yourself; the app never writes setup files. The more stints you drive, the better every model gets.</p>`; }
+function startSetupSection(car){
+  const T=trackTable(car), opts=[], seen=new Set();
+  const add=(v,l,g)=>{ if (seen.has(v)) return; seen.add(v); opts.push({v,l,g}); };
+  try { for (const x of schedThisTracks(true)) add("n:"+x.track, x.track, "This week"); for (const x of schedNextTracks(true,"next")) add("n:"+x.track, x.track, "Next week"); } catch(e){}
+  for (const t of T) add("i:"+t.track, t.name, "Tracks you've driven");
+  if (!opts.length) return "";
+  let sel=null; try { sel=PREFS.get("ssTrack"); } catch(e){} if (!opts.some(o=>o.v===sel)) sel=opts[0].v;
+  const o=opts.find(x=>x.v===sel), track=sel.startsWith("i:")?{id:sel.slice(2), name:o.l}:{name:o.l};
+  // a scheduled track you've driven: use its measured id
+  if (!track.id){ const t=T.find(t=>sameName(trackBase(o.l), trackBase(t.name))); if (t) track.id=t.track; }
+  const groups=[...new Set(opts.map(x=>x.g))];
+  return `<h2 style="margin-top:18px">Starting setup <small>built from your models for this car at a track: a good first setup, even at a track you haven't driven</small></h2>
+   <div class="row" style="align-items:center;gap:10px;margin:0 0 8px"><label class="muted">Track <select id="sstrack">${groups.map(g=>`<optgroup label="${esc(g)}">${opts.filter(x=>x.g===g).map(x=>`<option value="${esc(x.v)}" ${x.v===sel?"selected":""}>${esc(x.l)}</option>`).join("")}</optgroup>`).join("")}</select></label></div>
+   ${startSetupHTML(car, track, null)}`; }
 // --- which stints the tyre and fuel models learn from: a time range up to this stint, this track or every track (your choice, remembered) ---
 let MR=null;
 function modelRange(){ if (!MR){ MR={days:"season", track:"all"}; try { Object.assign(MR, PREFS.get("modelRange")||{}); } catch(e){} } return MR; }
