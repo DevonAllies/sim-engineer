@@ -5890,7 +5890,8 @@ const TP_LAPS=5;
 const tpKey = run => `testprog|${run.carPath}|${learnTrackOf(run)}`;
 function tpGet(run){ try { return PREFS.get(tpKey(run))||null; } catch(e){ return null; } }
 function tpSet(run, P){ try { PREFS.set(tpKey(run), P); } catch(e){} }
-const tpSetup = run => Object.fromEntries(run.setupFlat.filter(e=>!LEARN_SKIP.test(e.path) && Number.isFinite(learnNum(e.raw))).map(e=>[e.path.replace(/^CarSetup\./,""), e.raw.trim()]));
+const tpSetup = run => tpSetupFlat(run.setupFlat);
+const tpSetupFlat = flat => Object.fromEntries(flat.filter(e=>!LEARN_SKIP.test(e.path) && Number.isFinite(learnNum(e.raw))).map(e=>[e.path.replace(/^CarSetup\./,""), e.raw.trim()]));
 // what differs from the baseline (left and right together; static ride height and perch offsets don't count: you put those back after a spring change)
 // (in-car settings, brake bias, TC, ABS, and the fuel load never stop a stint counting: you change those from the cockpit;
 //  nor do starting pressures: you trim them every stint to keep the hot pressures in the window, as the app suggests)
@@ -5984,7 +5985,8 @@ function tpTarget(run, s, path, baseRaw){
   return baseRaw; }
 function tpSheetHTML(run, P, steps){
   const s=steps.find(x=>x.id===TP_SHOW) || steps.find(x=>!x.complete) || steps[steps.length-1]; if (!s || !P.base) return "";
-  const cur=tpSetup(run), isSpr=/^spr/.test(s.id)||s.id==="sprApp";
+  const w=liveWhere(), lcs=LIVE.connected && w && liveMatches(run,w) && LIVE.meta && LIVE.meta.info && LIVE.meta.info.CarSetup;
+  const cur=lcs ? tpSetupFlat(flatten(lcs,"CarSetup")) : tpSetup(run), src=lcs?"garage now":"this stint", isSpr=/^spr/.test(s.id)||s.id==="sprApp";
   const rows=Object.entries(P.base).filter(([path])=>!SM_DERIVED.test(learnNorm(path)) || /PerchOffset/i.test(path)).map(([path,raw])=>{ const k=learnNorm(path), key=path.split(".").pop(); raw=String(raw).trim();
     let st="keep", to=raw, note="";
     if (s.kind!=="base" && s.re && s.re.test(k)){ st="set"; to=tpTarget(run,s,path,raw); }
@@ -6003,14 +6005,14 @@ function tpSheetHTML(run, P, steps){
   const sheet=groups.map(g=>{ const n=g.rows.filter(r=>r.st==="set"||r.st==="back"||r.st==="adjust").length; let h="";
     if (g.tab!==lastTab){ h+=`<div class="sheettab">${g.tab==="TiresAero"?"Tires & Aero":esc(g.tab)}</div>`; lastTab=g.tab; }
     return h+`<div class="gcard ${n?"has":""}"><div class="gtitle">${pretty(g.name)}${n?` <span class="badge">${n}</span>`:""}</div><table>${g.rows.map(r=>`<tr class="${r.st==="set"||r.st==="back"||r.st==="adjust"?"chg":""}"><td>${pretty(r.key)}${r.note?`<div class="muted" style="font-size:11px">${esc(r.note)}</div>`:""}</td><td>${
-      r.st==="set"?`<span class="old">${esc(r.raw)}</span> <span class="new">${esc(r.to)}</span>`:r.st==="free"?`<span class="muted">${esc(r.raw)}</span>`:esc(r.raw)}${r.off?`<div class="warn" style="font-size:11px">this stint: ${esc(r.now)}</div>`:""}</td></tr>`).join("")}</table></div>`; }).join("");
+      r.st==="set"?`<span class="old">${esc(r.raw)}</span> <span class="new">${esc(r.to)}</span>`:r.st==="free"?`<span class="muted">${esc(r.raw)}</span>`:esc(r.raw)}${r.off?`<div class="warn" style="font-size:11px">${src}: ${esc(r.now)}</div>`:""}</td></tr>`).join("")}</table></div>`; }).join("");
   const set=rows.filter(r=>r.st==="set"), keepN=rows.filter(r=>r.st==="keep").length, off=rows.filter(r=>r.off);
   const uniq=a=>a.filter((v,i,x)=>x.indexOf(v)===i);
   return `<details id="tpsheet" ${TP_SHEET_OPEN?"open":""} style="margin:0 0 10px"><summary><b>Garage for this step</b> <span class="muted" style="font-size:12px">what to change and what stays at the baseline</span></summary>
     <div class="row" style="gap:8px;align-items:center;margin:8px 0">Show the garage for <select id="tpshow">${steps.map(x=>`<option value="${x.id}"${x===s?" selected":""}>${esc(x.block)}: ${esc(x.label)}${x.complete?" ✓":""}</option>`).join("")}</select></div>
     <p style="margin:4px 0;font-size:13px">${set.length?`<b>Change:</b> ${esc(uniq(set.map(r=>`${learnLabel(r.path)} ${r.raw} → ${r.to}`)).join("; "))}${s.ran&&s.ran.length?` <span class="ok">(you ran ${esc(s.ran.join(", "))} for this)</span>`:""}.`:"<b>Change nothing:</b> drive the baseline as it is."}
       ${isSpr?" Then put the static ride heights back to the baseline with the spring perch offsets.":""} <b>Leave at the baseline:</b> the other ${keepN} settings below${baseNameOf(P)?` (as in <b>${esc(baseNameOf(P))}</b>)`:""}. Pressures, brake bias, TC and ABS are yours to trim.</p>
-    ${off.length?`<p class="warn" style="margin:4px 0;font-size:12px">The open stint isn't set up for this step in ${off.length} setting${off.length>1?"s":""}: ${esc(uniq(off.map(r=>`${r.label} ${r.now} (should be ${r.st==="set"?r.to:r.raw})`)).slice(0,8).join(", "))}${off.length>8?"…":""}. Marked in orange below.</p>`:`<p class="ok" style="margin:4px 0;font-size:12px">The open stint matches this step.</p>`}
+    ${off.length?`<p class="warn" style="margin:4px 0;font-size:12px">${lcs?`<b>Garage now</b> (live)`:"The open stint"} isn't set up for this step in ${off.length} setting${off.length>1?"s":""}: ${esc(uniq(off.map(r=>`${r.label} ${r.now} (should be ${r.st==="set"?r.to:r.raw})`)).slice(0,8).join(", "))}${off.length>8?"…":""}. Marked in orange below.</p>`:(lcs?`<p class="ok" style="margin:4px 0;font-size:13px"><b>Garage now</b> (live): matches this step. Ready to drive ${s.laps} clean laps.</p>`:`<p class="ok" style="margin:4px 0;font-size:12px">The open stint matches this step.</p>`)}${lcs?"":`<p class="muted" style="margin:4px 0;font-size:12px">In the car at this track, this checks the garage as you change it.</p>`}
     <div class="sheet" style="margin-top:8px">${sheet}</div></details>`; }
 const baseNameOf = P => P.baseName || "";
 function testProgHTML(run){
@@ -6976,6 +6978,7 @@ async function liveMeta(){
   if (R && !R.ended && R.gen===g && cs && String(cs.UpdateCount)!==String((R.info.CarSetup||{}).UpdateCount)){
     R.info=Object.assign({}, R.info, {CarSetup:cs}); R.setupFlat=flatten(cs, "CarSetup");
     R.startTyreSig=JSON.stringify(yamlTyres(R.setupFlat)); R.startWearSig=JSON.stringify(wearFromFlat(R.setupFlat)); R.A=null; scheduleRender(false); }
+  { const gs=JSON.stringify((meta.info.CarSetup||{})); if (gs!==LIVE.garageSig){ LIVE.garageSig=gs; if (view==="learn") scheduleRender(false); } }
   if (LIVE.run && LIVE.run.ended){ const ef=flatten(meta.info.CarSetup||{}, "CarSetup"), sig=JSON.stringify(ef.map(e=>e.path+"="+e.raw));
     if (sig!==LIVE.run.endSig){ LIVE.run.endSig=sig; LIVE.run.endFlat=ef; LIVE.run.A=null; scheduleRender(false); } }   // only when the garage reading actually changed
 }
@@ -7035,7 +7038,7 @@ async function livePoll(){
   let st=null;
   try{
     st=await (await fetch("/live/status",{cache:"no-store"})).json();
-    if (st.gen>0 && (st.gen!==LIVE.gen || st.siUpdate!==LIVE.si)) await liveMeta();
+    LIVE.connected=!!st.connected; if (st.gen>0 && (st.gen!==LIVE.gen || st.siUpdate!==LIVE.si)) await liveMeta();
     if (LIVE.gen && LIVE.meta){
       const r=await fetch("/live/data?from="+LIVE.next,{cache:"no-store"});
       if (+r.headers.get("X-Gen")===LIVE.gen){ const b=await r.arrayBuffer(); LIVE.next=+r.headers.get("X-Next"); if (b.byteLength) ingest(b); }
