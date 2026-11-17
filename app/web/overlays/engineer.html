@@ -445,6 +445,9 @@ function drawReport(){
   $("rbal").innerHTML = (W ? `Tyres · front ${W.f} · rear ${W.r} · ` : "") + (S ? `balance entry ${ws(S.entry)} · mid ${ws(S.mid)} · exit ${ws(S.exit)}` : "");
 }
 
+// test programmes running (car|track), from the main app: while one runs here, bias / TC / ABS stay put so the stints compare
+let TESTS=[]; try { if (window.se && window.se.onPlan){ window.se.onPlan(p=>{ TESTS=(p&&p.tests)||[]; }); window.se.getPlan().then(p=>{ TESTS=(p&&p.tests)||[]; }).catch(()=>{}); } } catch(e){}
+const testingHere = () => !!(ST.meta && ST.meta.car && TESTS.includes(ST.meta.car+"|"+ST.meta.trackId));
 // ---------- in-car adjustments: brake bias, TC, ABS (things you can change from the cockpit) ----------
 function drawInCar(s, car){
   // you changed bias / TC / ABS: forget what was measured on the old value, so the advice doesn't keep asking for more
@@ -454,6 +457,8 @@ function drawInCar(s, car){
     if (now.tc!==was.tc){ ST.spin=[]; ST.exitSlides=[]; ST.checking={what:"tc", t:Date.now(), lap0:ST.lapsClean||0}; }
   }
   ST.dc=now;
+  if (testingHere()){ $("ibias").innerHTML=fmt(s.dcBrakeBias,1); $("itc").innerHTML=fmt(s.dcTractionControl,0); $("iabs").innerHTML=fmt(s.dcABS,0);
+    $("incar").innerHTML = '<span class="tgt">Test programme</span> keep bias, TC and ABS as they are, so the stints compare'; ST.saidInCar=""; return; }
   // 5 clean laps once per session before any suggestion; after that every clean lap keeps counting (pit stops don't restart it).
   // After you change bias / TC / ABS, that setting is judged again after one clean lap on the new value.
   const MINL=5, laps=ST.lapsClean||0, since = laps - (ST.checking ? ST.checking.lap0 : 0);
