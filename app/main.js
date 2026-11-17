@@ -83,9 +83,16 @@ function showMain() { if (!main) createMain(); main.show(); main.focus(); }
 
 // ---------- overlays ----------
 const wins = {};
+// an overlay always fits on a screen: one dragged past the edge (or left on a monitor that's gone) is pulled back in
+function onScreen(c) {
+  try { const wa = screen.getDisplayMatching({ x: c.x | 0, y: c.y | 0, width: c.w | 0, height: c.h | 0 }).workArea;
+    const w = Math.min(c.w, wa.width), h = Math.min(c.h, wa.height);
+    const x = Math.max(wa.x, Math.min(c.x, wa.x + wa.width - w)), y = Math.max(wa.y, Math.min(c.y, wa.y + wa.height - h));
+    if (x !== c.x || y !== c.y || w !== c.w || h !== c.h) { Object.assign(c, { x, y, w, h }); return true; } } catch (e) {}
+  return false; }
 function openOverlay(id) {
   if (wins[id]) return;
-  const c = ovCfg(id), d = OVERLAYS[id];
+  const c = ovCfg(id), d = OVERLAYS[id]; if (onScreen(c)) saveCfg();
   const w = new BrowserWindow({
     x: c.x, y: c.y, width: c.w, height: c.h, transparent: true, frame: false, resizable: true, movable: true,
     skipTaskbar: true, alwaysOnTop: true, hasShadow: false, focusable: editMode, show: false, minimizable: false, maximizable: false,
@@ -112,6 +119,7 @@ function applyOverlays() {
     if (!need) { closeOverlay(id); continue; }
     openOverlay(id);
     const w = wins[id]; if (w && !w.webContents.isLoading()) { if (c.enabled) { if (!w.isVisible()) w.showInactive(); } else w.hide(); }
+    if (w) { const b = w.getBounds(), cc = { x: b.x, y: b.y, w: b.width, h: b.height }; if (onScreen(cc)) w.setBounds({ x: cc.x, y: cc.y, width: cc.w, height: cc.h }); }
   }
 }
 

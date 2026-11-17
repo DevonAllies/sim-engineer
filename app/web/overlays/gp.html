@@ -359,7 +359,7 @@ const spoken = t => String(t).replace(/^T(\d+)$/, "Turn $1").replace(/\([^)]*\)/
 // ---------- display ----------
 function draw(){
   const s=ST.last, driving = s && s.IsOnTrack && !s.OnPitRoad;
-  document.body.classList.toggle("hidden", !(edit || (ST.connected && driving)));
+  document.body.classList.toggle("hidden", !(edit || ST.connected));   // whenever iRacing is connected: your last laps stay up in the pits and garage
   const optS=CL.sec.mine, optT=optS.length && optS.every(v=>v>0) && optS.length===(ST.meta&&ST.meta.sectors||[]).length ? optS.reduce((a,b)=>a+b,0) : NaN;
   $("info").textContent = !ST.ref ? "waiting for a clean lap" : Number.isFinite(optT) && ST.best<1e9 ? `optimal ${Math.floor(optT/60)}:${(optT%60).toFixed(2).padStart(5,"0")} · best ${Math.floor(ST.best/60)}:${(ST.best%60).toFixed(2).padStart(5,"0")}${ST.outLap?" · out lap":""}` : `vs ${ST.refSrc}${ST.outLap?" · out lap":""}`;
   const M = ST.msg && Date.now()-ST.msg.t < 15000 ? ST.msg : null;

@@ -174,7 +174,7 @@ function dblCall(txt){ if (txt && txt!==R.dbl){ R.dbl=txt; say(txt, 1); } }
 // ---------- display ----------
 function draw(){
   const s=ST.last, inCar = s && s.IsOnTrack;
-  document.body.classList.toggle("hidden", !(edit || (ST.connected && inCar)));
+  document.body.classList.toggle("hidden", !(edit || ST.connected));   // whenever iRacing is connected, garage included
   if (!s || !ST.meta) return;
   const P=plan();
   $("info").textContent = `lap ${s.Lap}${P.fromMem?` · from memory (${ST.learned.n} stints)`:P.n<2?" · measuring":""}`;

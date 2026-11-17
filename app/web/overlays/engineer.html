@@ -560,10 +560,11 @@ function draw(){
   const report  = ST.connected && stopped && ST.stint && ST.stint.laps>0;
   document.body.classList.toggle("report", !!report && !edit);
   document.body.classList.toggle("drive", !report || edit);
-  // visible whenever you're in the car, or in the garage with a stint report to show
-  document.body.classList.toggle("hidden", !(edit || (ST.connected && (inCar || report))));
+  // visible whenever iRacing is connected: in the car, in the pits and in the garage (the stint report once you've driven)
+  document.body.classList.toggle("hidden", !(edit || ST.connected));
   if (report && !edit) drawReport(); else drawDrive();
   if (!report && inCar && s.OnPitRoad && s.Speed<2){ $("big").textContent = "In pits"; $("big").className = "big"; }
+  if (!report && s && !inCar){ $("big").textContent = "In the garage"; $("big").className = "big"; }
   // a new stint starts when you drive out again
   if (driving && ST.stint && ST.stint.closed){ ST.stint = newStint(); ST.checking={what:"setup", t:Date.now(), lap0:ST.lapsClean||0}; ST.zones=[]; ST.spin=[]; }   // new stint: the lap count carries on; one clean lap on the (maybe changed) setup first
   if (report){ if (!ST.stint.closed) setTimeout(reportCall, 4000); ST.stint.closed = true; }   // give the garage reading a moment, then the stint report

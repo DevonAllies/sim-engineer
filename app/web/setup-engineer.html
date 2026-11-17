@@ -3586,6 +3586,8 @@ function endStint(reason){
   run.ended = true; run.endReason = reason; run.A = null;
   if (run.lapsDone<1){ const i=runs.indexOf(run); runs.splice(i,1); if (current>=runs.length) current=Math.max(0,runs.length-1); LIVE.run=null; }
   else { run.short += " ✓";
+    // back in the garage after driving: every tab shows this stint, even if you'd opened a recording before (and later stints follow again)
+    current = runs.indexOf(run); LIVE.follow = true;
     // learn it now, whichever window you're on (the garage tyre reading arrives a moment later)
     setTimeout(()=>learnLive(run), 4000);
     // iRacing writes the full telemetry (.ibt) for this stint as you stop: load it, switch to it, and learn from it (live data has no tyre surface temps or hot pressures)
@@ -6690,6 +6692,7 @@ async function liveMeta(){
   const g=+r.headers.get("X-Gen"), si=+r.headers.get("X-Si"), meta=parseMeta(await r.arrayBuffer());
   if (g!==LIVE.gen){ if (LIVE.run && !LIVE.run.ended) endStint("session ended"); LIVE.gen=g; LIVE.next=0; LIVE.run=null; LIVE.prev=null; }
   LIVE.meta=meta; LIVE.si=si;
+  if (!runs.length && !LIVE.autoLoad) { LIVE.autoLoad=true; autoLoadLatest(meta); }
   // every aero-calculator point you click through in the garage goes into this car's aero map
   try { const di=meta.info.DriverInfo||{}, me=(di.Drivers||[]).find(d=>d.CarIdx===di.DriverCarIdx), p=aeroCalcPoint(meta.info);
     if (me && p && aeroMapAdd(me.CarPath, Object.assign(p,{date:Date.now()}))){ LIVE.aeroNew=(LIVE.aeroNew||0)+1; if (view==="aero") scheduleRender(false); } } catch(e){}
@@ -6701,6 +6704,22 @@ async function liveMeta(){
     R.startTyreSig=JSON.stringify(yamlTyres(R.setupFlat)); R.startWearSig=JSON.stringify(wearFromFlat(R.setupFlat)); R.A=null; scheduleRender(false); }
   if (LIVE.run && LIVE.run.ended){ const ef=flatten(meta.info.CarSetup||{}, "CarSetup"), sig=JSON.stringify(ef.map(e=>e.path+"="+e.raw));
     if (sig!==LIVE.run.endSig){ LIVE.run.endSig=sig; LIVE.run.endFlat=ef; LIVE.run.A=null; scheduleRender(false); } }   // only when the garage reading actually changed
+}
+// connected with nothing open: open your latest recording in the car you're in (this track first), so every tab has something
+// to show straight away; your live stint replaces it as soon as you've driven a lap and come back in
+async function autoLoadLatest(meta){
+  try { const di=meta.info.DriverInfo||{}, me=(di.Drivers||[]).find(d=>d.CarIdx===di.DriverCarIdx), car=me&&me.CarPath; if (!car) return;
+    const wi=meta.info.WeekendInfo||{}, d=await (await fetch("/api/files",{cache:"no-store"})).json();
+    const mine=(d.files||[]).filter(f=>f.name.startsWith(car+"_") && f.size>1e6), trk=String(wi.TrackName||"").toLowerCase();
+    const f=mine.find(x=>trk && x.name.toLowerCase().includes(trk)) || mine[0]; if (!f || runs.length) return;   // newest first
+    $("#status").textContent=`Opening your latest recording in this car: ${f.name}…`;
+    const r0=await fetch("/api/file?name="+encodeURIComponent(f.name)); if (!r0.ok || runs.length) return;
+    const r=finishRun(parseIBT(await r0.arrayBuffer(), f.name), f.name); r.short="Last recording · "+(r.short||f.name); runs.push(r);
+    if (!LIVE.run) { current=runs.length-1; LIVE.follow=true; }
+    $("#status").textContent=`Opened your latest recording (${f.name}). Your live stint takes over when you come back in after a lap.`;
+    try { loadRecent(); } catch(e){}
+    scheduleRender(true);
+  } catch(e){ $("#status").textContent=""; }
 }
 async function livePoll(){
   let st=null;
