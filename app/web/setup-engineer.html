@@ -5768,16 +5768,17 @@ function testProgHTML(run){
   const allP=Object.entries(PREFS.data||{}).filter(([k,v])=>k.startsWith("testprog|") && v && v.created).map(([k,v])=>{ const [,car,track]=k.split("|"), r=Object.values(LEARN||{}).find(x=>x.car===car && String(x.track)===track); return {k, car, track, carName:(r&&r.carName)||car, trackName:(r&&r.trackName)||track, created:v.created, here:k===tpKey(run)}; });
   const others=allP.filter(p=>!p.here);
   const listNote = others.length ? `<p class="muted" style="margin:4px 0;font-size:12px">Your other programmes: ${others.map(p=>`${esc(p.carName)} at ${esc(p.trackName)} (started ${new Date(p.created).toLocaleDateString([], {day:"2-digit", month:"short"})})`).join(" · ")}. Open a stint at that track to carry on.</p>` : "";
-  if (!P) return `<section><h2>Test programme <small>one change at a time from a baseline, so the app learns this car properly</small></h2>${nextNote}${listNote}
+  const away=liveElsewhereHTML(run);
+  if (!P) return `<section><h2>Test programme <small>one change at a time from a baseline, so the app learns this car properly</small></h2>${away||nextNote}${listNote}
     <p style="margin:4px 0">A list of stints to drive: a baseline, then each spring, damper, anti-roll bar and wing change on its own, with exactly what to set and how many clean laps. Each step ticks itself off when a stint with only that change comes in.</p>
-    <button id="tpstart">Start a test programme for the ${esc(run.carName)} at ${esc(trk)}, with this stint's setup as the baseline</button></section>`;
+    ${away?"":`<button id="tpstart">Start a test programme for the ${esc(run.carName)} at ${esc(trk)}, with this stint's setup as the baseline</button>`}</section>`;
   const steps=tpStatus(run,P), next=steps.find(s=>!s.complete), doneN=steps.filter(s=>s.complete).length, dt=d=>new Date(d).toLocaleString([], {weekday:"short", day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit"});
   let blk="";
   // this stint ran a different setup from the baseline (a whole other .sto, not one change): it counts for no step. Offer to make it the baseline.
   const curCh=tpChanged(P.base, tpSetup(run)), baseName=P.baseName || ((Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===learnTrackOf(run) && r.date>=P.created-60e3).sort((a,b)=>a.date-b.date)[0]||{}).setupName) || "";
   const other = curCh.length>=5 ? `<div class="sugg p2" style="margin:0 0 10px"><h3>This stint ran a different setup from the programme's baseline</h3><p style="margin:4px 0 0"><b>${esc(setupName(run).name||"This setup")}</b> differs from the baseline${baseName?` (<b>${esc(baseName)}</b>)`:""} in ${curCh.length} settings (${esc(curCh.slice(0,5).map(c=>learnLabel(c.k)).join(", "))}${curCh.length>5?"…":""}), so it can't count for any step: each step is one change from the baseline. Nothing is lost: every stint is still learned by the models. If this is the setup you meant to start from, make it the baseline and the programme starts again from it.</p>
      <div class="row" style="gap:8px;margin-top:6px"><button id="tprebase2">Make ${esc(setupName(run).name||"this setup")} the baseline</button></div></div>` : "";
-  return `<section><h2>Test programme <small>${esc(run.carName)} at ${esc(trk)} · ${doneN} of ${steps.length} done · started ${dt(P.created)}${baseName?` · baseline ${esc(baseName)}`:""}</small></h2>${other}${nextNote}${listNote}
+  return `<section><h2>Test programme <small>${esc(run.carName)} at ${esc(trk)} · ${doneN} of ${steps.length} done · started ${dt(P.created)}${baseName?` · baseline ${esc(baseName)}`:""}</small></h2>${away}${away?"":other}${away?"":nextNote}${listNote}
    ${next?`<div class="sugg p3" style="margin:0 0 10px"><h3>Next: ${esc(next.label)}</h3><p style="margin:4px 0 0">${next.how} Drive <b>${next.laps} clean laps</b>${next.done?` (${next.done} so far)`:""}.</p></div>`:`<div class="sugg p3" style="margin:0 0 10px"><h3>Programme complete</h3><p style="margin:4px 0 0">Every step is done: the models in this tab now know each of these settings on this car. "What to test next" below shows anything still uncertain.</p></div>`}
    <div class="tablewrap"><table style="font-size:12px"><tr><th></th><th>Step</th><th>What to set</th><th>Clean laps</th><th>Stints found</th></tr>
     ${steps.map(s=>{ const head=s.block!==blk?`<tr><td colspan="5" style="background:rgba(127,127,127,.08);font-weight:700">${esc(s.block)}</td></tr>`:""; blk=s.block;
@@ -6701,7 +6702,7 @@ async function liveMeta(){
   const g=+r.headers.get("X-Gen"), si=+r.headers.get("X-Si"), meta=parseMeta(await r.arrayBuffer());
   if (g!==LIVE.gen){ if (LIVE.run && !LIVE.run.ended) endStint("session ended"); LIVE.gen=g; LIVE.next=0; LIVE.run=null; LIVE.prev=null; }
   LIVE.meta=meta; LIVE.si=si;
-  if (!runs.length && !LIVE.autoLoad) { LIVE.autoLoad=true; autoLoadLatest(meta); }
+  if (!runs.length && !LIVE.autoLoad) { LIVE.autoLoad=true; LIVE.autoAt=Date.now(); autoLoadLatest(meta); }
   // every aero-calculator point you click through in the garage goes into this car's aero map
   try { const di=meta.info.DriverInfo||{}, me=(di.Drivers||[]).find(d=>d.CarIdx===di.DriverCarIdx), p=aeroCalcPoint(meta.info);
     if (me && p && aeroMapAdd(me.CarPath, Object.assign(p,{date:Date.now()}))){ LIVE.aeroNew=(LIVE.aeroNew||0)+1; if (view==="aero") scheduleRender(false); } } catch(e){}
@@ -6716,19 +6717,55 @@ async function liveMeta(){
 }
 // connected with nothing open: open your latest recording in the car you're in (this track first), so every tab has something
 // to show straight away; your live stint replaces it as soon as you've driven a lap and come back in
+// where you are live right now (car + track), from the session info
+function liveWhere(){
+  const info=LIVE.meta&&LIVE.meta.info; if (!info) return null;
+  const di=info.DriverInfo||{}, me=(di.Drivers||[]).find(d=>d.CarIdx===di.DriverCarIdx)||{}, wi=info.WeekendInfo||{};
+  return { car:me.CarPath||"", carName:me.CarScreenName||me.CarPath||"", track:String(wi.TrackID||wi.TrackName||"?"), trackName:String(wi.TrackName||"").toLowerCase(), trackDisplay:wi.TrackDisplayName||wi.TrackName||"" };
+}
+// is this run in the car and at the track you're live in?
+const liveMatches = (run, w) => !!(run && w && run.carPath===w.car && learnTrackOf(run)===w.track);
+// the auto-opened recording is from another track (or car) than the one you're live at: say so in the track sections
+function liveElsewhereHTML(run){
+  const w=liveWhere(); if (!w || !w.car || !run || run.live || liveMatches(run, w)) return "";
+  const here=((run.info.WeekendInfo||{}).TrackDisplayName)||"another track";
+  return `<div class="sugg p2" style="margin:0 0 10px"><h3>You're live at ${esc(w.trackDisplay)} in the ${esc(w.carName)}</h3><p style="margin:4px 0 0">This is ${run.auto?`your latest recording in this car, from ${esc(here)}, because there isn't one at ${esc(w.trackDisplay)} yet`:`a recording from ${esc(here)}${run.carPath!==w.car?" in another car":""}`}. Drive a lap at ${esc(w.trackDisplay)} and come back in: that stint opens here, and the test programme for ${esc(w.trackDisplay)} starts from its setup.</p></div>`;
+}
 async function autoLoadLatest(meta){
+  if (LIVE.autoBusy) return; LIVE.autoBusy=true;
   try { const di=meta.info.DriverInfo||{}, me=(di.Drivers||[]).find(d=>d.CarIdx===di.DriverCarIdx), car=me&&me.CarPath; if (!car) return;
     const wi=meta.info.WeekendInfo||{}, d=await (await fetch("/api/files",{cache:"no-store"})).json();
-    const mine=(d.files||[]).filter(f=>f.name.startsWith(car+"_") && f.size>1e6), trk=String(wi.TrackName||"").toLowerCase();
-    const f=mine.find(x=>trk && x.name.toLowerCase().includes(trk)) || mine[0]; if (!f || runs.length) return;   // newest first
+    const bad=LIVE.autoBad||(LIVE.autoBad={});   // files that wouldn't open (still being written): try again only once they've grown
+    const mine=(d.files||[]).filter(f=>f.name.startsWith(car+"_") && f.size>1e6 && bad[f.name]!==f.size), trk=String(wi.TrackName||"").toLowerCase();
+    const atTrack=mine.find(x=>trk && x.name.toLowerCase().includes(trk));
+    // replacing an auto-opened recording: only for one in this car at this track, and only one not already open
+    const old=runs.findIndex(r=>r.auto), swap=old>=0;
+    if (swap && (!atTrack || runs.some(r=>r.fileName===atTrack.name || r.file===atTrack.name))) return;
+    if (!swap && runs.length) return;
+    const f=atTrack || mine[0]; if (!f) return;   // newest first
     $("#status").textContent=`Opening your latest recording in this car: ${f.name}…`;
-    const r0=await fetch("/api/file?name="+encodeURIComponent(f.name)); if (!r0.ok || runs.length) return;
-    const r=finishRun(parseIBT(await r0.arrayBuffer(), f.name), f.name); r.short="Last recording · "+(r.short||f.name); runs.push(r);
-    if (!LIVE.run) { current=runs.length-1; LIVE.follow=true; }
-    $("#status").textContent=`Opened your latest recording (${f.name}). Your live stint takes over when you come back in after a lap.`;
+    const r0=await fetch("/api/file?name="+encodeURIComponent(f.name)); if (!r0.ok) return;
+    let r; try { r=finishRun(parseIBT(await r0.arrayBuffer(), f.name), f.name); } catch(e){ bad[f.name]=f.size; $("#status").textContent=""; return; }
+    r.short="Last recording · "+(r.short||f.name); r.auto=true; r.fileName=f.name;
+    const o2=runs.findIndex(x=>x.auto), wasCur=!runs.length || (o2>=0 && o2===current);
+    if (o2>=0){ runs[o2]=r; } else { if (runs.length) return; runs.push(r); }
+    if (wasCur && (!LIVE.run || LIVE.follow)) { current=runs.indexOf(r); LIVE.follow=true; }
+    $("#status").textContent = atTrack ? `Opened your latest recording here (${f.name}). Your live stint takes over when you come back in after a lap.`
+      : `No recording at ${wi.TrackDisplayName||"this track"} in this car yet, so this is your latest one (${f.name}). It switches over once you've driven here.`;
     try { loadRecent(); } catch(e){}
     scheduleRender(true);
   } catch(e){ $("#status").textContent=""; }
+  finally { LIVE.autoBusy=false; }
+}
+// while the open recording is an auto-opened one from another track/car, keep looking for one where you are now
+function autoRecheck(){
+  const w=liveWhere(); if (!w || !w.car || LIVE.autoBusy) return;
+  const a=runs.find(r=>r.auto);
+  if (runs.length && !a) return;                       // you opened something yourself: leave it
+  if (a && liveMatches(a, w)) return;                  // already the right one
+  if (runs.some(r=>r.live && liveMatches(r, w))) return;   // a live stint here already shows this track
+  if (Date.now()-(LIVE.autoAt||0) < 15000) return; LIVE.autoAt=Date.now();
+  autoLoadLatest(LIVE.meta);
 }
 async function livePoll(){
   let st=null;
@@ -6740,6 +6777,7 @@ async function livePoll(){
       if (+r.headers.get("X-Gen")===LIVE.gen){ const b=await r.arrayBuffer(); LIVE.next=+r.headers.get("X-Next"); if (b.byteLength) ingest(b); }
       // iRacing closed / replay finished with the car still out: end the stint so tyres get read
       if (!st.connected && LIVE.run && !LIVE.run.ended && LIVE.next>=st.total) endStint("telemetry stopped");
+      if (st.connected) autoRecheck();
     }
   }catch(e){ st=null; }
   liveStatus(st);
