@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Test step</title>
+<style>
+:root{--ink:#eef0f4;--muted:#9aa3b2;--line:rgba(255,255,255,.09);--panel:rgba(14,16,21,.88);--accent:#ff6a4d;--ok:#5fd38d;--warn:#ffb347}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:transparent;overflow:hidden;height:100%}
+body{font:12px/1.3 system-ui,"Segoe UI",sans-serif;color:var(--ink);font-variant-numeric:tabular-nums;user-select:none}
+#root{position:relative;width:100%;height:100%;padding:9px 11px;background:var(--panel);border:1px solid var(--line);border-radius:10px;display:flex;flex-direction:column;gap:7px;overflow:hidden;transition:opacity .25s}
+body.hidden #root{opacity:0}
+body.edit #root{outline:2px dashed var(--accent);outline-offset:-2px;-webkit-app-region:drag;cursor:move}
+#editbar{display:none;position:absolute;left:0;right:0;bottom:0;font-size:10px;text-align:center;color:#fff;background:var(--accent);border-radius:0 0 10px 10px;padding:2px}
+body.edit #editbar{display:block}
+.top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.top b{font-size:11px;letter-spacing:.1em;color:var(--accent)}
+.k{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.step{font-size:15px;font-weight:700}
+.step small{font-size:11px;font-weight:400;color:var(--muted)}
+.box{background:rgba(255,255,255,.05);border-radius:6px;padding:5px 7px}
+.box.ok{box-shadow:0 0 0 1px var(--ok) inset}
+.box.off{box-shadow:0 0 0 1px var(--warn) inset}
+.it{font-size:12px;line-height:1.3;margin-top:2px}
+.to{color:var(--accent);font-weight:700}
+.okt{color:var(--ok);font-weight:700}
+.warnt{color:var(--warn);font-weight:700}
+.muted{color:var(--muted)}
+.base{display:grid;grid-template-columns:1fr 1fr;gap:1px 12px;font-size:11px}
+.base div{display:flex;justify-content:space-between;gap:6px;border-bottom:1px solid var(--line);padding:1px 0}
+.base b{white-space:nowrap}
+.none{color:var(--muted);text-align:center;padding:20px 6px}
+</style>
+</head>
+<body class="hidden">
+<div id="root">
+  <div class="top"><b>TEST PROGRAMME</b><span class="k" id="info"></span></div>
+  <div id="body"></div>
+  <div id="editbar">Test step · drag to move · drag the edge to resize</div>
+</div>
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+let TEXT = 1;
+function fit(){ document.body.style.zoom = TEXT; } fit();
+if (window.se && window.se.onStyle) window.se.onStyle(s => { TEXT = s.text || 1; document.body.style.fontFamily = `"${s.font||"Segoe UI"}", system-ui, sans-serif`; fit(); });
+let edit=false, plan=null, where={connected:false, inGarage:false};
+if (window.se){ window.se.onEditMode(on=>{ edit=on; document.body.classList.toggle("edit",on); vis(); });
+  window.se.onPlan(p=>{ plan=p; draw(); }); window.se.getPlan().then(p=>{ plan=p; draw(); }); }
+const esc=s=>String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const short=s=>String(s).replace(/high speed /gi,"HS ").replace(/low speed /gi,"LS ").replace(/compression damping/gi,"bump").replace(/rebound damping/gi,"rebound").replace(/arb blades/gi,"ARB").replace(/spring rate/gi,"spring").replace(/total toe in/gi,"toe").replace(/toe in/gi,"toe").replace(/ride height/gi,"RH").replace(/rear wing angle/gi,"Wing").replace(/^w/,c=>c.toUpperCase());
+function vis(){ document.body.classList.toggle("hidden", !(edit || (where.connected && where.inGarage))); }
+function draw(){
+  vis();
+  const P=plan && plan.prog;
+  if (!P || P.none!==undefined){ $("info").textContent=""; $("body").innerHTML=`<div class="none">${esc((P&&P.none)||"Open Setup Engineer: the test programme step shows here.")}</div>`; return; }
+  $("info").textContent = `step ${P.n} of ${P.total} · ${P.doneN} done`;
+  const change = P.change.length
+    ? P.change.map(c=>{ const i=c.indexOf(": "); return `<div class="it">${esc(short(c.slice(0,i)))}: <span class="to">${esc(c.slice(i+2))}</span></div>`; }).join("")
+    : `<div class="it">Change nothing: drive the baseline as it is.</div>`;
+  const check = !P.live ? `<div class="box"><div class="k">Garage check</div><div class="it muted">Starts when you're in the car at this track.</div></div>`
+    : P.off.length ? `<div class="box off"><div class="k">Garage now: not set up yet</div>${P.off.slice(0,8).map(o=>`<div class="it warnt">${esc(short(o))}</div>`).join("")}${P.off.length>8?`<div class="it muted">and ${P.off.length-8} more</div>`:""}</div>`
+    : `<div class="box ok"><div class="k">Garage now</div><div class="it okt">Matches this step. Drive ${P.laps} clean laps.</div></div>`;
+  const rh = P.live && P.offRH.length ? `<div class="it muted">Ride heights more than 2 mm out (fine for counting): ${esc(P.offRH.map(short).join(", "))}</div>` : "";
+  $("body").innerHTML = `
+    <div class="step">${esc(P.label)} <small>${esc(P.block)} · ${P.lapsDone} of ${P.laps} laps${P.complete?" · done":""}</small></div>
+    <div class="box"><div class="k">Change from the baseline</div>${change}${P.spr?`<div class="it muted">Then put the ride heights back near the baseline (within 2 mm).</div>`:""}</div>
+    ${check}${rh}
+    <div><div class="k" style="margin-bottom:3px">Baseline${P.baseName?`: ${esc(P.baseName)}`:""} · everything else stays at this</div>
+      <div class="base">${P.base.map(b=>`<div><span class="muted">${esc(short(b.label))}</span><b>${esc(b.val)}</b></div>`).join("")}</div></div>`;
+}
+// where is the car? (garage / pit stall = show, driving = hide)
+const TYPES={0:"getUint8",1:"getUint8",2:"getInt32",3:"getUint32",4:"getFloat32",5:"getFloat64"};
+const cstr=b=>{ let s=""; for (const x of b){ if(!x) break; s+=String.fromCharCode(x);} return s; };
+let meta=null, gen=null;
+async function poll(){
+  try{
+    const st=await (await fetch("/live/status",{cache:"no-store"})).json(); where.connected=st.connected;
+    if (st.gen>0 && st.gen!==gen){ const r=await fetch("/live/meta",{cache:"no-store"}); if (r.ok){ const b=await r.arrayBuffer(), dv=new DataView(b), i32=o=>dv.getInt32(o,true), vars={};
+      for (let i=0;i<i32(24);i++){ const o=i32(28)+i*144; vars[cstr(new Uint8Array(b,o+16,32))]={type:i32(o),off:i32(o+4)}; } meta={vars,bufLen:i32(36)}; gen=st.gen; } }
+    if (meta && st.total>0){ const r=await fetch("/live/data?from=-1&max=1",{cache:"no-store"}); const b=await r.arrayBuffer();
+      if (b.byteLength>=meta.bufLen){ const dv=new DataView(b), g=k=>{ const v=meta.vars[k]; return v? dv[TYPES[v.type]](v.off,true) : 0; };
+        where.inGarage = !g("IsOnTrack") || !!g("PlayerCarInPitStall"); } }
+  }catch(e){ where.connected=false; }
+  vis(); setTimeout(poll, 500);
+}
+draw(); poll();
+</script>
+</body>
+</html>
