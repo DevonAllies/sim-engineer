@@ -2037,7 +2037,8 @@ const ownsTrack = t => owned().tracks.some(x=>sameName(trackBase(t), x));
 const ownsCarIn = s => owned().cars.some(c=>s.cars.toLowerCase().includes(c.toLowerCase()));
 function ownedHTML(){ const L=contentLists(), O=owned(), B={t:t=>BASE_TRACKS.some(b=>sameName(t,b)), c:c=>BASE_CARS.some(b=>sameName(c,b))};
   const box=(kind,list,sel,isBase)=>`<div style="columns:2;font-size:12px;margin-top:6px">${list.map(x=>`<label style="display:block"><input type="checkbox" class="ownpick" data-kind="${kind}" value="${esc(x)}" ${sel.includes(x)?"checked":""}> ${esc(x)}${isBase(x)?' <span class="muted">(base)</span>':""}</label>`).join("")}</div>`;
-  return `<details style="margin-top:10px"><summary><b>Your cars and tracks</b> <span class="muted">(${O.tracks.length} tracks, ${O.cars.length} cars ticked${(()=>{ try { return PREFS.get("owned")?", saved":" by default: base content + what you've driven"; } catch(e){ return ""; } })()})</span></summary>
+  let saved=false; try { saved=!!PREFS.get("owned"); } catch(e){}
+  return `<details id="ownbox" style="margin-top:10px" ${saved?"":"open"}><summary><b>Your cars and tracks</b> <span class="muted">(${O.tracks.length} tracks, ${O.cars.length} cars ticked${(()=>{ try { return PREFS.get("owned")?", saved":" by default: base content + what you've driven"; } catch(e){ return ""; } })()})</span></summary>
     <p class="muted" style="font-size:12px;margin:6px 0">Tick what you own. Base content is ticked to start with (the base list is my best knowledge: untick anything that isn't), plus every car and track in your recordings. Saved as soon as you tick. The schedule then shows which races you can enter, and "test for next week" only points at tracks you own.</p>
     <div class="row" style="gap:8px"><button class="ghost" id="ownreset" style="padding:2px 10px">Back to base content + what I've driven</button></div>
     <h4 style="margin:8px 0 0">Tracks</h4>${box("tracks",L.tracks,O.tracks,B.t)}<h4 style="margin:8px 0 0">Cars</h4>${box("cars",L.cars,O.cars,B.c)}</details>`; }
@@ -2052,7 +2053,7 @@ function schedWeek(s, t){ const ts=t||Date.now(), now=tueOf(ts), event=s.weeks.s
 function schedMine(){ let sel=null; try { sel=PREFS.get("schedSeries"); } catch(e){} const all=(SCHED&&SCHED.series)||[]; return Array.isArray(sel) ? all.filter(s=>sel.includes(s.name)) : all.filter(s=>SCHED_DEFAULT.some(re=>re.test(s.name))); }
 // tracks for next week in your series (the test programme points you there)
 // which: "next" (default) or "cur" = this week, both from the PC's clock
-function schedNextTracks(all, which){ if (!SCHED) { schedLoad(); return []; } const o={}; for (const s of schedMine()){ const w=schedWeek(s)[which||"next"]; if (w && (all || (ownsTrack(w.track) && ownsCarIn(s)))) (o[w.track]=o[w.track]||{series:[],start:w.start}).series.push(s.name.replace(/ - 2026.*| by .*| 2026.*/,"")); } return Object.entries(o).map(([track,v])=>({track, series:v.series, start:v.start})); }
+function schedNextTracks(all, which){ if (!SCHED) { schedLoad(); return []; } const o={}; for (const s of schedMine()){ const w=schedWeek(s)[which||"next"]; if (w && (all || (ownsTrack(w.track) && ownsCarIn(s)))) { const x=(o[w.track]=o[w.track]||{series:[],starts:new Set()}); x.series.push(s.name.replace(/ - 2026.*| by .*| 2026.*/,"")); x.starts.add(w.start); } } return Object.entries(o).map(([track,v])=>({track, series:v.series, start:[...v.starts].sort()[0], starts:[...v.starts]})); }
 const schedThisTracks = all => schedNextTracks(all, "cur");
 // ---------- Tracks: every track you've driven, measured from your stints (bumps, corners, straights, top speed) ----------
 // The track's character comes from every stint there (any car); top speed, best lap and wing from the chosen car.
@@ -2090,7 +2091,7 @@ function renderTracks(){
   const old=T.filter(t=>!Number.isFinite(t.full)).length;
   box.innerHTML = `<h2>Tracks <small>measured from your stints: every time you drive a track it's measured again and the numbers update</small></h2>
    <div class="row" style="align-items:center;gap:10px;margin:0 0 10px"><label class="muted">Top speed, best lap and wing for <select id="trkcar">${Object.entries(cars).sort((a,b)=>b[1].n-a[1].n).map(([k,v])=>`<option value="${esc(k)}" ${k===car?"selected":""}>${esc(v.name)} (${v.n})</option>`).join("")}</select></label></div>
-   ${T.length?`<div class="tablewrap"><table style="font-size:12px"><tr><th>Track</th><th>Length</th><th>Surface</th><th>Corners: slow / fast</th><th>Hard cornering: slow / fast</th><th>Full throttle</th><th>Heavy stops</th><th>Top speed</th><th>Downforce</th><th>Best lap</th><th>Wing</th><th>Stints</th><th>Last</th></tr>
+   ${T.length?`<div class="tablewrap"><table style="font-size:12px"><tr><th>Track</th><th>Length</th><th>Surface</th><th>Corners: slow / fast</th><th>Hard cornering: slow / fast</th><th>Full throttle</th><th>Heavy stops</th><th>Top speed</th><th>Downforce</th><th>Best of your GT3s</th><th>Best lap</th><th>Wing</th><th>Stints</th><th>Last</th></tr>
     ${T.map(t=>`<tr><td><b>${esc(t.name)}</b></td><td>${Number.isFinite(t.len)?fmt(t.len,2)+" km":"–"}</td>
       <td>${surf(t.rough)} <span class="muted">${fmt(t.rough,2)}</span></td>
       <td>${Number.isFinite(t.slowN)?`${Math.round(t.slowN)} / ${Math.round(t.fastN)}`:"–"}</td>
@@ -2098,6 +2099,7 @@ function renderTracks(){
       <td>${p(t.full)}</td><td>${Number.isFinite(t.heavy)?Math.round(t.heavy):"–"}</td>
       <td>${Number.isFinite(t.vmax)?Math.round(t.vmax)+" km/h":`<span class="muted">not with this car</span>`}</td>
       <td>${t.df?DF[t.df.lvl]:"–"}</td>
+      <td>${(()=>{ const X=carsForTrack(t.name,true,"GT3"); return X&&X.rows.length?X.rows.slice(0,2).map((r,i)=>`<span style="${i?"color:var(--muted)":""}">${esc(r.name.replace(/ GT3.*| EVO.*/,""))} <span style="color:#d99a2b">${starsTxt(r.sc)}</span> ${fmt(r.sc,1)}</span>`).join("<br>"):"–"; })()}</td>
       <td>${Number.isFinite(t.best)?fmtTime(t.best):"–"}</td>
       <td>${Number.isFinite(t.wing)?`${fmt(t.wing,1)}${t.wings.length>1?` <span class="muted" style="font-size:11px">(tried ${t.wings.map(w=>fmt(w,1)).join(", ")})</span>`:""}`:"–"}</td>
       <td>${t.n}${t.nCar!==t.n?` <span class="muted" style="font-size:11px">(${t.nCar} this car)</span>`:""}</td><td>${day(t.last)}</td></tr>`).join("")}</table></div>`:`<p class="muted">No stints yet. Drive, or let the app read your recordings (Learning (dev)).</p>`}
@@ -2108,6 +2110,7 @@ function renderTracks(){
     <li><b>Full throttle</b>: the share of the lap flat out in a straight line. <b>Heavy stops</b>: braking zones that lose more than 80 km/h.</li>
     <li><b>Downforce</b>: a starting point from the track's shape (time in fast corners vs flat out). Low = less wing for top speed, high = more wing for the fast corners. The <b>wing</b> column is the wing on your fastest dry stint; the wing sweep (Aero tab, at that track) shows what each angle actually did.</li>
     <li>Surface and corners come from every stint at the track, whatever the car; top speed, best lap and wing are for the car you pick above.</li>
+    <li><b>Best of your GT3s</b>: the GT3s you own (Schedule → Your cars and tracks), rated by how well each car's strengths (straights, slow corners, fast corners, braking, traction, kerbs) match what decides a lap here. An estimate: iRacing's Balance of Performance evens the cars out, and your own lap times beat it.</li>
    </ul>`;
   const s=$("#trkcar"); if (s) s.onchange=()=>{ try { PREFS.set("tracksCar", s.value); } catch(e){} renderTracks(); };
 }
@@ -2118,7 +2121,7 @@ function renderSchedule(){
   const stints=track=>Object.values(LEARN||{}).filter(r=>r.trackName && track.toLowerCase().startsWith(r.trackName.toLowerCase().split(" ")[0]) ).length;
   const row=s=>{ const {cur,next}=schedWeek(s);
     const bop=x=>x&&x.bop&&x.bop[myCode]?` <span class="muted" style="font-size:11px">${myCode}: ${esc(x.bop[myCode])}</span>`:"";
-    const own=x=>x?(ownsTrack(x.track)?' <span class="ok" title="you own this track">✓</span>':' <span class="warn" style="font-size:11px">not owned</span>'):"", car=ownsCarIn(s);
+    const own=x=>x?(ownsTrack(x.track)?' <span class="ok" title="you own this track">✓</span>':` <span class="warn" style="font-size:11px">not owned</span> <button class="ghost ownbtn" data-track="${esc(trackBase(x.track))}" style="padding:0 6px;font-size:11px">I own it</button>`):"", car=ownsCarIn(s);
     return `<tr${car?"":' style="opacity:.6"'}><td><b>${esc(s.name.replace(/ - 2026 Season 4| 2026 Season 4| - 2026 Season/,""))}</b><div class="muted" style="font-size:11px">${esc(s.every||"")}${car?"":" · no car you own"}</div></td>
       <td>${cur?`<b>${esc(cur.track)}</b>${own(cur)}<div class="muted" style="font-size:11px">week ${cur.week} from ${d(cur.start)} · ${esc(cur.length||"")}${cur.simTime?` · sim ${esc(cur.simTime.slice(11))}`:""}</div>${bop(cur)}`:'<span class="muted">no round this week</span>'}</td>
       <td>${next?`<b>${esc(next.track)}</b>${own(next)}<div class="muted" style="font-size:11px">week ${next.week} from ${d(next.start)} · ${esc(next.length||"")}</div>${bop(next)}`:'<span class="muted">season ends</span>'}</td></tr>`; };
@@ -2126,8 +2129,11 @@ function renderSchedule(){
   const sportsAll=all.filter(s=>s.discipline==="SPORTS CAR"), today=new Date().toLocaleDateString([], {weekday:"long", day:"numeric", month:"short"});
   // this week and next week, by the PC's date: what you can race now, and what to test for
   const wkBox=(title, which, cls)=>{ const own=schedNextTracks(false,which), any=schedNextTracks(true,which), miss=any.filter(x=>!own.some(y=>y.track===x.track)); if (!any.length) return "";
-    const ds=[...new Set(any.map(x=>x.start))].sort().map(s=>d(s)).join(" / ");
-    return `<div class="sugg ${own.length?cls:"p2"}" style="margin:0 0 10px"><h3>${title} <small class="muted" style="font-weight:400">from ${ds}</small></h3><p style="margin:4px 0 0">${own.length?own.map(x=>`<b>${esc(x.track)}</b> (${esc(x.series.join(", "))})`).join(" · ")+(which==="next"?". Open a stint there (Test Drive or a practice) and start the test programme for that track (Learning (dev)).":". Race or practise here now; the test programme for this track is in Learning (dev)."):"None of these tracks are ticked as yours (or no car of yours races there)."}${miss.length?` <span class="muted">Not owned: ${miss.map(x=>esc(x.track)).join(", ")}. Tick them under "Your cars and tracks" if you have them.</span>`:""}</p></div>`; };
+    const ds=[...new Set(any.flatMap(x=>x.starts||[x.start]))].sort().map(s=>d(s)).join(" / ");
+    return `<div class="sugg ${own.length?cls:"p2"}" style="margin:0 0 10px"><h3>${title} <small class="muted" style="font-weight:400">from ${ds}</small></h3>
+      ${own.map(x=>`<div style="margin:4px 0"><b>${esc(x.track)}</b> <span class="muted">(${esc(x.series.join(", "))})</span>${carsForTrackLine(x.track)}</div>`).join("")}
+      <p style="margin:4px 0 0">${own.length?(which==="next"?"Open a stint there (Test Drive or a practice) and start the test programme for that track (Learning (dev)).":"Race or practise here now; the test programme for this track is in Learning (dev)."):"None of these tracks are ticked as yours (or no car of yours races there)."}</p>
+      ${miss.map(x=>`<div style="margin:4px 0"><span class="muted">Not owned:</span> <b>${esc(x.track)}</b> <span class="muted">(${esc(x.series.join(", "))})</span> <button class="ghost ownbtn" data-track="${esc(trackBase(x.track))}" style="padding:0 8px;font-size:12px">I own it</button>${carsForTrackLine(x.track)}</div>`).join("")}</div>`; };
   box.innerHTML = `<h2>Schedule <small>${esc(SCHED.source||"")} · today is ${esc(today)} (your PC's clock) · iRacing weeks start on Tuesday (00:00 UTC)</small></h2>
    ${wkBox("This week","cur","p1")}${wkBox("Test for next week","next","p3")}
    <div class="tablewrap"><table style="font-size:13px"><tr><th>Series</th><th>This week</th><th>Next week</th></tr>${mine.map(row).join("")||`<tr><td colspan="3" class="muted">Pick your series below.</td></tr>`}</table></div>
@@ -2143,6 +2149,9 @@ function renderSchedule(){
   box.querySelectorAll(".ownpick").forEach(c=>c.onchange=()=>{ const O={tracks:[...box.querySelectorAll('.ownpick[data-kind="tracks"]:checked')].map(x=>x.value), cars:[...box.querySelectorAll('.ownpick[data-kind="cars"]:checked')].map(x=>x.value)};
     try { PREFS.set("owned", O); } catch(e){} const open=[...box.querySelectorAll("details")].map(d=>d.open); renderSchedule(); [...$("#schedbox").querySelectorAll("details")].forEach((d,i)=>{ d.open=!!open[i]; }); });
   { const rs=box.querySelector("#ownreset"); if (rs) rs.onclick=()=>{ try { PREFS.set("owned", null); } catch(e){} renderSchedule(); }; }
+  // "I own it" next to a track: adds it to your saved list in one click
+  box.querySelectorAll(".ownbtn").forEach(b=>b.onclick=()=>{ const O=owned(), t=b.dataset.track, L=contentLists(), name=L.tracks.find(x=>sameName(x,t))||t;
+    const next={tracks:[...new Set([...O.tracks, name])], cars:O.cars.slice()}; try { PREFS.set("owned", next); } catch(e){} renderSchedule(); });
   box.querySelectorAll(".schedpick").forEach(c=>c.onchange=()=>{ const sel=[...box.querySelectorAll(".schedpick:checked")].map(x=>x.value); try { PREFS.set("schedSeries", sel); } catch(e){} renderSchedule(); });
 }
 let LIVE_OK=false, APP_OK=false, APPVER="";
@@ -4509,7 +4518,58 @@ const CAR_TRAITS = {
   acuransxevo22gt3:  {cls:"GT3", straight:3, slow:2, fast:4, braking:5, traction:4, kerbs:2},
   mercedesamgevogt3: {cls:"GT3", straight:4, slow:2, fast:5, braking:5, traction:3, kerbs:4},
   lamborghinievogt3: {cls:"GT3", straight:4, slow:4, fast:3, braking:3, traction:4, kerbs:3},
-  porsche992rgt3:    {cls:"GT3", straight:3, slow:4, fast:3, braking:4, traction:5, kerbs:4} };
+  porsche992rgt3:    {cls:"GT3", straight:3, slow:4, fast:3, braking:4, traction:5, kerbs:4, name:"Porsche 911 GT3 R (992)"},
+  // estimates from general knowledge (iRacing's BoP evens them out; your own lap times beat any of these)
+  ferrari296gt3:     {cls:"GT3", straight:4, slow:4, fast:4, braking:4, traction:4, kerbs:3, name:"Ferrari 296 GT3"},
+  bmwm4gt3:          {cls:"GT3", straight:4, slow:3, fast:4, braking:4, traction:3, kerbs:4, name:"BMW M4 GT3"},
+  audir8lmsevo2gt3:  {cls:"GT3", straight:3, slow:3, fast:4, braking:4, traction:4, kerbs:4, name:"Audi R8 LMS EVO II GT3"},
+  mclaren720sgt3evo: {cls:"GT3", straight:4, slow:3, fast:5, braking:4, traction:3, kerbs:3, name:"McLaren 720S GT3 EVO"},
+  fordmustanggt3:    {cls:"GT3", straight:4, slow:3, fast:4, braking:3, traction:4, kerbs:4, name:"Ford Mustang GT3"},
+  chevyvettez06rgt3: {cls:"GT3", straight:4, slow:3, fast:4, braking:4, traction:4, kerbs:3, name:"Chevrolet Corvette Z06 GT3.R"},
+  amvantageevogt3:   {cls:"GT3", straight:4, slow:3, fast:3, braking:4, traction:4, kerbs:3, name:"Aston Martin Vantage GT3 EVO"} };
+// track character for tracks you haven't driven yet (how much each thing decides the lap, 1–5, general knowledge);
+// a track you have driven uses what your own stints measured instead
+const TRACK_CHAR = [
+  [/misano/i,{straight:2,slow:4,fast:2,braking:4,traction:4,kerbs:3}], [/sebring/i,{straight:3,slow:3,fast:3,braking:4,traction:3,kerbs:5}],
+  [/silverstone/i,{straight:3,slow:2,fast:5,braking:3,traction:2,kerbs:2}], [/suzuka/i,{straight:3,slow:2,fast:5,braking:3,traction:2,kerbs:2}],
+  [/monza/i,{straight:5,slow:2,fast:2,braking:5,traction:3,kerbs:4}], [/spa/i,{straight:4,slow:2,fast:5,braking:3,traction:2,kerbs:2}],
+  [/fuji/i,{straight:4,slow:4,fast:2,braking:4,traction:4,kerbs:2}], [/road atlanta/i,{straight:3,slow:2,fast:4,braking:3,traction:3,kerbs:3}],
+  [/watkins/i,{straight:4,slow:2,fast:4,braking:3,traction:3,kerbs:3}], [/interlagos|carlos pace/i,{straight:4,slow:3,fast:3,braking:3,traction:4,kerbs:3}],
+  [/barcelona|catalunya/i,{straight:3,slow:3,fast:4,braking:3,traction:3,kerbs:2}], [/zandvoort/i,{straight:2,slow:3,fast:4,braking:3,traction:3,kerbs:3}],
+  [/imola|enzo e dino/i,{straight:3,slow:3,fast:3,braking:4,traction:3,kerbs:5}], [/bathurst|panorama/i,{straight:5,slow:4,fast:3,braking:4,traction:3,kerbs:3}],
+  [/nurburgring.*(nordschleife|combined|gesamt)/i,{straight:4,slow:3,fast:5,braking:3,traction:3,kerbs:5}], [/nurburgring/i,{straight:3,slow:4,fast:2,braking:4,traction:4,kerbs:2}],
+  [/red bull|spielberg/i,{straight:4,slow:4,fast:3,braking:5,traction:4,kerbs:3}], [/hockenheim/i,{straight:4,slow:4,fast:2,braking:4,traction:4,kerbs:2}],
+  [/laguna/i,{straight:2,slow:4,fast:2,braking:4,traction:4,kerbs:3}], [/virginia|vir\b/i,{straight:3,slow:2,fast:4,braking:3,traction:3,kerbs:3}],
+  [/road america/i,{straight:5,slow:3,fast:3,braking:4,traction:3,kerbs:2}], [/daytona/i,{straight:5,slow:3,fast:1,braking:4,traction:3,kerbs:4}],
+  [/le mans|sarthe|24 heures/i,{straight:5,slow:3,fast:3,braking:5,traction:3,kerbs:3}], [/montreal|villeneuve/i,{straight:4,slow:4,fast:1,braking:5,traction:4,kerbs:5}],
+  [/okayama/i,{straight:2,slow:4,fast:2,braking:3,traction:4,kerbs:2}], [/brands hatch/i,{straight:2,slow:3,fast:4,braking:3,traction:3,kerbs:3}],
+  [/donington/i,{straight:3,slow:3,fast:4,braking:3,traction:3,kerbs:2}], [/indianapolis/i,{straight:3,slow:4,fast:2,braking:4,traction:4,kerbs:3}],
+  [/americas|cota/i,{straight:4,slow:3,fast:4,braking:4,traction:3,kerbs:3}], [/portim|algarve/i,{straight:3,slow:3,fast:4,braking:3,traction:3,kerbs:3}],
+  [/paul ricard|castellet/i,{straight:4,slow:3,fast:4,braking:3,traction:3,kerbs:1}], [/valencia/i,{straight:3,slow:4,fast:2,braking:3,traction:4,kerbs:2}],
+  [/long beach|detroit|belle isle/i,{straight:3,slow:5,fast:1,braking:5,traction:5,kerbs:4}], [/oulton/i,{straight:2,slow:3,fast:3,braking:3,traction:3,kerbs:4}],
+  [/snetterton/i,{straight:3,slow:3,fast:3,braking:4,traction:3,kerbs:2}], [/lime rock/i,{straight:2,slow:2,fast:4,braking:2,traction:3,kerbs:3}],
+  [/mid-ohio|mid ohio/i,{straight:3,slow:4,fast:3,braking:3,traction:4,kerbs:3}], [/sonoma|sears point/i,{straight:2,slow:4,fast:2,braking:3,traction:4,kerbs:3}],
+  [/tsukuba/i,{straight:2,slow:4,fast:1,braking:3,traction:4,kerbs:2}], [/navarra/i,{straight:3,slow:3,fast:3,braking:3,traction:3,kerbs:2}],
+  [/magny/i,{straight:3,slow:3,fast:4,braking:4,traction:3,kerbs:3}], [/charlotte|homestead|ims oval/i,{straight:5,slow:2,fast:2,braking:3,traction:3,kerbs:2}] ];
+// how much each thing decides the lap at a track: measured (median over every stint there, any car), else the table above
+function trackChar(trackName){
+  const L=Object.values(LEARN||{}).filter(r=>r.prof && r.prof.w && r.trackName && sameName(trackBase(trackName), trackBase(r.trackName)));
+  if (L.length){ const w={}; for (const k of Object.keys(TRAIT_TXT)) w[k]=median(L.map(r=>r.prof.w[k]).filter(Number.isFinite)); if (Object.values(w).every(Number.isFinite)) return {w, src:"measured", n:L.length}; }
+  const T=TRACK_CHAR.find(([re])=>re.test(trackName)); return T ? {w:T[1], src:"estimate"} : null; }
+// your cars in a class, ranked for a track (1–5 stars), plus your own typical lap there when you have one
+function carsForTrack(trackName, onlyOwned, cls){
+  const C=trackChar(trackName); if (!C) return null; const sumW=Object.values(C.w).reduce((a,b)=>a+b,0)||1;
+  const nameOf=k=>(CAR_TRAITS[k].name)||(PROFILES[k]||{}).name||k;
+  const own=onlyOwned ? owned().cars : null;
+  const rows=Object.entries(CAR_TRAITS).filter(([k,t])=>(!cls || t.cls===cls) && (!own || own.some(c=>sameName(c, nameOf(k)))))
+    .map(([k,t])=>{ const sc=Object.entries(C.w).reduce((a,[q,w])=>a+w*(t[q]||3),0)/sumW;
+      const mine=Object.values(LEARN||{}).filter(r=>r.car===k && r.trackName && sameName(trackBase(trackName), trackBase(r.trackName)) && r.laps>=3 && Number.isFinite(r.med));
+      return {car:k, name:nameOf(k), sc, you:mine.length?Math.min(...mine.map(r=>r.med)):NaN}; }).sort((a,b)=>b.sc-a.sc);
+  return {rows, src:C.src, top:Object.entries(C.w).sort((a,b)=>b[1]-a[1]).slice(0,2).map(([k])=>k)}; }
+const starsTxt = s => "★".repeat(Math.round(s))+"☆".repeat(5-Math.round(s));
+function carsForTrackLine(trackName){
+  const X=carsForTrack(trackName, true, "GT3"); if (!X || !X.rows.length) return "";
+  return `<div class="muted" style="font-size:11px;margin-top:2px">Your GT3s here (${X.src==="measured"?"track measured from your laps":"track estimated"}, about ${X.top.map(k=>TRAIT_TXT[k]).join(" and ")}): ${X.rows.slice(0,4).map((r,i)=>`<span style="${i===0?"color:var(--text);font-weight:600":""}">${esc(r.name.replace(/ GT3.*| EVO.*/,""))} <span style="color:#d99a2b">${starsTxt(r.sc)}</span> ${fmt(r.sc,1)}${Number.isFinite(r.you)?` (your lap ${fmtTime(r.you)})`:""}</span>`).join(" · ")}</div>`; }
 const TRAIT_TXT = {straight:"long straights (top speed)", slow:"slow corners (rotation)", fast:"fast corners (aero)", braking:"heavy braking zones", traction:"traction out of slow corners", kerbs:"kerbs and bumps"};
 function trackProfile(run, A){
   const ch=run.ch, n=A.idx.length||1; let full=0; for (const j of A.idx) if (ch.Throttle[j]>0.95 && Math.abs(ch.LatAccel[j])<3) full++;
