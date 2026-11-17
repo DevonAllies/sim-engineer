@@ -5978,7 +5978,7 @@ const TP_FREE=/InCarAdjustments|InCarDials|BrakePressureBias|TractionControl|ABS
 function tpTarget(run, s, path, baseRaw){
   const e0=run.setupFlat.find(x=>x.path==="CarSetup."+path), e=Object.assign({path:"CarSetup."+path, key:path.split(".").pop()}, e0||{}, {raw:baseRaw});
   const withV=v=>/^-?\d/.test(String(v)) && /-?\d+(\.\d+)?/.test(baseRaw) ? baseRaw.replace(/-?\d+(\.\d+)?/, String(v)) : String(v);
-  if (s.kind==="min"||s.kind==="max"||s.kind==="wmin"||s.kind==="wmax") return s.lim!=null ? withV(s.lim) : (s.kind==="min"||s.kind==="wmin" ? "the lowest the garage allows" : "the highest the garage allows");
+  if (s.kind==="min"||s.kind==="max"||s.kind==="wmin"||s.kind==="wmax") return s.lim!=null ? withV(s.lim) : (s.kind==="min"||s.kind==="wmin" ? "garage minimum" : "garage maximum");
   if (s.kind==="more"||s.kind==="less"){ const r=resolve(run,{e, d:(s.kind==="less"?-1:1)*(s.amount||1)}); return r?r.raw:`${s.amount||1} step${(s.amount||1)>1?"s":""} ${s.kind==="less"?"softer":"stiffer"}`; }
   if (s.kind==="wless"||s.kind==="wmore"){ const r=resolve(run,{e, d:s.kind==="wless"?-2:2}); return r?r.raw:`2 steps ${s.kind==="wless"?"lower":"higher"}`; }
   if (s.kind==="between") return "the app's suggestion (Changes)";
@@ -5990,30 +5990,32 @@ function tpSheetHTML(run, P, steps){
   const rows=Object.entries(P.base).filter(([path])=>!SM_DERIVED.test(learnNorm(path)) || /PerchOffset/i.test(path)).map(([path,raw])=>{ const k=learnNorm(path), key=path.split(".").pop(); raw=String(raw).trim();
     let st="keep", to=raw, note="";
     if (s.kind!=="base" && s.re && s.re.test(k)){ st="set"; to=tpTarget(run,s,path,raw); }
-    else if (isSpr && /RideHeight$/i.test(key)){ st="back"; note="put back to the baseline"; }
+    else if (isSpr && /RideHeight$/i.test(key)){ st="back"; note="back to the baseline, within 2 mm"; }
     else if (isSpr && /PerchOffset|SpringPerch/i.test(key)){ st="adjust"; note="adjust to get the ride height back"; }
     else if (isSpr && /Camber|Toe/i.test(key)){ note="moves a little with the spring: fine"; }
     else if (TP_FREE.test(path)){ st="free"; note="your call each stint"; }
     const now=cur[path]!=null?String(cur[path]).trim():null;
-    const off = now!=null && st!=="free" && st!=="adjust" && !(isSpr && /Camber|Toe/i.test(key)) && (st==="set" ? (/^-?\d/.test(to) && now!==to) : (/RideHeight$/i.test(key) && Number.isFinite(learnNum(now)) ? Math.abs(learnNum(now)-learnNum(raw))>0.5 : now!==raw));
+    const off = now!=null && st!=="free" && st!=="adjust" && !(isSpr && /Camber|Toe/i.test(key)) && (st==="set" ? (/^-?\d/.test(to) ? now!==to : /min$/.test(s.kind) ? !(learnNum(now)<learnNum(raw)) : /max$/.test(s.kind) ? !(learnNum(now)>learnNum(raw)) : now===raw) : (/RideHeight$/i.test(key) && Number.isFinite(learnNum(now)) ? Math.abs(learnNum(now)-learnNum(raw))>2 : now!==raw));
     const sd=path.match(/(Left|Right)(Front|Rear)/), label=sd?`${sd[1][0]}${sd[2][0]} ${pretty(key).toLowerCase()}`:learnLabel(path);
     return {label, path, parts:path.split("."), key, raw, to, st, note, now, off}; });
   const groups=[], gm={};
   for (const r of rows){ const gk=r.parts[0]+"."+r.parts[1]; if (!gm[gk]){ gm[gk]={tab:r.parts[0], name:r.parts.length>2?r.parts[1]:r.parts[0], rows:[]}; groups.push(gm[gk]); } gm[gk].rows.push(r); }
   groups.sort((a,b)=>{ const i=x=>{ const j=GROUP_ORDER.indexOf(x.tab); return j<0?99:j; }; return i(a)-i(b); });
-  let lastTab="";
-  const sheet=groups.map(g=>{ const n=g.rows.filter(r=>r.st==="set"||r.st==="back"||r.st==="adjust").length; let h="";
-    if (g.tab!==lastTab){ h+=`<div class="sheettab">${g.tab==="TiresAero"?"Tires & Aero":esc(g.tab)}</div>`; lastTab=g.tab; }
-    return h+`<div class="gcard ${n?"has":""}"><div class="gtitle">${pretty(g.name)}${n?` <span class="badge">${n}</span>`:""}</div><table>${g.rows.map(r=>`<tr class="${r.st==="set"||r.st==="back"||r.st==="adjust"?"chg":""}"><td>${pretty(r.key)}${r.note?`<div class="muted" style="font-size:11px">${esc(r.note)}</div>`:""}</td><td>${
-      r.st==="set"?`<span class="old">${esc(r.raw)}</span> <span class="new">${esc(r.to)}</span>`:r.st==="free"?`<span class="muted">${esc(r.raw)}</span>`:esc(r.raw)}${r.off?`<div class="warn" style="font-size:11px">${src}: ${esc(r.now)}</div>`:""}</td></tr>`).join("")}</table></div>`; }).join("");
-  const set=rows.filter(r=>r.st==="set"), keepN=rows.filter(r=>r.st==="keep").length, off=rows.filter(r=>r.off);
+  const card=g=>{ const n=g.rows.filter(r=>r.st==="set"||r.st==="back"||r.st==="adjust").length; return `<div class="gcard ${n?"has":""}"><div class="gtitle">${pretty(g.name)}${n?` <span class="badge">${n}</span>`:""}</div><table>${g.rows.map(r=>`<tr class="${r.st==="set"||r.st==="back"||r.st==="adjust"?"chg":""}"><td>${pretty(r.key)}${r.note?`<div class="muted" style="font-size:11px">${esc(r.note)}</div>`:""}</td><td>${
+      r.st==="set"?`<span class="old">${esc(r.raw)}</span> <span class="new">${esc(r.to)}</span>`:r.st==="free"?`<span class="muted">${esc(r.raw)}</span>`:esc(r.raw)}${r.off?`<div class="warn" style="font-size:11px">${src}: ${esc(r.now)}</div>`:""}${!r.off && r.st==="set" && r.now!=null && r.now!==r.to ? `<div class="ok" style="font-size:11px">${src}: ${esc(r.now)}</div>`:""}</td></tr>`).join("")}</table></div>`; };
+  const pos=n=>/LeftFront/i.test(n)?"lf":/RightFront/i.test(n)?"rf":/LeftRear/i.test(n)?"lr":/RightRear/i.test(n)?"rr":/Front/i.test(n)?"f":/Rear/i.test(n)?"r":"o";
+  const tabs=[]; for (const g of groups){ let T=tabs.find(x=>x.tab===g.tab); if (!T){ T={tab:g.tab, c:{lf:[],f:[],rf:[],lr:[],r:[],rr:[],o:[]}}; tabs.push(T); } T.c[pos(g.name)].push(card(g)); }
+  const col=a=>`<div style="display:flex;flex-direction:column;gap:10px;min-width:0">${a.join("")}</div>`;
+  const sheet=tabs.map(T=>{ const c=T.c, o=c.o, pairs=[[c.f, o.slice(0,1)], [c.lf, c.rf], [c.lr, c.rr], [c.r, o.slice(1)]].filter(p=>p[0].length||p[1].length);
+    return `<div class="sheettab">${T.tab==="TiresAero"?"Tires & Aero":esc(T.tab)}</div><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">${pairs.map(p=>col(p[0])+col(p[1])).join("")}</div>`; }).join("");
+  const set=rows.filter(r=>r.st==="set"), keepN=rows.filter(r=>r.st==="keep").length, off=rows.filter(r=>r.off && !/RideHeight$/i.test(r.key)), offRH=rows.filter(r=>r.off && /RideHeight$/i.test(r.key));
   const uniq=a=>a.filter((v,i,x)=>x.indexOf(v)===i);
   return `<details id="tpsheet" ${TP_SHEET_OPEN?"open":""} style="margin:0 0 10px"><summary><b>Garage for this step</b> <span class="muted" style="font-size:12px">what to change and what stays at the baseline</span></summary>
     <div class="row" style="gap:8px;align-items:center;margin:8px 0">Show the garage for <select id="tpshow">${steps.map(x=>`<option value="${x.id}"${x===s?" selected":""}>${esc(x.block)}: ${esc(x.label)}${x.complete?" ✓":""}</option>`).join("")}</select></div>
     <p style="margin:4px 0;font-size:13px">${set.length?`<b>Change:</b> ${esc(uniq(set.map(r=>`${learnLabel(r.path)} ${r.raw} → ${r.to}`)).join("; "))}${s.ran&&s.ran.length?` <span class="ok">(you ran ${esc(s.ran.join(", "))} for this)</span>`:""}.`:"<b>Change nothing:</b> drive the baseline as it is."}
-      ${isSpr?" Then put the static ride heights back to the baseline with the spring perch offsets.":""} <b>Leave at the baseline:</b> the other ${keepN} settings below${baseNameOf(P)?` (as in <b>${esc(baseNameOf(P))}</b>)`:""}. Pressures, brake bias, TC and ABS are yours to trim.</p>
-    ${off.length?`<p class="warn" style="margin:4px 0;font-size:12px">${lcs?`<b>Garage now</b> (live)`:"The open stint"} isn't set up for this step in ${off.length} setting${off.length>1?"s":""}: ${esc(uniq(off.map(r=>`${r.label} ${r.now} (should be ${r.st==="set"?r.to:r.raw})`)).slice(0,8).join(", "))}${off.length>8?"…":""}. Marked in orange below.</p>`:(lcs?`<p class="ok" style="margin:4px 0;font-size:13px"><b>Garage now</b> (live): matches this step. Ready to drive ${s.laps} clean laps.</p>`:`<p class="ok" style="margin:4px 0;font-size:12px">The open stint matches this step.</p>`)}${lcs?"":`<p class="muted" style="margin:4px 0;font-size:12px">In the car at this track, this checks the garage as you change it.</p>`}
-    <div class="sheet" style="margin-top:8px">${sheet}</div></details>`; }
+      ${isSpr?" Then put the static ride heights back near the baseline (within about 2 mm: one adjuster moves the others, so they won't be exact; they don't stop the stint counting).":""} <b>Leave at the baseline:</b> the other ${keepN} settings below${baseNameOf(P)?` (as in <b>${esc(baseNameOf(P))}</b>)`:""}. Pressures, brake bias, TC and ABS are yours to trim.</p>
+    ${off.length?`<p class="warn" style="margin:4px 0;font-size:12px">${lcs?`<b>Garage now</b> (live)`:"The open stint"} isn't set up for this step in ${off.length} setting${off.length>1?"s":""}: ${esc(uniq(off.map(r=>`${r.label} ${r.now} (should be ${r.st==="set"?r.to:r.raw})`)).slice(0,8).join(", "))}${off.length>8?"…":""}. Marked in orange below.</p>`:(lcs?`<p class="ok" style="margin:4px 0;font-size:13px"><b>Garage now</b> (live): matches this step. Ready to drive ${s.laps} clean laps.</p>`:`<p class="ok" style="margin:4px 0;font-size:12px">The open stint matches this step.</p>`)}${offRH.length?`<p class="muted" style="margin:4px 0;font-size:12px">Ride heights more than 2 mm from the baseline: ${esc(uniq(offRH.map(r=>`${r.label} ${r.now} (baseline ${r.raw})`)).join(", "))}. Worth bringing closer, but this doesn't stop the stint counting.</p>`:""}${lcs?"":`<p class="muted" style="margin:4px 0;font-size:12px">In the car at this track, this checks the garage as you change it.</p>`}
+    <style>#tpsheet .gcard table td:last-child{white-space:normal;text-align:right}#tpsheet .gcard table td:first-child{width:55%}</style><div style="margin-top:8px">${sheet}</div></details>`; }
 const baseNameOf = P => P.baseName || "";
 function testProgHTML(run){
   const P=tpGet(run), trk=((run.info.WeekendInfo||{}).TrackDisplayName)||"this track";
