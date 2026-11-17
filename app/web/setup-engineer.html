@@ -195,6 +195,7 @@ tr.chg td{color:var(--ink)}
     </section>
     <section id="p-schedule" class="panel hidden"><div id="schedbox"><p class="muted">Loading the schedule…</p></div></section>
     <section id="p-tracks" class="panel hidden"><div id="tracksbox"></div></section>
+    <section id="p-tunnel" class="panel hidden"><div id="tunnelbox"></div></section>
     <section id="p-settings" class="panel hidden">
       <h2>Settings <small>targets and assumptions</small></h2>
       <div class="settings" id="settings"></div>
@@ -520,9 +521,24 @@ function fmtTime(s){ if(!Number.isFinite(s)) return "–"; const m=Math.floor(s/
 const TRACK_RULES = [{re:/nurburgring.*(nordschleife|combined|gesamt|industrie|vln)/i, car:/gt3/i, minRH:70, note:"Nordschleife: GT3 ride heights and splitter must stay at 70 mm or more in the garage."}];
 function trackRule(run){ const wi=(run.info&&run.info.WeekendInfo)||{}, t=`${wi.TrackName||""} ${typeof wi.TrackConfigName==="string"?wi.TrackConfigName:""} ${run.name||""}`;
   return TRACK_RULES.find(r=>r.re.test(t) && r.car.test(run.carPath||"")) || null; }
+// your settings never spill between cars: car properties (wheelbase, track, steering ratio, ride-height targets…) are kept per car;
+// pressure and tyre targets per car AND track. A new car or track starts from the factory defaults.
+const TRACK_KEYS = ["hotMin","hotMax","dblMin","tyreLo","tyreHi"];
+const ctKey = run => `${run.carPath}|${learnTrackOf(run)}`;
+let PREFS_LOADED=false;
+// one time: values you'd saved before 0.15.6 applied to every car; they're kept for the car + track combinations you've driven, then the global copy goes
+function migrateTargets(){
+  if (!PREFS_LOADED || !LEARN || PREFS.get("targetsMigrated")) return;
+  const old=PREFS.get("targets",null);
+  if (old && Object.keys(old).length){ const ct=PREFS.get("carTrack",{}), car=PREFS.get("car",{});
+    for (const r of Object.values(LEARN)) if (r.car && r.track){ const k=`${r.car}|${r.track}`; ct[k]=ct[k]||{}; for (const t of TRACK_KEYS) if (old[t]!=null && ct[k][t]===undefined) ct[k][t]=old[t];
+      if (old.ratio){ car[r.car]=car[r.car]||{}; if (car[r.car].ratio===undefined) car[r.car].ratio=old.ratio; } }
+    PREFS.set("carTrack", ct); PREFS.set("car", car); }
+  PREFS.set("targetsMigrated", Date.now()); PREFS.set("targets", null);
+}
 function settingsFor(run){
   const base = PROFILES[run.carPath] || PROFILES._default;
-  const S = Object.assign({}, base, userSettings, (PREFS.get("car",{})[run.carPath])||{}, run.overrides||{});
+  const S = Object.assign({}, base, userSettings, (PREFS.get("car",{})[run.carPath])||{}, (PREFS.get("carTrack",{})[ctKey(run)])||{}, run.overrides||{});
   const R = trackRule(run); if (R){ S.minRH=R.minRH; S.minSplitter=Math.max(+S.minSplitter||0, R.minRH); S.trackNote=R.note; }
   return S;
 }
@@ -2015,7 +2031,7 @@ const TAB_GROUPS = [
 const AREAS = { tyres:["Tyres","Tyre wear"], aero:["Aero platform","Aero trim","Gearing"], balance:["Balance","Corner entry","Corner exit"], brakes:["Brakes"], dampers:["Dampers","Track"], fuel:["Fuel"] };
 const areaSug = (run,k) => run.sug.filter(s=>AREAS[k].includes(s.area));
 // ---------- sidebar: App panels (always) + Session windows (when a session is selected) ----------
-const PANELS = [["live","Live"],["drivers","Drivers"],["recordings","Recordings"],["schedule","Schedule"],["tracks","Tracks"],["overlays","Overlays"],["settings","Settings"]];
+const PANELS = [["live","Live"],["drivers","Drivers"],["recordings","Recordings"],["schedule","Schedule"],["tracks","Tracks"],["tunnel","Wind tunnel"],["overlays","Overlays"],["settings","Settings"]];
 // ---------- the iRacing season schedule (parsed from iRacing's season schedule PDF into schedule.json: app/scripts/parse-schedule.js) ----------
 let SCHED=null, SCHED_LOAD=null;
 function schedLoad(){ if (SCHED || SCHED_LOAD) return SCHED_LOAD; SCHED_LOAD=fetch("schedule.json",{cache:"no-store"}).then(r=>r.ok?r.json():null).then(j=>{ SCHED=j||{series:[]}; if (view==="schedule") renderSchedule(); if (view==="learn" && runs.length) render(); return SCHED; }).catch(()=>{ SCHED={series:[]}; }); return SCHED_LOAD; }
@@ -2122,6 +2138,201 @@ function renderTracks(){
    </ul>`;
   const s=$("#trkcar"); if (s) s.onchange=()=>{ try { PREFS.set("tracksCar", s.value); } catch(e){} renderTracks(); };
 }
+// ---------- Wind tunnel: the car's aero, learned from your own stints ----------
+// Downforce: measured per stint from how far the suspension compresses at speed (× spring rates), as a coefficient C = N per (100 km/h)²,
+// modelled from the ride heights at speed and the wing. Balance: iRacing's own aero-calculator points (or the stints' measured split).
+// Drag: coast-down on the straights, a = c0 + c1·v², × the car's weight. Squash: how far each axle sinks per N of downforce, × spring rate.
+// The fits run in a background worker on a button press: 1500 bootstrap resamples (margins of error) and leave-one-out checks.
+const TUN = {car:null, res:null, busy:false, anim:false, t:0, parts:null, x:null};
+const TUN_WORKER = `
+const solve=(M,b)=>{ const n=b.length, A=M.map((r,i)=>[...r,b[i]]); for(let c=0;c<n;c++){ let p=c; for(let r=c+1;r<n;r++) if(Math.abs(A[r][c])>Math.abs(A[p][c])) p=r; [A[c],A[p]]=[A[p],A[c]]; const d=A[c][c]; if(Math.abs(d)<1e-12) return null; for(let k=c;k<=n;k++) A[c][k]/=d; for(let r=0;r<n;r++) if(r!==c){ const f=A[r][c]; if(f) for(let k=c;k<=n;k++) A[r][k]-=f*A[c][k]; } } return A.map(r=>r[n]); };
+// ridge on standardised features: returns a predictor
+function ridge(X,y,lam){ const n=X.length,p=X[0].length, m=Array(p).fill(0), s=Array(p).fill(0); for(const x of X) x.forEach((v,j)=>m[j]+=v/n); for(const x of X) x.forEach((v,j)=>s[j]+=(v-m[j])**2/n); for(let j=0;j<p;j++) s[j]=Math.sqrt(s[j])||1;
+  const ym=y.reduce((a,b)=>a+b,0)/n, Z=X.map(x=>x.map((v,j)=>(v-m[j])/s[j])), M=Array.from({length:p},()=>Array(p).fill(0)), v=Array(p).fill(0);
+  Z.forEach((z,i)=>{ for(let a=0;a<p;a++){ v[a]+=z[a]*(y[i]-ym); for(let b=0;b<p;b++) M[a][b]+=z[a]*z[b]; } }); for(let a=0;a<p;a++) M[a][a]+=lam; const b=solve(M,v); if(!b) return null;
+  return {m,s,ym,b}; }
+const pred=(F,x)=>F.ym+F.b.reduce((a,bj,j)=>a+bj*(x[j]-F.m[j])/F.s[j],0);
+function fitAll(rows, feat, lam, B){ const X=rows.map(r=>feat(r)), y=rows.map(r=>r.y), n=rows.length, full=ridge(X,y,lam); if(!full) return null;
+  let se=0; for(let i=0;i<n;i++){ const F=ridge(X.filter((_,k)=>k!==i), y.filter((_,k)=>k!==i), lam); if(F) se+=(pred(F,X[i])-y[i])**2; }   // leave one out
+  const boot=[]; for(let b=0;b<B;b++){ const I=Array.from({length:n},()=>Math.floor(Math.random()*n)); const F=ridge(I.map(i=>X[i]), I.map(i=>y[i]), lam); if(F) boot.push(F); }
+  const ys=y.slice().sort((a,b)=>a-b), sd=Math.sqrt(y.reduce((a,v)=>a+(v-full.ym)**2,0)/n);
+  return {full, boot:boot.filter((_,i)=>i%5===0), loo:Math.sqrt(se/n), sd, n, range:X[0].map((_,j)=>[Math.min(...X.map(x=>x[j])),Math.max(...X.map(x=>x[j]))])}; }
+onmessage=e=>{ const D=e.data, out={}; const lin=r=>[r.f,r.r,r.w], quad=r=>[r.f,r.r,r.w,r.f*r.f,r.r*r.r,r.f*r.r];
+  postMessage({progress:"Downforce model…"});
+  if (D.df.length>=4) out.df=fitAll(D.df, D.df.length>=15?quad:lin, D.df.length>=15?2:1, 1500), out.df&&(out.df.q=D.df.length>=15);
+  postMessage({progress:"Balance model…"});
+  if (D.bal.length>=4) out.bal=fitAll(D.bal, D.bal.length>=12?quad:lin, 0.5, 1500), out.bal&&(out.bal.q=D.bal.length>=12);
+  postMessage({progress:"Drag model…"});
+  if (D.drag.length>=4) out.drag=fitAll(D.drag, r=>[r.w, r.rk], 1, 1500);
+  postMessage({done:out}); };`;
+function tunnelData(car){
+  const R=Object.values(LEARN||{}).filter(r=>r.car===car && !r.wet && r.date>=LEARN_CUTOFF);
+  const df=R.filter(r=>r.aero && [r.aero.df,r.aero.vF,r.aero.fA,r.aero.rA,r.aero.w].every(Number.isFinite) && r.aero.vF>120 && r.aero.df>0).map(r=>({y:r.aero.df/((r.aero.vF/100)**2), f:r.aero.fA, r:r.aero.rA, w:r.aero.w, id:r.id}));
+  const m=aeroMapLoad(car), calc=(m.pts||[]).filter(p=>[p.f,p.r,p.b].every(Number.isFinite)).map(p=>({y:p.b, f:p.f, r:p.r, w:Number.isFinite(p.w)?p.w:NaN}));
+  const wFill=median(df.map(x=>x.w)); calc.forEach(p=>{ if (!Number.isFinite(p.w)) p.w=wFill; });
+  const balSt=R.filter(r=>r.aero && [r.aero.fpct,r.aero.fA,r.aero.rA,r.aero.w].every(Number.isFinite)).map(r=>({y:r.aero.fpct, f:r.aero.fA, r:r.aero.rA, w:r.aero.w}));
+  const spread=(a,k)=>a.length?Math.max(...a.map(x=>x[k]))-Math.min(...a.map(x=>x[k])):0;
+  const bal = (calc.length>=8 || calc.length>balSt.length) && spread(calc,"f")>=2 && spread(calc,"r")>=2 ? calc : balSt, balSrc = bal===calc ? "iRacing's aero calculator" : "measured split";
+  const mass=median(R.map(r=>r.mass).filter(Number.isFinite)) || 1300;
+  const drag=R.filter(r=>r.drag && Number.isFinite(r.drag.K) && r.aero && [r.aero.w,r.aero.fA,r.aero.rA].every(Number.isFinite)).map(r=>({y:r.drag.K, P:r.drag.P, w:r.aero.w, rk:r.aero.rA-r.aero.fA}));
+  const power=median(drag.map(x=>x.P).filter(Number.isFinite));
+  // squash per N of downforce × spring rate (≈ 1 / motion ratio²): how the at-speed height follows load and springs
+  const sq=ax=>median(R.filter(r=>r.aero && [r.aero.df,r.aero.fpct,r.aero["s"+ax],r.aero[ax.toLowerCase()+"A"],r.aero["k"+ax]].every(Number.isFinite) && r.aero.df>0).map(r=>{ const share=ax==="F"?r.aero.fpct/100:1-r.aero.fpct/100, sqmm=r.aero["s"+ax]-r.aero[ax.toLowerCase()+"A"]; return sqmm>0 ? sqmm*r.aero["k"+ax]/(r.aero.df*share) : NaN; }).filter(v=>Number.isFinite(v)&&v>0&&v<20));
+  const last=R.filter(r=>r.aero && Number.isFinite(r.aero.sF)).sort((a,b)=>b.date-a.date)[0];
+  const vmaxRef=last&&last.prof&&Number.isFinite(last.prof.vmax)?last.prof.vmax:last&&last.aero?last.aero.vmax:NaN;
+  return {df, bal, balSrc, drag, power, mass, cF:sq("F"), cR:sq("R"), last, vmaxRef, nStints:R.length, tracks:new Set(R.map(r=>r.track)).size};
+}
+function tunnelRun(){
+  if (TUN.busy) return; const D=tunnelData(TUN.car), msg=$("#tunmsg"); TUN.busy=true; TUN.data=D; if (msg) msg.textContent="Starting…";
+  const t0=performance.now();
+  let w; try { w=new Worker(URL.createObjectURL(new Blob([TUN_WORKER],{type:"text/javascript"}))); } catch(e){ TUN.busy=false; if (msg) msg.textContent="Couldn't start the background worker: "+e.message; return; }
+  w.onmessage=e=>{ if (e.data.progress){ if (msg) msg.textContent=e.data.progress; return; }
+    TUN.res=e.data.done; TUN.res.car=TUN.car; TUN.busy=false; TUN.ms=performance.now()-t0; w.terminate(); renderTunnel(); };
+  w.onerror=e=>{ TUN.busy=false; if (msg) msg.textContent="Model error: "+e.message; w.terminate(); };
+  w.postMessage({df:D.df, bal:D.bal, drag:D.drag});
+}
+// predict with a fitted model (and its bootstrap band)
+function tunPred(M, x, q){ if (!M) return {v:NaN}; const feat=q?[x[0],x[1],x[2],x[0]*x[0],x[1]*x[1],x[0]*x[1]]:x.slice(0, M.full.m.length);
+  const p=F=>F.ym+F.b.reduce((a,bj,j)=>a+bj*(feat[j]-F.m[j])/F.s[j],0), v=p(M.full), bs=M.boot.map(p).sort((a,b)=>a-b);
+  return {v, lo:bs[Math.floor(bs.length*0.05)], hi:bs[Math.floor(bs.length*0.95)]}; }
+// the car at speed: downforce moves the ride heights, ride heights change the downforce: iterate to where they agree
+function tunSolve(s){ const R=TUN.res, D=TUN.data; let fA=s.sF-5, rA=s.sR-5, C={v:NaN}, B={v:NaN};
+  for (let i=0;i<12;i++){ C=tunPred(R.df,[fA,rA,s.w],R.df&&R.df.q); B=tunPred(R.bal,[fA,rA,s.w],R.bal&&R.bal.q);
+    const df=Math.max(0,C.v)*(s.v/100)**2, fp=Number.isFinite(B.v)?B.v/100:0.4;
+    const nF=s.sF-(D.cF||1)*df*fp/s.kF, nR=s.sR-(D.cR||1)*df*(1-fp)/s.kR; fA=0.5*fA+0.5*Math.max(0,nF); rA=0.5*rA+0.5*Math.max(0,nR); }
+  const df=Math.max(0,C.v)*(s.v/100)**2, fp=Number.isFinite(B.v)?B.v:NaN, ms=s.v/3.6;
+  const Dg=tunPred(R.drag,[s.w, rA-fA]), K=Number.isFinite(Dg.v)?Dg.v:NaN, drag=K*ms*ms;   // K includes rolling resistance
+  return {fA, rA, df, dfLo:Math.max(0,C.lo)*(s.v/100)**2, dfHi:Math.max(0,C.hi)*(s.v/100)**2, fp, fpLo:B.lo, fpHi:B.hi, dfF:df*(Number.isFinite(fp)?fp/100:NaN), dfR:df*(Number.isFinite(fp)?1-fp/100:NaN),
+    drag, dragLo:(Dg.lo||NaN)*ms*ms, dragHi:(Dg.hi||NaN)*ms*ms, K, ld: drag>0?df/drag:NaN, kw:drag*ms/1000, bottom:fA<=1||rA<=1}; }
+function tunTop(s){ // top speed with unlimited straight: your measured power at the wheels = K·v³ (a real straight ends sooner)
+  const D=TUN.data; if (!TUN.res.drag || !(D.power>0)) return NaN; const K=tunSolve(Object.assign({},s,{v:250})).K; return K>0 ? Math.cbrt(D.power/K)*3.6 : NaN; }
+function renderTunnel(){
+  const box=$("#tunnelbox"); if (!box) return;
+  if (!LEARN){ box.innerHTML=`<h2>Wind tunnel</h2><p class="muted">Loading your history…</p>`; return; }
+  const cars={}; for (const r of Object.values(LEARN)) if (r.aero && Number.isFinite(r.aero.df)) cars[r.car]=cars[r.car]||{name:r.carName||r.car, n:0}, cars[r.car].n++;
+  if (!TUN.car || !cars[TUN.car]) TUN.car=(runs[current]&&cars[runs[current].carPath]) ? runs[current].carPath : (Object.entries(cars).sort((a,b)=>b[1].n-a[1].n)[0]||[])[0];
+  const head=`<h2>Wind tunnel <small>your car's aero, learned from your own stints: downforce, balance and drag at any speed, ride height and wing</small></h2>
+   <div class="row" style="align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px"><label class="muted">Car <select id="tuncar">${Object.entries(cars).sort((a,b)=>b[1].n-a[1].n).map(([k,v])=>`<option value="${esc(k)}" ${k===TUN.car?"selected":""}>${esc(v.name)} (${v.n} stints with downforce)</option>`).join("")}</select></label>
+   <button id="tunrun" ${TUN.busy?"disabled":""}>${TUN.res?"Run the models again":"Run the models"}</button> <span class="muted" id="tunmsg" style="font-size:12px">${TUN.res?`Fitted in ${(TUN.ms/1000).toFixed(1)} s on your CPU (background worker: 1500 resamples per model + leave-one-out checks).`:"Fits the models in the background (a few seconds, on your CPU). Not while you drive."}</span></div>`;
+  if (!TUN.car){ box.innerHTML=head+`<p class="muted">No stints with measured downforce yet: drive a few laps and come back.</p>`; return; }
+  if (!TUN.res || TUN.res.car!==TUN.car){ if (TUN.res && TUN.res.car!==TUN.car) TUN.res=null;
+    const D=tunnelData(TUN.car);
+    box.innerHTML=head+`<p>Data for the ${esc(cars[TUN.car].name)}: <b>${D.df.length}</b> stints with downforce, <b>${D.bal.length}</b> balance points (${D.balSrc}), <b>${D.drag.length}</b> stints with drag${D.drag.length<4?` <span class="muted">(drag fills in as the app re-reads your recordings, and from every new stint)</span>`:""}, from ${D.tracks} track${D.tracks===1?"":"s"}.</p>
+     <p class="muted" style="font-size:12px">Press <b>Run the models</b> to fit them. More variety (different wing angles, ride heights, tracks) makes them sharper; the test programme's wing and spring steps are ideal.</p>`;
+    wireTunnel(); return; }
+  const D=TUN.data, R=TUN.res, L=D.last&&D.last.aero||{}, P=profileOf({carPath:TUN.car})||{};
+  const def={v:250, sF:L.sF||55, sR:L.sR||60, w:Number.isFinite(L.w)?L.w:(R.df?median(D.df.map(x=>x.w)):5), kF:L.kF||200, kR:L.kR||200};
+  const S=TUN.x=Object.assign({}, def, TUN.x&&TUN.x.car===TUN.car?TUN.x:{}, {car:TUN.car});
+  const rg=(k,F)=>F&&F.range?F.range:null, wr=R.df?R.df.range[2]:[0,15];
+  const sl=(id,lab,min,max,step,val,unit)=>`<label style="display:block;font-size:12px">${lab} <b id="${id}v">${val}</b> ${unit}<br><input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${val}" style="width:100%"></label>`;
+  const q=m=>m?`${m.n} points · error ±${m.loo.toPrecision(2)} (leave-one-out) vs spread ${m.sd.toPrecision(2)}${m.loo<m.sd*0.8?' <span class="ok">explains it</span>':' <span class="warn">needs more variety</span>'}`:'<span class="muted">not enough data yet (4+ needed)</span>';
+  box.innerHTML=head+`
+   <div style="display:grid;grid-template-columns:minmax(0,3fr) minmax(220px,1fr);gap:14px;align-items:start">
+    <div><canvas id="tuncv" style="width:100%;height:auto;border-radius:10px;background:var(--panel2, rgba(127,127,127,.06))"></canvas>
+     <div class="grid" id="tunstats" style="margin-top:8px"></div></div>
+    <div>${sl("tunv","Speed",80,320,5,S.v,"km/h")}${sl("tunsF","Static ride height front",Math.floor((P.minSplitter||30)),100,0.5,S.sF,"mm")}${sl("tunsR","Static ride height rear",30,110,0.5,S.sR,"mm")}
+     ${sl("tunw","Wing",Math.floor(Math.min(wr[0],S.w)-2),Math.ceil(Math.max(wr[1],S.w)+2),0.5,S.w,"")}${sl("tunkF","Front springs",Math.round(S.kF*0.5),Math.round(S.kF*1.6),5,S.kF,"N/mm")}${sl("tunkR","Rear springs",Math.round(S.kR*0.5),Math.round(S.kR*1.6),5,S.kR,"N/mm")}
+     <button class="ghost" id="tunreset" style="padding:2px 10px;margin-top:6px">Back to your last setup</button>
+     <p class="muted" style="font-size:11px;margin-top:8px">Starts from your last stint${D.last?` (${esc(D.last.trackName||"")}, ${new Date(D.last.date).toLocaleDateString([], {day:"2-digit",month:"short"})})`:""}. Grey outside what you've driven: the models only know the range in your data.</p></div>
+   </div>
+   <h3 style="margin:14px 0 4px">Speed sweep <small class="muted" style="font-weight:400">this setup from 80 to 320 km/h; shaded = 90% range from the resampling</small></h3><div id="tunsweep"></div>
+   <h3 style="margin:14px 0 4px">How good the models are</h3>
+   <div class="tablewrap"><table style="font-size:12px"><tr><th>Model</th><th>Learned from</th><th>Quality</th></tr>
+    <tr><td><b>Downforce</b> (N per (100 km/h)²) from ride heights at speed and wing${R.df&&R.df.q?" (curved)":""}</td><td>suspension squash × springs per stint</td><td>${q(R.df)}</td></tr>
+    <tr><td><b>Front share</b> (%) from ride heights at speed and wing</td><td>${esc(D.balSrc)}</td><td>${q(R.bal)}</td></tr>
+    <tr><td><b>Drag</b> (N per (m/s)²) from wing and rake</td><td>full-throttle acceleration on the straights (power vs drag, car ${Math.round(D.mass)} kg)</td><td>${q(R.drag)}</td></tr>
+    <tr><td><b>Squash</b> per N × spring rate</td><td>static vs at-speed heights per stint</td><td>front ${fmt(D.cF,2)}, rear ${fmt(D.cR,2)}</td></tr></table></div>
+   <p class="muted" style="font-size:12px">Everything is from your own telemetry, not iRacing's internal aero data. The flow lines are a picture of where the air goes; the numbers are measured. Bump rubbers aren't modelled here: if an axle rests on its rubber at speed it sinks less than shown (see Aero across tracks). Downforce at the lowest ride heights is an extrapolation unless you've driven there.</p>`;
+  wireTunnel(); tunUpdate(); TUN.anim=true; tunAnim();
+}
+function wireTunnel(){
+  const c=$("#tuncar"); if (c) c.onchange=()=>{ TUN.car=c.value; TUN.res=null; TUN.x=null; renderTunnel(); };
+  const b=$("#tunrun"); if (b) b.onclick=()=>{ b.disabled=true; if (TUN.res) TUN.res=null; tunnelRun(); };
+  for (const k of ["v","sF","sR","w","kF","kR"]){ const e=$("#tun"+k); if (e) e.oninput=()=>{ TUN.x[k]=parseFloat(e.value); $("#tun"+k+"v").textContent=e.value; tunUpdate(); }; }
+  const r=$("#tunreset"); if (r) r.onclick=()=>{ TUN.x=null; renderTunnel(); };
+}
+function tunUpdate(){
+  const S=TUN.x, R=TUN.res, D=TUN.data; if (!S || !R) return;
+  const X=TUN.out=tunSolve(S), top=tunTop(S);
+  const inR=(M,x)=>!M||M.range.slice(0,x.length).every(([a,b],j)=>x[j]>=a-1&&x[j]<=b+1);
+  const known=inR(R.df,[X.fA,X.rA,S.w]);
+  const P=profileOf({carPath:TUN.car})||{}, win=P.frontRH?{f:P.frontRH, r:P.rearRH, tol:P.rhTol||2}:null;
+  const st=(k,v,s,c)=>`<div class="stat"><div class="k">${k}</div><div class="v sm" style="${c||""}">${v}</div><div class="s">${s}</div></div>`;
+  $("#tunstats").innerHTML=
+    st("Downforce", `${fmt(X.df,0)} N`, `${fmt(X.df/9.81,0)} kg · 90%: ${fmt(X.dfLo,0)}–${fmt(X.dfHi,0)} N${known?"":' · <span class="warn">outside your data</span>'}`)+
+    st("Front share", `${fmt(X.fp,1)}%`, `front ${fmt(X.dfF,0)} N · rear ${fmt(X.dfR,0)} N`)+
+    st("Drag", Number.isFinite(X.drag)?`${fmt(X.drag,0)} N`:"–", Number.isFinite(X.drag)?`${fmt(X.kw,0)} kW to push through the air at this speed`:"needs stints with drag")+
+    st("Efficiency (L/D)", Number.isFinite(X.ld)?fmt(X.ld,2):"–", "downforce ÷ drag")+
+    st("Ride height at speed", `${fmt(X.fA,1)} / ${fmt(X.rA,1)} mm`, `front / rear · rake ${fmt(X.rA-X.fA,1)} mm${win?` · max-downforce window ${win.f} / ${win.r} ±${win.tol}`:""}${X.bottom?' · <b class="bad">bottoming</b>':""}`,
+      win&&Math.abs(X.fA-win.f)<=win.tol&&Math.abs(X.rA-win.r)<=win.tol?"color:var(--good)":"")+
+    st("Top speed (endless straight)", Number.isFinite(top)?`${fmt(top,0)} km/h`:"–", Number.isFinite(top)?`${Math.round(D.power/1000)} kW at the wheels (measured) against this drag`:"needs drag data");
+  // the sweep
+  const vs=[]; for (let v=80; v<=320; v+=10) vs.push(v); const pts=vs.map(v=>({v, ...tunSolve(Object.assign({},S,{v}))}));
+  const W=720, H=200, pad=40, mx=Math.max(...pts.map(p=>Math.max(p.dfHi||p.df, p.dragHi||p.drag||0)).filter(Number.isFinite))*1.08||1;
+  const xs=v=>pad+(v-80)/240*(W-pad-10), ys=N=>H-24-(N/mx)*(H-34);
+  const line=(k,col)=>`<polyline fill="none" stroke="${col}" stroke-width="2" points="${pts.filter(p=>Number.isFinite(p[k])).map(p=>`${xs(p.v).toFixed(1)},${ys(p[k]).toFixed(1)}`).join(" ")}"/>`;
+  const band=(lo,hi,col)=>{ const a=pts.filter(p=>Number.isFinite(p[lo])&&Number.isFinite(p[hi])); return a.length?`<polygon fill="${col}" opacity=".18" points="${a.map(p=>`${xs(p.v).toFixed(1)},${ys(p[hi]).toFixed(1)}`).join(" ")} ${a.slice().reverse().map(p=>`${xs(p.v).toFixed(1)},${ys(p[lo]).toFixed(1)}`).join(" ")}"/>`:""; };
+  const grid=[0,0.25,0.5,0.75,1].map(f=>`<line x1="${pad}" x2="${W-10}" y1="${ys(mx*f)}" y2="${ys(mx*f)}" stroke="currentColor" opacity=".1"/><text x="${pad-4}" y="${ys(mx*f)+4}" font-size="10" text-anchor="end" fill="currentColor" opacity=".6">${Math.round(mx*f)}</text>`).join("");
+  $("#tunsweep").innerHTML=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:${W}px;color:var(--text)">${grid}
+    ${band("dfLo","dfHi","#3b82f6")}${band("dragLo","dragHi","#e0703b")}${line("df","#3b82f6")}${line("dfR","#9b7be0")}${line("dfF","#22a39a")}${line("drag","#e0703b")}
+    <line x1="${xs(S.v)}" x2="${xs(S.v)}" y1="8" y2="${H-24}" stroke="currentColor" opacity=".35" stroke-dasharray="3 3"/>
+    ${[100,150,200,250,300].map(v=>`<text x="${xs(v)}" y="${H-8}" font-size="10" text-anchor="middle" fill="currentColor" opacity=".6">${v} km/h</text>`).join("")}
+    <text x="${pad+6}" y="16" font-size="11" fill="#3b82f6">downforce</text><text x="${pad+76}" y="16" font-size="11" fill="#22a39a">front</text><text x="${pad+116}" y="16" font-size="11" fill="#9b7be0">rear</text><text x="${pad+150}" y="16" font-size="11" fill="#e0703b">drag (N)</text></svg>`;
+}
+// the side view: car (ride heights exaggerated ×4), wing at its angle, flow lines, force arrows
+function tunAnim(){
+  const cv=$("#tuncv"); if (!cv || !TUN.anim || view!=="tunnel"){ TUN.anim=false; return; }
+  const dpr=window.devicePixelRatio||1, Wc=cv.clientWidth||700, Hc=Math.round(Wc*0.42);
+  if (cv.width!==Math.round(Wc*dpr)){ cv.width=Math.round(Wc*dpr); cv.height=Math.round(Hc*dpr); }
+  const g=cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,Wc,Hc);
+  const S=TUN.x, X=TUN.out||{}; if (!S){ return; }
+  const dark=matchMedia("(prefers-color-scheme: dark)").matches || document.documentElement.dataset.theme==="dark";
+  const ink=dark?"#dfe5ef":"#1d2433", sub=dark?"rgba(223,229,239,.45)":"rgba(29,36,51,.45)";
+  // scene: metres → pixels; car 4.6 m long, ground at the bottom
+  const sc=Wc*0.62/4.6, x0=Wc*0.2, gy=Hc*0.84, ex=4;   // ex: ride height exaggeration
+  const fH=(X.fA||S.sF)/1000*ex, rH=(X.rA||S.sR)/1000*ex, axF=1.0, axR=3.65;
+  const under=x=>fH+(rH-fH)*((x-axF)/(axR-axF));   // underside height at x (m)
+  const top=x=>{ const P=[[0,0.16],[0.15,0.33],[0.9,0.52],[1.55,0.66],[2.0,1.08],[2.75,1.15],[3.6,0.95],[4.35,0.78],[4.6,0.72]]; for (let i=1;i<P.length;i++) if (x<=P[i][0]){ const [a,b]=[P[i-1],P[i]], t=(x-a[0])/(b[0]-a[0]); return a[1]+(b[1]-a[1])*t; } return 0.72; };
+  const px=x=>x0+x*sc, py=y=>gy-y*sc;
+  // ground + moving road marks
+  TUN.t+= (S.v/3.6)/60; g.strokeStyle=sub; g.lineWidth=1; g.beginPath(); g.moveTo(0,gy); g.lineTo(Wc,gy); g.stroke();
+  g.fillStyle=sub; const step=60, off=(TUN.t*sc)%step; for (let x=-off; x<Wc; x+=step) g.fillRect(Wc-x, gy+6, 22, 2);
+  // flow lines: particles from the left at many heights
+  if (!TUN.parts){ TUN.parts=Array.from({length:180},(_,i)=>({x:Math.random()*Wc, h:0.02+((i*0.618)%1)*2.3, s:0.85+Math.random()*0.3})); }
+  const df=X.df||0, wingK=Math.min(1.6,(Number.isFinite(X.dfR)?X.dfR:df/2)/4000), vpx=(S.v/3.6)/60*sc*0.9;
+  for (const p of TUN.parts){
+    const xm=(p.x-x0)/sc; let y=p.h, sp=1;
+    if (xm>-0.6 && xm<5.2){ const xc=Math.min(4.6,Math.max(0,xm)), T=top(xc)+under(xc), U=under(xc);
+      if (p.h>U*0.9){ const lift=Math.max(0,(T+0.05)-p.h), fade=Math.exp(-Math.max(0,p.h-T)/0.55), ramp=xm<0?Math.exp(xm/0.35):1; y=p.h+Math.max(lift, 0.18*fade)*ramp*Math.min(1,(xm+0.6)/0.6); sp=1+0.25*fade; }
+      else { y=Math.min(p.h, U*0.6); sp=1+Math.min(0.9, 0.03/Math.max(0.006,U)); }   // under the car: squeezed and fast (that's the ground effect)
+      if (xm>4.0){ const wy=1.12+under(4.4), up=wingK*0.55*Math.exp(-((p.h-wy)**2)/0.22)*Math.min(1,(xm-4.0)/0.8); y+=up; } }
+    p.x+=vpx*p.s*sp; if (p.x>Wc+10){ p.x=-Math.random()*40; }
+    const hue=sp>1.35?190:sp>1.1?205:225, a=dark?0.75:0.6;
+    g.fillStyle=`hsla(${hue},85%,${dark?62:45}%,${a})`; g.fillRect(p.x, py(y), 3+sp*3, 1.6);
+  }
+  // car body
+  g.beginPath(); g.moveTo(px(0),py(under(0)+0.16)); for (let x=0;x<=4.6;x+=0.05) g.lineTo(px(x),py(under(x)+top(x))); g.lineTo(px(4.6),py(under(4.6))); for (let x=4.6;x>=0;x-=0.1) g.lineTo(px(x),py(under(x))); g.closePath();
+  g.fillStyle=dark?"#2a3446":"#c9d3e3"; g.fill(); g.strokeStyle=ink; g.lineWidth=1.4; g.stroke();
+  // splitter, wheels
+  g.fillStyle=ink; g.fillRect(px(-0.05),py(under(0))-1,0.35*sc,2);
+  for (const ax of [axF,axR]){ g.beginPath(); g.arc(px(ax), py(0.34), 0.34*sc, 0, Math.PI*2); g.fillStyle=dark?"#11161f":"#2b2f38"; g.fill(); g.beginPath(); g.arc(px(ax), py(0.34), 0.2*sc, 0, Math.PI*2); g.fillStyle=dark?"#556":"#8a93a3"; g.fill(); }
+  // wing at its angle
+  const wx=px(4.38), wy=py(under(4.4)+1.18), ang=-(S.w||5)*Math.PI/180*1.6;
+  g.save(); g.translate(wx,wy); g.rotate(ang); g.fillStyle=ink; g.fillRect(-0.24*sc,-2.5,0.48*sc,5); g.restore();
+  g.strokeStyle=ink; g.beginPath(); g.moveTo(wx,wy); g.lineTo(wx,py(under(4.4)+top(4.4))); g.stroke();
+  // force arrows: downforce at each axle, drag at the back
+  const arrow=(x,y,dx,dy,col,txt)=>{ g.strokeStyle=col; g.fillStyle=col; g.lineWidth=3; g.beginPath(); g.moveTo(x,y); g.lineTo(x+dx,y+dy); g.stroke();
+    const a=Math.atan2(dy,dx); g.beginPath(); g.moveTo(x+dx,y+dy); g.lineTo(x+dx-9*Math.cos(a-0.4),y+dy-9*Math.sin(a-0.4)); g.lineTo(x+dx-9*Math.cos(a+0.4),y+dy-9*Math.sin(a+0.4)); g.closePath(); g.fill();
+    g.font="12px system-ui"; if (dy===0) g.fillText(txt, x, y-8); else g.fillText(txt, x+dx+6, y+dy/2); };
+  const nS=Hc*0.32/6000;
+  if (Number.isFinite(X.dfF)) arrow(px(axF), py(1.25), 0, Math.max(6,X.dfF*nS), "#22a39a", `${Math.round(X.dfF)} N`);
+  if (Number.isFinite(X.dfR)) arrow(px(axR), py(1.45), 0, Math.max(6,X.dfR*nS), "#9b7be0", `${Math.round(X.dfR)} N`);
+  if (Number.isFinite(X.drag)) arrow(px(4.72), py(0.6), Math.min(Wc-px(4.72)-8, Math.max(6,X.drag*nS*1.4)), 0, "#e0703b", `drag ${Math.round(X.drag)} N`);
+  // labels
+  g.fillStyle=sub; g.font="11px system-ui"; g.fillText(`${S.v} km/h  ·  ride heights at speed ${fmt(X.fA,1)} / ${fmt(X.rA,1)} mm (drawn ×${ex})`, 10, 16);
+  if (X.bottom){ g.fillStyle="#d64545"; g.fillText("bottoming: the floor would touch the road", 10, 32); }
+  requestAnimationFrame(()=>setTimeout(tunAnim, 0));
+}
 function renderSchedule(){
   const box=$("#schedbox"); if (!box) return; if (!SCHED){ schedLoad(); return; }
   const all=SCHED.series||[], mine=schedMine(), carCodes=[...new Set(runs.map(r=>BOP_CODE[r.carPath]).filter(Boolean))], myCode=carCodes[0]||"NSXE22";
@@ -2192,6 +2403,7 @@ function showPanels(){
   $("#p-settings").classList.toggle("hidden", view!=="settings");
   { const p=$("#p-schedule"); if (p){ p.classList.toggle("hidden", view!=="schedule"); if (view==="schedule") renderSchedule(); } }
   { const p=$("#p-tracks"); if (p){ p.classList.toggle("hidden", view!=="tracks"); if (view==="tracks") renderTracks(); } }
+  { const p=$("#p-tunnel"); if (p){ const was=!p.classList.contains("hidden"); p.classList.toggle("hidden", view!=="tunnel"); if (view==="tunnel" && !was) renderTunnel(); if (view!=="tunnel") TUN.anim=false; } }
   $("#sessbar").classList.toggle("hidden", !isA || runs.length<2);
 }
 function render(){
@@ -3260,11 +3472,13 @@ function renderRuns(){
 }
 function renderSettings(){
   const run=runs[current], S=settingsFor(run);
-  $("#settings").innerHTML = SETTINGS_DEF.map(([k,l])=>`<div><label>${l}</label><input data-k="${k}" value="${S[k]??""}"></div>`).join("");
+  const trk=((run.info.WeekendInfo||{}).TrackDisplayName)||"this track";
+  $("#settings").innerHTML = `<p class="muted" style="grid-column:1/-1;font-size:12px;margin:0">For the <b>${esc(run.carName||run.carPath)}</b> only (marked ⌂ = this car at <b>${esc(trk)}</b> only). Other cars and tracks keep their own values.</p>`+
+    SETTINGS_DEF.map(([k,l])=>`<div><label>${l}${TRACK_KEYS.includes(k)?" ⌂":""}</label><input data-k="${k}" value="${S[k]??""}"></div>`).join("");
   document.querySelectorAll("#settings input").forEach(inp=>inp.onchange=()=>{ const k=inp.dataset.k, v=inp.value.trim();
     const val = v===""? (k==="ratio"?"":null) : (k==="ratio"? v : parseFloat(v));
-    if (["hotMin","hotMax","ratio","dblMin","tyreLo","tyreHi"].includes(k)){ userSettings[k]=val; PREFS.set("targets", userSettings); }
-    else { const all=PREFS.get("car",{}); (all[run.carPath]=all[run.carPath]||{})[k]=val; PREFS.set("car", all); }   // kept for this car from now on
+    if (TRACK_KEYS.includes(k)){ const all=PREFS.get("carTrack",{}); (all[ctKey(run)]=all[ctKey(run)]||{})[k]=val; PREFS.set("carTrack", all); }   // this car at this track only
+    else { const all=PREFS.get("car",{}); (all[run.carPath]=all[run.carPath]||{})[k]=val; PREFS.set("car", all); }   // this car, every track
     runs.forEach(r=>r.A=null); render(); });
 }
 
@@ -4098,6 +4312,15 @@ function learnRecord(run, A, opts){
   { const L=A.rep.slice().sort((a,b)=>a.lap-b.lap); if (L.length>=5){ const c=fitLS(L.map(l=>[l.lap]), L.map(l=>l.time)); if (c && Number.isFinite(c[1])) rec.deg=num(c[1]); } }
   { const di=run.info.DriverInfo||{}, mx=parseFloat(di.DriverCarFuelMaxLtr), pc=parseFloat(di.DriverCarMaxFuelPct); if (mx>0) rec.tankL=num(mx*(pc>0&&pc<=1?pc:1)); }
   try { rec.lc=liftCoastOf(run, A); } catch(e){}
+  // the wind tunnel: drag from coasting on the straights (a = c0 + c1·v², v in m/s) and the car's weight from the garage corner weights
+  try { const cw=run.setupFlat.filter(e=>/cornerweight/i.test(e.key)).map(e=>{ const v=parseFloat(e.raw); return /lbs?\b/i.test(e.raw)?v*0.4536:/\bN\b/.test(e.raw)?v/9.81:v; }).filter(Number.isFinite);
+    if (cw.length===4) rec.mass=num(cw.reduce((a,b)=>a+b,0)); } catch(e){}
+  // drag: flat out in the top gears the engine gives roughly constant power, so m·a·v = P − K·v³ (K = drag in N per (m/s)², rolling included);
+  // fitted over your straights it gives both the power at the wheels and the drag. (Coasting would be cleaner, but you rarely coast.)
+  try { const ch=run.ch, m=rec.mass||1300; let mx=0; for (let j=0;j<run.n;j++) if (ch.Gear[j]>mx) mx=ch.Gear[j];
+    const X=[], y=[], h=Math.round(run.tick/2); if (ch.LongAccel) for (const j of A.idx){ const v=ch.Speed[j];
+      if (ch.Throttle[j]>0.98 && ch.Brake[j]<0.01 && v>150/3.6 && Math.abs(ch.LatAccel[j])<2 && ch.Gear[j]>=mx-2 && j>h && ch.Gear[j-h]===ch.Gear[j]){ X.push([v**3]); y.push(m*ch.LongAccel[j]*v); } }
+    if (X.length>=run.tick*3){ const c=fitLS(X,y); if (c && c[1]<0 && c[0]>0) rec.drag={K:+(-c[1]).toFixed(4), P:Math.round(c[0]), n:X.length, m:Math.round(m)}; } } catch(e){}
   // force feedback: the max force you ran and how you turned in with it (FFB is set per car and track, so it's compared there)
   try { const F=A.ffb, I=inputsAnalysis(run, A); if (F && Number.isFinite(F.maxNm)) rec.ffb={maxNm:num(F.maxNm), clip:num(F.clip), p95:num(F.p95pct), peakNm:num(F.peakNm),
       tWind:I?num(I.S.tWind):null, corr:I?num(I.S.corr):null, spike:I?num(I.S.spike):null}; } catch(e){}
@@ -4384,7 +4607,7 @@ async function learnSettings(){
     ${D?`<p style="margin:0 0 6px"><b>Your data folder:</b> <code>${esc(D.dir)}</code> <button class="ghost" id="learndir" style="padding:2px 10px">Move to another folder / drive</button></p>
     <p style="margin:0 0 6px" class="muted">Database <code>database\\setup-engineer.db</code> (${mb}, ${I.total} stints with every lap and setup) · a CSV per car and track in <code>csv\\</code>, rewritten in the background after every stint · PDF reports in <code>reports\\</code> · manuals in <code>manuals\\</code>.
       ${D.lastSaveError?`<b class="bad">Last save failed: ${esc(D.lastSaveError)}</b>`:D.lastSaved?`Last saved ${new Date(D.lastSaved).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}.`:""}</p>
-    <p style="margin:0 0 6px"><button class="ghost" data-open="dir" style="padding:2px 10px">Open data folder</button> <button class="ghost" data-open="csv" style="padding:2px 10px">Open CSV folder</button> <button class="ghost" data-open="reports" style="padding:2px 10px">Open reports</button>
+    <p style="margin:0 0 6px"><button class="ghost" data-open="dir" style="padding:2px 10px">Open data folder</button>${window.se.dataExport?` <button id="dataexport" style="padding:2px 10px">Export data for analysis…</button> <span class="muted" style="font-size:12px" id="dataexportmsg"></span>`:""} <button class="ghost" data-open="csv" style="padding:2px 10px">Open CSV folder</button> <button class="ghost" data-open="reports" style="padding:2px 10px">Open reports</button>
       ${PA?` · Open reports with <select id="pdfapp">${PA.apps.map(a=>`<option value="${a.id}" ${a.id===PA.current?"selected":""}>${esc(a.name)}</option>`).join("")}<option value="pick">Other program…</option></select>`:""}</p>`
     :`<p style="margin:0 0 6px">Every stint is saved to <code>${esc(I.file)}</code> (${mb}, ${I.total} stints). <button class="ghost" id="learndir" style="padding:2px 10px">Change folder / drive</button></p>`}
     ${window.se.teamGet?await (async()=>{ await teamLoadCfg(); return `<p style="margin:8px 0 4px"><b>Team folder</b> <span class="muted" style="font-size:12px">share laps with teammates through a shared Google Drive folder (install Google Drive for desktop, share one folder with your teammate, pick it here on both PCs)</span></p>
@@ -4405,6 +4628,8 @@ async function learnSettings(){
   document.querySelectorAll("[name=lscope]").forEach(r=>r.onchange=async()=>{ await window.se.learnScope(r.value); await learnSettings(); if (runs.length) rerender(); });
   $("#learndir").onclick=async()=>{ const f=await window.se.learnChooseDir(); if (f) await learnSettings(); };
   box.querySelectorAll("[data-open]").forEach(b=>b.onclick=()=>window.se.dataOpen(b.dataset.open));
+  { const x=box.querySelector("#dataexport"); if (x) x.onclick=async()=>{ const m=box.querySelector("#dataexportmsg"); m.textContent="Exporting…";
+      try { const r=await window.se.dataExport(); m.textContent = r ? `Done: ${r.stints} stints, ${r.laps} laps, ${r.settings} setting values in ${r.dir}` : ""; } catch(e){ m.textContent="Export failed: "+e.message; } }; }
   const pa=$("#pdfapp"); if (pa) pa.onchange=async()=>{ await window.se.pdfSetApp(pa.value); await learnSettings(); };
   const cv=$("#csvon"); if (cv) cv.onchange=async()=>{ await window.se.dataCsv(cv.checked); };
   const td=$("#teamdir"); if (td) td.onclick=async()=>{ const d=await window.se.teamChoose(); if (d){ TEAMREF={}; await teamLoadCfg(); await learnSettings(); } };
@@ -4422,11 +4647,11 @@ async function learnSettings(){
 setTimeout(()=>{ try { if (window.se && window.se.carsPut) window.se.carsPut(Object.entries(PROFILES).filter(([k])=>k!=="_default").map(([car,p])=>JSON.parse(JSON.stringify(Object.assign({car}, p, CHAR[car]?{character:CHAR[car]}:{}))))); } catch(e){} }, 5000);
 PREFS.load().then(()=>{   // your saved choices
   const r=PREFS.get("race"); if (r && RACE_MODES[r.type]) RACE=r;
-  Object.assign(userSettings, PREFS.get("targets",{}));
   Object.assign(TIM.opt, PREFS.get("drivers",{}));
+  PREFS_LOADED=true; migrateTargets();
   runs.forEach(x=>x.A=null); if (runs.length) rerender();
 });
-learnStore.load().then(async d=>{ LEARN=d||{}; await learnSettings(); LEARN_VER++; if (runs.length) rerender();
+learnStore.load().then(async d=>{ LEARN=d||{}; await learnSettings(); LEARN_VER++; migrateTargets(); if (runs.length) rerender();
   if (window.se){ setTimeout(()=>learnScan(), 20000);   // new recordings are learned automatically a little after the app starts
     setInterval(()=>{ if (!(LIVE.latest && LIVE.latest.IsOnTrack)) learnScan(); }, 5*60000); }   // ...and every 5 minutes while you're not on track
 });
@@ -4438,12 +4663,13 @@ let LEARN_SCAN=false;
 // 8: tread temperatures per stint, and the reference lap (fastest clean lap per car + track, with its trace)
 // 9: the speed the at-speed ride heights were measured at, and the suspension summary (cross-track aero and damper models)
 // 10: the track's character per stint (full throttle, slow / fast corners, heavy stops, bumpiness, length) for the Tracks tab
-const SCAN_KEY="se.learnFiles10";
+// 11: drag (coast-down) and the car's weight per stint, for the wind tunnel
+const SCAN_KEY="se.learnFiles11";
 async function learnScan(statusEl){
   if (LEARN_SCAN || !LEARN) return; LEARN_SCAN=true;
   const say = t => { document.querySelectorAll(".learnstatus").forEach(e=>e.textContent=t); if (statusEl) statusEl.textContent=t; };
   let done={}; try { done=JSON.parse(localStorage.getItem(SCAN_KEY)||"{}"); } catch(e){}
-  let seen={}; for (const k of ["se.learnFiles6","se.learnFiles7","se.learnFiles8","se.learnFiles9"]) try { Object.assign(seen, JSON.parse(localStorage.getItem(k)||"{}")); } catch(e){}   // read by an older version: only refresh stints that are still remembered (never bring back one you forgot)
+  let seen={}; for (const k of ["se.learnFiles6","se.learnFiles7","se.learnFiles8","se.learnFiles9","se.learnFiles10"]) try { Object.assign(seen, JSON.parse(localStorage.getItem(k)||"{}")); } catch(e){}   // read by an older version: only refresh stints that are still remembered (never bring back one you forgot)
   try {
     const d=await (await fetch("/api/files",{cache:"no-store"})).json();
     const files=(d.files||[]).filter(f=>f.size>1500000 && !done[f.name+"|"+f.size]);
@@ -5481,15 +5707,23 @@ function tpStatus(run, P){
   return steps; }
 function testProgHTML(run){
   const P=tpGet(run), trk=((run.info.WeekendInfo||{}).TrackDisplayName)||"this track";
-  const nt=schedNextTracks(), tw=schedThisTracks(), here=((run.info.WeekendInfo||{}).TrackDisplayName||"").toLowerCase(), isHere=x=>here && x.track.toLowerCase().startsWith(here.split(" ")[0]);
-  const hereNext=nt.find(isHere), hereNow=tw.find(isHere), lst=a=>a.map(x=>`<b>${esc(x.track)}</b> (${esc(x.series.join(", "))})`).join(" · ");
-  const nextNote = nt.length||tw.length ? `<p class="muted" style="margin:4px 0;font-size:12px">${hereNow?`<b class="ok">This is this week's track</b> in ${esc(hereNow.series.join(", "))}. `:""}${hereNext?`<b class="ok">This is next week's track</b> in ${esc(hereNext.series.join(", "))}. `:""}${!hereNow&&tw.length?`This week (Schedule): ${lst(tw)}. `:""}${!hereNext&&nt.length?`Next week: ${lst(nt)}. `:""}${!hereNow&&!hereNext?"A programme is kept per track: open a stint there to test.":""}</p>` : "";
-  if (!P) return `<section><h2>Test programme <small>one change at a time from a baseline, so the app learns this car properly</small></h2>${nextNote}
+  const nt=schedNextTracks(true), tw=schedThisTracks(true), here=((run.info.WeekendInfo||{}).TrackDisplayName||"").toLowerCase(), isHere=x=>here && x.track.toLowerCase().startsWith(here.split(" ")[0]);
+  const hereNext=nt.find(isHere), hereNow=tw.find(isHere), lst=a=>a.map(x=>`<b>${esc(x.track)}</b>${ownsTrack(x.track)?"":' <span class="warn" style="font-size:11px">not owned</span>'} (${esc(x.series.join(", "))})`).join(" · ");
+  // the open stint isn't at this week's or next week's track: say so up front, and where to go
+  const stale = !hereNow && !hereNext && (tw.length || nt.length);
+  const nextNote = stale
+    ? `<div class="sugg p2" style="margin:0 0 10px"><h3>This stint is at ${esc(trk)}, which isn't on your schedule this week or next</h3><p style="margin:4px 0 0">${tw.length?`<b>This week:</b> ${lst(tw)}. `:""}${nt.length?`<b>Next week:</b> ${lst(nt)}. `:""}A programme is kept per car and track, built from a stint there: drive a few laps there (Test Drive) and open that stint, or just drive it with the app running, and the programme for that track starts from its setup. ${tw.concat(nt).some(x=>!ownsTrack(x.track))?`<span class="muted">Own a track marked "not owned"? Click "I own it" next to it in the Schedule.</span>`:""}</p></div>`
+    : nt.length||tw.length ? `<p class="muted" style="margin:4px 0;font-size:12px">${hereNow?`<b class="ok">This is this week's track</b> in ${esc(hereNow.series.join(", "))}. `:""}${hereNext?`<b class="ok">This is next week's track</b> in ${esc(hereNext.series.join(", "))}. `:""}${!hereNow&&tw.length?`This week (Schedule): ${lst(tw)}. `:""}${!hereNext&&nt.length?`Next week: ${lst(nt)}. `:""}</p>` : "";
+  // every programme you've started, with its progress (open a stint at that track to carry on)
+  const allP=Object.entries(PREFS.data||{}).filter(([k,v])=>k.startsWith("testprog|") && v && v.created).map(([k,v])=>{ const [,car,track]=k.split("|"), r=Object.values(LEARN||{}).find(x=>x.car===car && String(x.track)===track); return {k, car, track, carName:(r&&r.carName)||car, trackName:(r&&r.trackName)||track, created:v.created, here:k===tpKey(run)}; });
+  const others=allP.filter(p=>!p.here);
+  const listNote = others.length ? `<p class="muted" style="margin:4px 0;font-size:12px">Your other programmes: ${others.map(p=>`${esc(p.carName)} at ${esc(p.trackName)} (started ${new Date(p.created).toLocaleDateString([], {day:"2-digit", month:"short"})})`).join(" · ")}. Open a stint at that track to carry on.</p>` : "";
+  if (!P) return `<section><h2>Test programme <small>one change at a time from a baseline, so the app learns this car properly</small></h2>${nextNote}${listNote}
     <p style="margin:4px 0">A list of stints to drive: a baseline, then each spring, damper, anti-roll bar and wing change on its own, with exactly what to set and how many clean laps. Each step ticks itself off when a stint with only that change comes in.</p>
     <button id="tpstart">Start a test programme for the ${esc(run.carName)} at ${esc(trk)}, with this stint's setup as the baseline</button></section>`;
   const steps=tpStatus(run,P), next=steps.find(s=>!s.complete), doneN=steps.filter(s=>s.complete).length, dt=d=>new Date(d).toLocaleString([], {weekday:"short", day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit"});
   let blk="";
-  return `<section><h2>Test programme <small>${esc(run.carName)} at ${esc(trk)} · ${doneN} of ${steps.length} done · started ${dt(P.created)}</small></h2>${nextNote}
+  return `<section><h2>Test programme <small>${esc(run.carName)} at ${esc(trk)} · ${doneN} of ${steps.length} done · started ${dt(P.created)}</small></h2>${nextNote}${listNote}
    ${next?`<div class="sugg p3" style="margin:0 0 10px"><h3>Next: ${esc(next.label)}</h3><p style="margin:4px 0 0">${next.how} Drive <b>${next.laps} clean laps</b>${next.done?` (${next.done} so far)`:""}.</p></div>`:`<div class="sugg p3" style="margin:0 0 10px"><h3>Programme complete</h3><p style="margin:4px 0 0">Every step is done: the models in this tab now know each of these settings on this car. "What to test next" below shows anything still uncertain.</p></div>`}
    <div class="tablewrap"><table style="font-size:12px"><tr><th></th><th>Step</th><th>What to set</th><th>Clean laps</th><th>Stints found</th></tr>
     ${steps.map(s=>{ const head=s.block!==blk?`<tr><td colspan="5" style="background:rgba(127,127,127,.08);font-weight:700">${esc(s.block)}</td></tr>`:""; blk=s.block;

@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld('se', {
   dataLaps: (id) => ipcRenderer.invoke('data:laps', id),
   carsPut: (list) => ipcRenderer.invoke('cars:put', list),
   dataCsv: (on) => ipcRenderer.invoke('data:csv', on),
+  dataExport: () => ipcRenderer.invoke('data:export'),
   // team folder (shared Google Drive / OneDrive folder): lap files to compare with teammates
   teamGet: () => ipcRenderer.invoke('team:get'),
   teamSet: (patch) => ipcRenderer.invoke('team:set', patch),

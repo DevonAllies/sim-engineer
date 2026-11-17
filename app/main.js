@@ -313,6 +313,50 @@ ipcMain.handle('team:list', (_e, sub, ext) => { const d = teamDir(); if (!d) ret
   walk(root, 0); return out; });
 ipcMain.handle('team:read', (_e, rel) => { const d = teamDir(); if (!d) return null; try { return fs.readFileSync(path.join(d, safeRel(rel))); } catch (e) { return null; } });
 ipcMain.handle('team:open', () => { if (teamDir()) shell.openPath(teamDir()); return teamDir(); });
+// export for your own analysis: a folder with a copy of the database, flat CSVs (stints, laps, setups) and a README with the columns
+ipcMain.handle('data:export', async () => {
+  const { dialog } = require('electron');
+  const r = await dialog.showOpenDialog(main, { title: 'Export your data to…', properties: ['openDirectory', 'createDirectory'], defaultPath: app.getPath('documents') });
+  if (r.canceled || !r.filePaths[0]) return null;
+  if (learnTimer) { clearTimeout(learnTimer); learnTimer = null; } learnWrite();   // everything on disk first
+  const day = new Date(), stamp = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')} ${String(day.getHours()).padStart(2, '0')}${String(day.getMinutes()).padStart(2, '0')}`;
+  const out = path.join(r.filePaths[0], `Setup Engineer export ${stamp}`); fs.mkdirSync(out, { recursive: true });
+  const L = learnLoad(), q = v => { if (v === null || v === undefined || (typeof v === 'number' && !Number.isFinite(v))) return ''; const s = typeof v === 'object' ? JSON.stringify(v) : String(v); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const csv = (file, cols, rows) => fs.writeFileSync(path.join(out, file), '﻿' + [cols.join(','), ...rows.map(r => cols.map(c => q(r[c])).join(','))].join('\r\n'));
+  const iso = t => t ? new Date(t).toISOString() : '';
+  // stints: one row each, the main numbers as columns (the full record is in the database's json column)
+  const S = Object.values(L.stints).sort((a, b) => (a.date || 0) - (b.date || 0)).map(s => { const b = s.bal || {}, a = s.aero || {}, p = s.prof || {}, f = s.ffb || {}, d = s.drag || {}, t = s.tyreT || {};
+    return { stint_id: s.id, car: s.car, car_name: s.carName, track: s.track, track_name: s.trackName, date: iso(s.date), session: s.session, setup_name: s.setupName, sim_hour: s.tod,
+      clean_laps: s.laps, best_s: s.best, typical_s: s.med, spread_s: s.sd, track_temp_c: s.trackT, air_temp_c: s.airT, wet: s.wet ? 1 : 0, fuel_per_lap_l: s.fuel,
+      bal_entry_deg: b.entry, bal_mid_deg: b.mid, bal_exit_deg: b.exit, bal_slow_deg: b.slow, bal_fast_deg: b.fast, slides_per_lap: s.slides, lap_time_drop_s_per_lap: s.deg,
+      tyre_front_c: t.F, tyre_rear_c: t.R, start_press_front_kpa: t.sPF, start_press_rear_kpa: t.sPR, hot_press_front_kpa: t.pF, wear_front_pct_per_lap: s.wearF, wear_rear_pct_per_lap: s.wearR,
+      wing: a.w, static_rh_front_mm: a.sF, static_rh_rear_mm: a.sR, rh_at_speed_front_mm: a.fA, rh_at_speed_rear_mm: a.rA, rh_speed_kmh: a.vF, downforce_n: a.df, front_downforce_pct: a.fpct,
+      spring_front_n_mm: a.kF, spring_rear_n_mm: a.kR, top_speed_kmh: p.vmax != null ? p.vmax : a.vmax, mass_kg: s.mass, drag_k_n_per_ms2: d.K, wheel_power_w: d.P,
+      track_full_throttle: p.full, track_slow_corners: p.slowN, track_fast_corners: p.fastN, track_roughness: p.rough != null ? p.rough : (s.susp || {}).rough,
+      ffb_max_nm: f.maxNm, ffb_clipping: f.clip, wind_on_lock_s: f.tWind, corrections_per_corner: f.corr }; });
+  if (S.length) csv('stints.csv', Object.keys(S[0]), S);
+  // laps: every lap of every stint
+  const lapRows = []; for (const [id, rows] of Object.entries(L.laps || {})) for (const x of rows || []) lapRows.push(Object.assign({ stint_id: id }, x));
+  const lapCols = ['stint_id', ...[...new Set(lapRows.flatMap(x => Object.keys(x)))].filter(k => k !== 'stint_id')];
+  if (lapRows.length) csv('laps.csv', lapCols, lapRows);
+  // setups: long format (one row per stint and setting)
+  const set = []; for (const s of Object.values(L.stints)) for (const [k, v] of Object.entries(s.setup || {})) set.push({ stint_id: s.id, setting: k, value: v, number: parseFloat(String(v).replace(/^[^-\d]*/, '')) });
+  if (set.length) csv('setups.csv', ['stint_id', 'setting', 'value', 'number'], set);
+  try { if (store && store.file && fs.existsSync(store.file)) fs.copyFileSync(store.file, path.join(out, 'setup-engineer.db')); } catch (e) {}
+  fs.writeFileSync(path.join(out, 'README.md'), `# Setup Engineer data export (${stamp})
+
+Exported from Setup Engineer ${app.getVersion()}. All of it comes from your own iRacing telemetry.
+
+- **stints.csv**: one row per stint (${S.length}). Joins to the other files on \`stint_id\` (car|track|best lap).
+- **laps.csv**: every lap (${lapRows.length}). \`clean\` = full lap without going off track; \`used\` = used in the analysis; \`cut\` = went off track and came out clearly quicker (left out); \`fuel\` litres at the start of the lap; \`tyreF\`/\`tyreR\` tyre temperature (°C, garage-equivalent); \`s1\`..\`s3\` sector times; \`g\` grip used; \`age\` laps on the tyres.
+- **setups.csv**: every setting per stint, long format (\`setting\`, raw \`value\`, and \`number\` parsed from it).
+- **setup-engineer.db**: the full SQLite database (tables \`stints\`, \`laps\`, \`setup\`, \`refs\`, \`kv\`; the \`json\` columns hold every field).
+
+Units: times in seconds, temperatures °C, ride heights mm, springs N/mm, downforce N (measured from how far the suspension compresses at \`rh_speed_kmh\`, calibrated to iRacing's aero calculator), balance in degrees of understeer (positive = understeer), drag as K in drag force = K·v² (N, v in m/s, rolling resistance included) with the wheel power P, both fitted from full-throttle acceleration (m·a·v = P − K·v³).
+Balance, downforce and drag are estimates from telemetry, not iRacing's internal values.
+`);
+  shell.openPath(out); return { dir: out, stints: S.length, laps: lapRows.length, settings: set.length };
+});
 ipcMain.handle('data:csv', (_e, on) => { if (on !== undefined) { cfg.settings.csv = !!on; saveCfg(); if (on) { for (const r of Object.values(learnLoad().stints)) csvTouched.add(r.car + '|' + r.track); learnSave(); } } return !!cfg.settings.csv; });
 let lastSaveError = null, lastSaved = 0;
 function learnWrite() {
