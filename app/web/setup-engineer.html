@@ -2536,8 +2536,13 @@ function render(){
   document.querySelectorAll(".mrange").forEach(s=>s.onchange=()=>{ const R=modelRange(); R[s.dataset.k]=s.value; try { PREFS.set("modelRange", R); } catch(e){}
     runs.forEach(r=>{ if (r.A) r.A.tw=null; }); rerender(); });   // the measured tyre window follows the range too
   // test programme (Learning tab): start, re-baseline, stop, tick steps by hand
-  { const st=$("#tpstart"); if (st) st.onclick=()=>{ tpSet(run, {created:runDate(run), base:tpSetup(run), manual:{}}); rerender(); };
-    const rb=$("#tprebase"); if (rb) rb.onclick=()=>{ if (!confirm("Use this stint's setup as the new baseline? Steps are matched against it from now on.")) return; const P=tpGet(run)||{}; tpSet(run, Object.assign(P, {base:tpSetup(run)})); rerender(); };
+  // when this stint began (a live stint is stored when it ends, so take its length off), so the stint itself counts
+  const tpFrom=()=>{ const L=run.learnedId&&LEARN&&LEARN[run.learnedId]; const d=L&&L.date ? L.date : runDate(run)-(run.live&&run.n&&run.tick?run.n/run.tick*1000:0); return Math.min(d, runDate(run))-120e3; };
+  { const st=$("#tpstart"); if (st) st.onclick=()=>{ tpSet(run, {created:tpFrom(), base:tpSetup(run), baseName:setupName(run).name||"", manual:{}}); rerender(); };
+    // a new baseline: the programme starts again from this stint (stints before it ran the old baseline, so they no longer count)
+    const rebase=()=>{ const P=tpGet(run)||{}; tpSet(run, Object.assign(P, {base:tpSetup(run), baseName:setupName(run).name||"", created:tpFrom(), manual:{}})); rerender(); };
+    const rb=$("#tprebase"); if (rb) rb.onclick=()=>{ if (!confirm("Use this stint's setup as the new baseline? The programme starts again from this stint.")) return; rebase(); };
+    const rb2=$("#tprebase2"); if (rb2) rb2.onclick=rebase;
     const rs=$("#tpreset"); if (rs) rs.onclick=()=>{ if (!confirm("Stop this test programme? Your stints stay; only the checklist goes.")) return; tpSet(run, null); rerender(); };
     document.querySelectorAll(".tpcheck").forEach(c=>c.onchange=()=>{ const P=tpGet(run); if (!P) return; P.manual=P.manual||{}; P.manual[c.dataset.id]=c.checked; tpSet(run, P); rerender(); }); }
   for (const [id,key] of [["lctarget","lcTarget"],["tyreloss","tyreLoss"],["racestart","startH"]]){ const el=$("#"+id); if (el) el.onchange=()=>{ RACE[key]=el.value===""?"":+el.value; PREFS.set("race", RACE); rerender(); }; }
@@ -5768,7 +5773,11 @@ function testProgHTML(run){
     <button id="tpstart">Start a test programme for the ${esc(run.carName)} at ${esc(trk)}, with this stint's setup as the baseline</button></section>`;
   const steps=tpStatus(run,P), next=steps.find(s=>!s.complete), doneN=steps.filter(s=>s.complete).length, dt=d=>new Date(d).toLocaleString([], {weekday:"short", day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit"});
   let blk="";
-  return `<section><h2>Test programme <small>${esc(run.carName)} at ${esc(trk)} · ${doneN} of ${steps.length} done · started ${dt(P.created)}</small></h2>${nextNote}${listNote}
+  // this stint ran a different setup from the baseline (a whole other .sto, not one change): it counts for no step. Offer to make it the baseline.
+  const curCh=tpChanged(P.base, tpSetup(run)), baseName=P.baseName || ((Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===learnTrackOf(run) && r.date>=P.created-60e3).sort((a,b)=>a.date-b.date)[0]||{}).setupName) || "";
+  const other = curCh.length>=5 ? `<div class="sugg p2" style="margin:0 0 10px"><h3>This stint ran a different setup from the programme's baseline</h3><p style="margin:4px 0 0"><b>${esc(setupName(run).name||"This setup")}</b> differs from the baseline${baseName?` (<b>${esc(baseName)}</b>)`:""} in ${curCh.length} settings (${esc(curCh.slice(0,5).map(c=>learnLabel(c.k)).join(", "))}${curCh.length>5?"…":""}), so it can't count for any step: each step is one change from the baseline. Nothing is lost: every stint is still learned by the models. If this is the setup you meant to start from, make it the baseline and the programme starts again from it.</p>
+     <div class="row" style="gap:8px;margin-top:6px"><button id="tprebase2">Make ${esc(setupName(run).name||"this setup")} the baseline</button></div></div>` : "";
+  return `<section><h2>Test programme <small>${esc(run.carName)} at ${esc(trk)} · ${doneN} of ${steps.length} done · started ${dt(P.created)}${baseName?` · baseline ${esc(baseName)}`:""}</small></h2>${other}${nextNote}${listNote}
    ${next?`<div class="sugg p3" style="margin:0 0 10px"><h3>Next: ${esc(next.label)}</h3><p style="margin:4px 0 0">${next.how} Drive <b>${next.laps} clean laps</b>${next.done?` (${next.done} so far)`:""}.</p></div>`:`<div class="sugg p3" style="margin:0 0 10px"><h3>Programme complete</h3><p style="margin:4px 0 0">Every step is done: the models in this tab now know each of these settings on this car. "What to test next" below shows anything still uncertain.</p></div>`}
    <div class="tablewrap"><table style="font-size:12px"><tr><th></th><th>Step</th><th>What to set</th><th>Clean laps</th><th>Stints found</th></tr>
     ${steps.map(s=>{ const head=s.block!==blk?`<tr><td colspan="5" style="background:rgba(127,127,127,.08);font-weight:700">${esc(s.block)}</td></tr>`:""; blk=s.block;
