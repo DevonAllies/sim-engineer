@@ -515,9 +515,16 @@ const fmt = (v,d=1) => Number.isFinite(v)? v.toFixed(d) : "–";
 function fmtTime(s){ if(!Number.isFinite(s)) return "–"; const m=Math.floor(s/60); return m+":"+(s-m*60).toFixed(3).padStart(6,"0"); }
 
 // ---------- analysis ----------
+// track-specific rules: the Nordschleife (and its combined / 24h layouts) has a 70 mm minimum ride height for GT3 cars,
+// against 50 mm (splitter) elsewhere; the app never suggests going under it there
+const TRACK_RULES = [{re:/nurburgring.*(nordschleife|combined|gesamt|industrie|vln)/i, car:/gt3/i, minRH:70, note:"Nordschleife: GT3 ride heights and splitter must stay at 70 mm or more in the garage."}];
+function trackRule(run){ const wi=(run.info&&run.info.WeekendInfo)||{}, t=`${wi.TrackName||""} ${typeof wi.TrackConfigName==="string"?wi.TrackConfigName:""} ${run.name||""}`;
+  return TRACK_RULES.find(r=>r.re.test(t) && r.car.test(run.carPath||"")) || null; }
 function settingsFor(run){
   const base = PROFILES[run.carPath] || PROFILES._default;
-  return Object.assign({}, base, userSettings, (PREFS.get("car",{})[run.carPath])||{}, run.overrides||{});
+  const S = Object.assign({}, base, userSettings, (PREFS.get("car",{})[run.carPath])||{}, run.overrides||{});
+  const R = trackRule(run); if (R){ S.minRH=R.minRH; S.minSplitter=Math.max(+S.minSplitter||0, R.minRH); S.trackNote=R.note; }
+  return S;
 }
 
 function analyze(run){
@@ -3630,6 +3637,7 @@ function guideHTML(run){
   if (P.dir && P.dir.some(d=>d.test("x","tcsetting"))) carNotes.push("TC and ABS: on this car a <b>lower</b> number means <b>more</b> help.");
   if (P.dir && P.dir.some(d=>d.test("carsetup.dampers.x","x"))) carNotes.push("Dampers: on this car a <b>lower</b> click number means <b>stiffer</b>.");
   if (P.minSplitter) carNotes.push(`Splitter must stay at ${P.minSplitter} mm or more in the garage (tech inspection).`);
+  { const R=trackRule(run); if (R) carNotes.push(`<b>${R.note}</b> At that height the car sits above iRacing's maximum-downforce window, so balance it with the wing and rake rather than by lowering it.`); }
   if (P.frontRH) carNotes.push(`Most downforce: ${P.frontRH} mm front / ${P.rearRH} mm rear at speed${P.wingTarget?` with wing ${P.wingTarget}`:""}. Each wing step is balanced by about ${P.wingBal.f} mm front or ${P.wingBal.r} mm rear.`);
   if (P.rhHow) carNotes.push(P.rhHow);
   return `<section><h2>Guide <small>what each setting does, in plain words (from the iRacing car manuals)</small></h2>
@@ -3795,11 +3803,23 @@ function ffbStrengthHTML(run, A){
     : X.verdict==="stronger" ? `<b style="color:var(--us)">Make the wheel stronger</b>: lower iRacing's max force${Number.isFinite(X.rec)?` from ${fmt(X.maxNm,0)} to about <b>${X.rec} Nm</b>`:""}.`
     : `<b class="ok">Keep the wheel strength as it is</b>${Number.isFinite(X.maxNm)?` (${fmt(X.maxNm,0)} Nm max force)`:""}: nothing in how you turned in says it's too heavy or too light.`;
   const li = (a,c) => a.map(x=>`<li style="color:${c}">${x.t}</li>`).join("");
+  // what each max force did for you here: same car, same track, grouped to the nearest Nm
+  const trk=learnTrackOf(run), R=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===trk && !r.wet && r.ffb && Number.isFinite(r.ffb.maxNm) && r.laps>=3 && r.date>=LEARN_CUTOFF);
+  const G={}; for (const r of R) (G[Math.round(r.ffb.maxNm)]=G[Math.round(r.ffb.maxNm)]||[]).push(r);
+  const Mx=(L,f)=>{ const v=L.map(f).filter(Number.isFinite); return v.length?median(v):NaN; }, now=Math.round(X.maxNm);
+  const rows=Object.keys(G).map(Number).sort((a,b)=>a-b).map(nm=>{ const L=G[nm]; return {nm, n:L.length, laps:L.reduce((a,r)=>a+r.laps,0), tWind:Mx(L,r=>r.ffb.tWind), corr:Mx(L,r=>r.ffb.corr), spike:Mx(L,r=>r.ffb.spike), clip:Mx(L,r=>r.ffb.clip), med:Mx(L,r=>r.med), best:Math.min(...L.map(r=>r.best).filter(Number.isFinite))}; });
+  const fastest=rows.filter(r=>Number.isFinite(r.med)).reduce((a,b)=>!a||b.med<a.med?b:a,null);
+  const hist = rows.length>=2 ? `<h3 style="margin:12px 0 4px">What each max force did here <small class="muted" style="font-weight:400">${esc(run.carName||"")} at this track, ${R.length} stints</small></h3>
+    <div class="tablewrap"><table style="font-size:12px"><tr><th>Max force</th><th>Stints / laps</th><th>Wind on lock</th><th>Corrections</th><th>Front washes out</th><th>Clipping</th><th>Typical lap</th><th>Best</th></tr>
+    ${rows.map(r=>`<tr${r.nm===now?' style="font-weight:600"':""}><td>${r.nm} Nm${r.nm===now?" (now)":""}</td><td>${r.n} / ${r.laps}</td><td>${fmt(r.tWind,2)} s</td><td>${fmt(r.corr,1)}</td><td>${Number.isFinite(r.spike)?Math.round(r.spike*100)+"%":"–"}</td><td>${Number.isFinite(r.clip)?Math.round(r.clip*100)+"%":"–"}</td><td${r===fastest?' class="ok"':""}>${Number.isFinite(r.med)?fmtTime(r.med):"–"}</td><td>${Number.isFinite(r.best)?fmtTime(r.best):"–"}</td></tr>`).join("")}</table></div>
+    <p class="muted" style="font-size:12px">Higher Nm = lighter wheel. Quicker wind-on with no more wash-out or corrections, and a faster typical lap, means that strength suits you here. Other changes made between these stints (setup, track temperature) also move the lap time, so look at the turn-in columns first.</p>`
+    : `<p class="muted" style="font-size:12px">To compare: drive 5+ laps at another max force with this car at this track (for example ${Number.isFinite(X.maxNm)?Math.round(X.maxNm*1.15)+" Nm, a bit lighter":"a bit lighter"}), keeping the setup the same, and a table of what each strength did appears here.</p>`;
   return `<section><h2>Lighter or stronger? <small>from your turn-in, the front and the forces in this run</small></h2>
    <p class="summary">${head}</p>
    ${X.heavy.length||X.light.length?`<ul style="margin:6px 0 0 18px;line-height:1.6">${X.heavy.length?`<li><b>Too heavy:</b><ul>${li(X.heavy,"inherit")}</ul></li>`:""}${X.light.length?`<li><b>Too light:</b><ul>${li(X.light,"inherit")}</ul></li>`:""}</ul>`:""}
    ${X.slope&&!X.heavy.some(h=>/pushes back hardest/.test(h.t))&&!X.light.some(h=>/quicker/.test(h.t))?`<p class="muted" style="font-size:12px">Heavy vs light corners: no clear difference in how quickly you wind on lock (${X.slope.n} corners), so the weight isn't holding your hands back.</p>`:""}
    ${X.fat&&X.fat.ch<=0.12?`<p class="muted" style="font-size:12px">Over the stint (${X.fat.laps} laps) your turn-in ${X.fat.ch<-0.05?"got quicker":"stayed about the same"}: no sign of tiring.</p>`:""}
+   ${hist}
    <p class="muted" style="font-size:12px">Remember: in iRacing a <b>higher</b> max force means a <b>lighter</b> wheel. Change it in steps of 10–15%, drive 5 laps, and this check runs again. Force feedback doesn't change the car's grip: a too-heavy wheel slows your hands, a too-light one hides the moment the front lets go. Choose your wheel and feel below so the check also knows how many Nm reach your hands.</p></section>`; }
 function ffbHTML(run, A){
   const F=A.ffb;
@@ -4061,6 +4081,9 @@ function learnRecord(run, A, opts){
   { const L=A.rep.slice().sort((a,b)=>a.lap-b.lap); if (L.length>=5){ const c=fitLS(L.map(l=>[l.lap]), L.map(l=>l.time)); if (c && Number.isFinite(c[1])) rec.deg=num(c[1]); } }
   { const di=run.info.DriverInfo||{}, mx=parseFloat(di.DriverCarFuelMaxLtr), pc=parseFloat(di.DriverCarMaxFuelPct); if (mx>0) rec.tankL=num(mx*(pc>0&&pc<=1?pc:1)); }
   try { rec.lc=liftCoastOf(run, A); } catch(e){}
+  // force feedback: the max force you ran and how you turned in with it (FFB is set per car and track, so it's compared there)
+  try { const F=A.ffb, I=inputsAnalysis(run, A); if (F && Number.isFinite(F.maxNm)) rec.ffb={maxNm:num(F.maxNm), clip:num(F.clip), p95:num(F.p95pct), peakNm:num(F.peakNm),
+      tWind:I?num(I.S.tWind):null, corr:I?num(I.S.corr):null, spike:I?num(I.S.spike):null}; } catch(e){}
   // for the models: the sim's time of day (track temperature over a race), the track's character (starting setup at a new track)
   { const tod=todHour(wi); if (Number.isFinite(tod)) rec.tod=tod; }
   { const W=wetOf(run); rec.wet=W.wet; rec.compound=W.compound; if (W.wetness) rec.wetness=W.wetness; }   // wet and dry are learned separately
@@ -4257,7 +4280,11 @@ function resolveConflicts(run, sug){
 function guardSug(run, A, sug){
   const laps=A.rep.length, sess=sessionLaps(run, A), prev=learnPrev(run, A);
   A.sessLaps = sess;
-  const isBias = k => k.includes("brakepressurebias") || k==="brakebias";
+  const isBias = k => k.includes("brakepressurebias") || k==="brakebias", minRH=+settingsFor(run).minRH||0;
+  // a track minimum (Nordschleife 70 mm): any option that takes a static ride height or the splitter under it is off the table
+  if (minRH) for (const s of sug) for (const o of s.opts||[]){ if (o.limit) continue;
+    for (const c of o.ch||[]){ if (!c.res || c.res.same) continue; const k=c.e.key.toLowerCase(), to=parseFloat(c.res.raw);
+      if ((k==="rideheight" || k==="centerfrontsplitterheight") && Number.isFinite(to) && to<minRH-0.05){ o.limit=true; o.label+=` (not allowed here: ${minRH} mm minimum)`; break; } } }
   // balance (and the anti-roll bars, which follow from it) only after 5 clean laps on this setup
   if (!balanceReady(run, A)) for (let i=sug.length-1;i>=0;i--) if (sug[i].area==="Balance") sug.splice(i,1);
   for (const s of sug){ if (s.area==="Fuel" || s.area==="Qualifying") continue;

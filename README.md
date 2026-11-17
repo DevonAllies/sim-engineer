@@ -162,6 +162,7 @@ Not in the repo: `node_modules`, installers, `.ibt` telemetry, the database, and
 |---|---|
 | 0.15.1 | Short same-setup stints (same day, similar track temp and time of day) combined for the setup and balance learning, tagged "combined"; owned cars and tracks picker (base content + driven by default, saved) used by the Schedule. |
 | 0.15.2 | Tracks tab (surface, slow/fast corners, full throttle, heavy stops, top speed, downforce call, best lap and wing per car, from every stint); force feedback "lighter / stronger / keep" verdict from turn-in speed vs wheel force, fatigue over the stint, clipping and front wash-out; Schedule shows this week and next week from the PC's date, with endurance rounds placed in the iRacing week their race falls in. |
+| 0.15.3 | Track rules: Nordschleife GT3 70 mm minimum ride height / splitter (suggestions below it are blocked, noted in the Guide); force feedback setting stored per stint, with a "what each max force did here" table per car and track. |
 | 0.15.0 | Schedule panel from the iRacing season schedule PDF (your series this / next week, endurance rounds, special events, BoP); test programme points to next week's track. |
 | 0.14.10 | Tab list sized to the visible window so the last group (Dev) is always reachable. |
 | 0.14.9 | Test programme in Learning (dev): baseline, springs min/max, dampers, bars and wing (per track), one change at a time, auto-ticked from your stints with laps needed; wing sweep per track in Aero. |
