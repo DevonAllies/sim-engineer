@@ -307,15 +307,15 @@ function endLap(){
   closeCorner();
   // a clean lap is counted the way the app counts it for learning: not more than 3% off your best clean lap this session
   { const s0=ST.last, t=(s0 && ST.lapT0!==null) ? s0.SessionTime-ST.lapT0 : NaN;
-    if (ST.cur.valid && Number.isFinite(t) && t>20 && Number.isFinite(ST.best) && t>ST.best*1.03) ST.cur.slow=true; }
-  if (ST.stint && ST.cur.valid && !ST.cur.slow && ST.cur.mid.length+ST.cur.exit.length>40){
+    if (ST.cur.valid && Number.isFinite(t) && t>20 && Number.isFinite(ST.best) && t>ST.best*1.03) ST.cur.slowLap=true; }
+  if (ST.stint && ST.cur.valid && !ST.cur.slowLap && ST.cur.mid.length+ST.cur.exit.length>40){
     ST.stint.laps++; ST.lapsClean=(ST.lapsClean||0)+1; for (const p of ["entry","mid","exit"]) ST.stint[p].push(...ST.cur[p]);
     if (ST.cur.tyre.n>300){ ST.stint.lastLapTyres = ST.cur.tyre;   // add this lap to the stint's tyre average
       // each lap's own average (all its corners) is added; the report divides by the number of laps, so every lap counts the same
       const S=ST.stint.tyreSum || (ST.stint.tyreSum={n:0, laps:0}), T=ST.cur.tyre; S.laps++; S.n=S.laps;
       for (const [k,v] of Object.entries(T)) if (k!=="n") S[k]=(S[k]||0)+v/T.n; }
   }
-  else if (ST.stint && !ST.outLap && ST.lap!==null){ const why = ST.cur.off>=0.5 ? `${ST.cur.off.toFixed(1)} s off track` : ST.cur.slow ? "more than 3% off your best" : "";
+  else if (ST.stint && !ST.outLap && ST.lap!==null){ const why = ST.cur.off>=0.5 ? `${ST.cur.off.toFixed(1)} s off track` : ST.cur.slowLap ? "more than 3% off your best" : "";
     if (why) addLog(`Lap ${ST.lap} not counted as clean (${why})`); }
   // best lap so far becomes the reference for corner coaching
   const s=ST.last, lt = (s && ST.lapT0!==null) ? s.SessionTime-ST.lapT0 : NaN;

@@ -2510,7 +2510,7 @@ function render(){
      <p class="muted" style="font-size:12px">Map is your best lap. Dots are slide moments from all laps used.</p></div>
     <div class="tablewrap">${balanceTable(A)}
      <p class="muted" style="font-size:12px">Entry = on the brakes, mid = coasting / part throttle, exit = throttle above 40%. Steering ratio ${fmt(A.ratio)}:1 (estimated from gentle cornering).</p></div></div>
-  </section>` + cornerBalanceHTML(run, A) + limitHTML(run, A) + arbHTML(run, A) + rotationHTML(run, A) + areaCards("balance"),
+  </section>` + safe(()=>balanceWhyHTML(run, A),"balwhy") + cornerBalanceHTML(run, A) + limitHTML(run, A) + arbHTML(run, A) + rotationHTML(run, A) + areaCards("balance"),
     brakes: () => inCarHTML(run, A) + brakesHTML(run, A) + areaCards("brakes"),
     loss: () => gpHTML(run, A),
     gp: () => gpHTML(run, A) + safe(()=>inputsHTML(run, A, S),"inputs") + safe(()=>refLapHTML(run, A),"reflap") + (()=>{ try { return teamCompareHTML(run, A); } catch(e){ console.error(e); return ""; } })(),
@@ -3731,6 +3731,79 @@ function cornerBalance(run, A){
     const slides = A.events.filter(e=>{ const p=ch.LapDistPct[e.a]; return p>=s.b[0] && p<=s.b[3]; }).length / A.rep.length;
     return {n:i+1, at:s.at, entry:m(0), mid:m(1), exit:m(2), apex:pct(vmid,.05), slides};
   });
+}
+// ---------- where it understeers or oversteers, and why: corner by corner, entry / mid (to the apex) / exit, driving or setup ----------
+// Driving is judged lap against lap in the same corner: if it pushes more on the laps you went in faster, that's entry speed;
+// if it only pushes when you came off the brake before turning, that's the trail braking; if it slides on the laps you
+// got on the throttle earlier, that's the throttle. If it does it on your calmest laps too, it's the setup.
+function balanceWhy(run, A){
+  if (A._bw!==undefined) return A._bw;
+  let C=[]; try { C=coachCorners(run,A); } catch(e){ return A._bw=null; }
+  const secs=cornerSections(run,A), ch=run.ch, out=[];
+  for (const c of C){
+    const P=c.per, s=secs[c.n-1]; if (!P || P.length<2 || !s) continue;
+    const slides=ph=>A.events.filter(e=>e.phase===ph && ch.LapDistPct[e.a]>=s.b[0] && ch.LapDistPct[e.a]<=s.b[3]).length/A.rep.length;
+    const lapSlid=(p,ph)=>A.events.some(e=>e.phase===ph && Math.abs(ch.LapDistPct[e.a]-(s.b[0]+s.b[3])/2)<=(s.b[3]-s.b[0])/2 && A.rep.some(l=>l.lap===p.lap && e.a>=l.s && e.a<l.e));
+    const row={n:c.n, at:c.at, vmin:median(P.map(p=>p.vmin)), ph:{}};
+    for (const [ph,k] of [["entry","usEntry"],["mid","usMid"],["exit","usPower"]]){
+      const vals=P.map(p=>p[k]).filter(Number.isFinite), u=vals.length>=2?median(vals):NaN, sl=slides(ph==="mid"?"mid":ph);
+      const r={u, slides:sl, kind: Number.isFinite(u)&&u>US_PUSH ? "us" : (Number.isFinite(u)&&u<US_LOOSE) || sl>=0.5 ? "os" : Number.isFinite(u) ? "ok" : "", why:[], cause:""};
+      if (r.kind==="us"){
+        if (ph!=="exit"){
+          const rr=pearson(P.map(p=>p.vTI), P.map(p=>p[k])), fastest=P.reduce((a,b)=>b.time<a.time?b:a), dv=median(P.map(p=>p.vTI))-fastest.vTI;
+          if (Number.isFinite(rr) && rr>0.45) r.why.push(`the faster you turned in, the more it pushed (${Math.round(Math.min(...P.map(p=>p.vTI)))}–${Math.round(Math.max(...P.map(p=>p.vTI)))} km/h at turn-in)`);
+          else if (dv>3) r.why.push(`you turn in ${Math.round(dv)} km/h faster than on your fastest pass here`);
+          if (c.trail && c.trail.v==="too little") r.why.push("you're off the brake before turning in, so the front has no load to bite with");
+          // the setup test: does it still push on your slowest entries?
+          const slow=P.slice().sort((a,b)=>a.vTI-b.vTI).slice(0,Math.max(1,Math.floor(P.length/2))), uSlow=median(slow.map(p=>p[k]).filter(Number.isFinite));
+          r.uSlow=uSlow; r.cause = r.why.length && !(uSlow>US_PUSH) ? "driving" : r.why.length ? "both" : "setup";
+        } else {
+          const early=P.filter(p=>p.pickRel<-3).length/P.length, rr=pearson(P.map(p=>p.pickRel), P.map(p=>p.usPower));
+          if (early>=0.5 || (Number.isFinite(rr) && rr<-0.45)) r.why.push(early>=0.5?"you're on the throttle before the apex: the weight goes to the rear and the front washes wide":"the earlier you picked up the throttle, the more it pushed");
+          r.cause = r.why.length ? (early>=0.5 && P.filter(p=>p.pickRel>=-3 && p.usPower>US_PUSH).length ? "both" : "driving") : "setup";
+        }
+      } else if (r.kind==="os"){
+        if (ph==="entry"){ if (c.trail && c.trail.v==="too much") r.why.push("too much brake still on while you turn: the rear goes light"); }
+        else if (ph==="exit"){ const S=P.filter(p=>lapSlid(p,"exit")), N=P.filter(p=>!lapSlid(p,"exit"));
+          if (S.length && N.length && median(S.map(p=>p.pickRel))<median(N.map(p=>p.pickRel))-5) r.why.push(`it slides on the laps you get on the power earlier (${Math.round(median(N.map(p=>p.pickRel))-median(S.map(p=>p.pickRel)))} m sooner): squeeze the throttle in later or more gently`); }
+        else { if (P.filter(p=>p.corr>=3).length>=P.length/2) r.why.push("lots of steering corrections mid-corner: you're catching it"); }
+        r.cause = r.why.length ? "driving" : "setup";
+      }
+      row.ph[ph]=r; }
+    out.push(row); }
+  return A._bw=out;
+}
+const BW_FIX = { us:{ entry:"front brake bias a click forward, or a softer front anti-roll bar", mid:"a softer front anti-roll bar or a stiffer rear one", exit:"less diff preload, or a softer front bar" },
+                 os:{ entry:"brake bias a click forward, more entry diff (coast) locking, or a softer rear bar", mid:"a softer rear anti-roll bar, or a click more wing", exit:"a step more traction control, less diff (power) locking, or a softer rear" } };
+function balanceWhyHTML(run, A){
+  const R=balanceWhy(run,A); if (!R || !R.length) return "";
+  const PH=[["entry","Entry","braking and turning in"],["mid","Mid-corner","off the brakes, to the apex"],["exit","Exit","picking up the throttle"]];
+  const tag=(r)=>{ if (!r || !r.kind) return `<td class="muted">–</td>`; const s=step5(r.u), col=r.kind==="us"?"var(--us)":r.kind==="os"?"var(--os)":"var(--good)";
+    const w=r.kind==="ok" ? "Neutral" : r.kind==="os" && !(r.u<US_LOOSE) ? "Slides" : s.w;
+    return `<td style="color:${col};font-weight:600">${w}<span class="muted" style="font-weight:400;font-size:11px"> ${fmt(r.u,1)}°${r.slides>=0.3?` · ${fmt(r.slides,1)} slides/lap`:""}</span>${r.cause?`<div style="font-size:11px;font-weight:600;color:${r.cause==="setup"?"var(--warn)":"var(--ink)"}">${r.cause==="setup"?"setup":r.cause==="both"?"driving + setup":"driving"}</div>`:""}</td>`; };
+  // the headline per phase: where, how much, and whose it is
+  const lines=PH.map(([k,nm])=>{ const us=R.filter(r=>r.ph[k]&&r.ph[k].kind==="us"), os=R.filter(r=>r.ph[k]&&r.ph[k].kind==="os"), parts=[];
+    for (const [L,kind,word] of [[us,"us","understeer"],[os,"os","oversteer"]]){ if (!L.length) continue;
+      const drv=L.filter(r=>r.ph[k].cause==="driving"), set=L.filter(r=>r.ph[k].cause!=="driving"), both=L.filter(r=>r.ph[k].cause==="both");
+      parts.push(`<b style="color:var(--${kind})">${word}</b> at ${L.map(r=>"T"+r.n).join(", ")}${set.length&&drv.length?` (setup: ${set.map(r=>"T"+r.n).join(", ")}; driving: ${drv.map(r=>"T"+r.n).join(", ")})`:set.length?" — the setup":" — your driving"}${both.length?`; your entry makes it worse at ${both.map(r=>"T"+r.n).join(", ")}`:""}`); }
+    return `<tr><td><b>${nm}</b></td><td>${parts.length?parts.join("; "):`<span class="ok">neutral everywhere</span>`}</td></tr>`; }).join("");
+  // what to do: driving first (it's free), then the setup direction for the phase with the most setup corners
+  const drvTips=[], setCount={};
+  for (const r of R) for (const [k,nm] of PH){ const x=r.ph[k]; if (!x || !x.kind || x.kind==="ok") continue;
+    if (x.why.length) drvTips.push(`<li><b>T${r.n} ${nm.toLowerCase()}</b>: ${esc(x.why.join("; "))}.</li>`);
+    if (x.cause!=="driving") setCount[x.kind+"|"+k]=(setCount[x.kind+"|"+k]||0)+1; }
+  const top=Object.entries(setCount).sort((a,b)=>b[1]-a[1]).filter(([,n])=>n>=2);
+  const setTips=top.slice(0,2).map(([key,n])=>{ const [kind,k]=key.split("|"); return `<li><b>${kind==="us"?"Understeer":"Oversteer"} on ${PH.find(p=>p[0]===k)[1].toLowerCase()}</b> in ${n} corners on your normal laps too: ${BW_FIX[kind][k]}. The Changes tab has the exact clicks.</li>`; });
+  const nDrv=R.reduce((a,r)=>a+PH.filter(([k])=>r.ph[k]&&r.ph[k].cause==="driving").length,0), nSet=R.reduce((a,r)=>a+PH.filter(([k])=>r.ph[k]&&(r.ph[k].cause==="setup"||r.ph[k].cause==="both")).length,0);
+  const verdict = !nDrv && !nSet ? "Balanced: no corner pushes or slides enough to act on." : nSet>=nDrv*2 ? "Mostly the setup: it does this on your calmest laps too." : nDrv>=nSet*2 ? "Mostly your driving: on the laps you're calmer, it doesn't do it." : "Both: some corners are the setup, some are how you take them.";
+  return `<section><h2>Where it pushes or slides, and why <small>each corner in three parts, near the grip limit, your clean laps compared with each other</small></h2>
+   <p class="summary">${verdict}</p>
+   <div class="tablewrap"><table style="margin-bottom:10px">${lines}</table></div>
+   ${drvTips.length?`<h3 style="font-size:14px;margin:10px 0 4px">Your driving</h3><ol style="margin:0 0 0 20px;line-height:1.7">${drvTips.join("")}</ol>`:""}
+   ${setTips.length?`<h3 style="font-size:14px;margin:10px 0 4px">The setup</h3><ul style="margin:0 0 0 20px;line-height:1.7">${setTips.join("")}</ul>`:""}
+   <div class="tablewrap" style="margin-top:10px"><table><tr><th>Corner</th><th>Apex speed</th>${PH.map(([,nm,sub])=>`<th>${nm}<br><span class="muted" style="font-weight:400;font-size:11px">${sub}</span></th>`).join("")}</tr>
+    ${R.map(r=>`<tr><td>T${r.n}<div class="muted" style="font-size:11px">${fmt(r.at/1000,2)} km</div></td><td>${fmt(r.vmin,0)} km/h</td>${PH.map(([k])=>tag(r.ph[k])).join("")}</tr>`).join("")}</table></div>
+   <p class="muted" style="font-size:12px">Understeer above ${US_PUSH.toFixed(1)}°, oversteer below ${US_LOOSE.toFixed(1)}° (or the rear stepping out on half the laps or more). <b>Driving</b> = it changes with how you take the corner: more push on the laps you turn in faster, or when you're off the brake before turning, or slides on the laps you get on the power earlier. <b>Setup</b> = it does it on your slowest, calmest laps too. <b>Driving + setup</b> = going in faster makes it worse, but it pushes even when you don't.</p></section>`;
 }
 function cornerBalanceHTML(run, A){
   const R=cornerBalance(run,A); if (!R.length) return "";
