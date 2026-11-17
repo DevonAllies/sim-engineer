@@ -546,8 +546,16 @@ function analyze(run){
   }
   const valid = laps.filter(l=>l.valid);
   if (!valid.length){ A.error="No complete timed laps found in this file (need at least one full lap off pit road)."; A.laps=laps; return A; }
-  const best = valid.reduce((a,b)=>a.time<b.time?a:b);
-  let rep = valid.filter(l=>l.time<=best.time*1.03 && l.off<0.5);
+  // a lap with time off track is never your best (iRacing invalidates it), and one that went off AND came out clearly
+  // quicker than your laps without going off is a cut (a chicane, the Bus Stop): it's left out of everything
+  const offOK=l=>l.off<=0.05, onLaps=valid.filter(offOK), medOn=onLaps.length ? median(onLaps.map(l=>l.time)) : NaN;
+  valid.forEach(l=>{ if (!offOK(l) && Number.isFinite(medOn) && l.time < medOn-0.8) l.cut=true; });
+  const uncut=valid.filter(l=>!l.cut), fastU=(uncut.length?uncut:valid).reduce((a,b)=>a.time<b.time?a:b);
+  // the best is the fastest lap that stayed on track, if it's at your pace (within 3%); otherwise the fastest uncut lap (never a slow out lap)
+  const near=onLaps.filter(l=>!l.cut && l.time<=fastU.time*1.03);
+  const best = near.length ? near.reduce((a,b)=>a.time<b.time?a:b) : fastU;
+  if (valid.some(l=>l.cut)) A.warnings.push(`Left out as cut laps (off track and ${"clearly quicker than your laps that stayed on"}): ${valid.filter(l=>l.cut).map(l=>`lap ${l.lap} (${fmtTime(l.time)}, ${l.off.toFixed(2)} s off track)`).join(", ")}.`);
+  let rep = uncut.filter(l=>l.time<=best.time*1.03 && l.off<0.5);
   if (!rep.length) rep=[best];
   // odd laps: clearly slower than your typical clean lap (traffic, a moment, a big mistake) are left out, so they don't bend the analysis or the learning
   A.oddLaps=[];
@@ -4122,7 +4130,7 @@ function lapRowsOf(run, A){
     const tAt=(l,p)=>{ for (let j=l.s+1;j<l.e;j++) if (ch.LapDistPct[j]>=p && ch.LapDistPct[j-1]<p) return ch.SessionTime[j]; return NaN; };
     const lap0=Math.min(...(A.laps||[]).map(l=>l.lap)), GT={}; try { for (const p of gripTemp(run,A)||[]) GT[p.lap]=p; } catch(e){}   // each lap's grip and tyre temperature (grip-temperature curve, measured window)
     return (A.laps||[]).filter(l=>l.full || l.time>20).map(l=>{
-      const row={lap:l.lap, time:+l.time.toFixed(3), clean:!!(l.valid && l.off<0.5), used:!!l.rep, best:!!l.best, offTrack_s:+(l.off||0).toFixed(2), full:!!l.full, age:l.lap-lap0, odd:!!l.odd};   // age = laps on these tyres in this stint
+      const row={lap:l.lap, time:+l.time.toFixed(3), clean:!!(l.valid && l.off<0.5 && !l.cut), used:!!l.rep, best:!!l.best, offTrack_s:+(l.off||0).toFixed(2), full:!!l.full, age:l.lap-lap0, odd:!!l.odd, ...(l.cut?{cut:true}:{})};   // age = laps on these tyres in this stint
       if (ch.FuelLevel){ const f=ch.FuelLevel[l.s]-ch.FuelLevel[l.e-1]; if (f>0 && f<20) row.fuel=+f.toFixed(3); row.fuelL=+ch.FuelLevel[l.s].toFixed(2); }   // fuel in the tank at the start of the lap (the fuel-weight model)
       const t=per[l.lap]; if (t){ row.tyreF=ax(t,["LF","RF"]); row.tyreR=ax(t,["LR","RR"]); }
       const gt=GT[l.lap]; if (gt){ row.g=+gt.g.toFixed(3); row.tAll=+gt.T.toFixed(1); }

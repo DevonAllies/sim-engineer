@@ -204,6 +204,30 @@ async function initData() {
       for (const r of Object.values(learn.stints)) csvTouched.add(r.car + '|' + r.track); } catch (e) {}
     learnWrite();
   }
+  try { if (fixCutLaps(learnLoad())) learnWrite(); } catch (e) {}
+}
+// one-time repair (0.15.5): older versions could take a lap with time off track as the stint's best (a cut chicane at Spa gave a
+// 2:15.4). From the stored laps: the best is the fastest lap that stayed on track, laps that went off AND came out clearly quicker
+// are marked as cuts and dropped, and a best-lap reference faster than any corrected stint is removed (the next stint replaces it)
+function fixCutLaps(L) {
+  L.kv = L.kv || {}; const mig = L.kv.mig = L.kv.mig || {}; if (mig.cut1) return false;
+  const med = a => { const s = a.slice().sort((x, y) => x - y), n = s.length; return n ? (n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2) : NaN; };
+  let fixed = 0;
+  for (const [id, r] of Object.entries(L.stints)) { const rows = L.laps[id]; if (!Array.isArray(rows) || !rows.length) continue;
+    const pool = rows.filter(x => x.full !== false && Number.isFinite(x.time)), on = pool.filter(x => !(x.offTrack_s > 0.05)), m = med(on.map(x => x.time));
+    let changed = false;
+    for (const x of pool) if (x.offTrack_s > 0.05 && Number.isFinite(m) && x.time < m - 0.8 && !x.cut) { x.cut = true; x.used = false; x.clean = false; changed = true; }
+    // fastest uncut lap at your pace; the best is the fastest of those that stayed on track (within 3%), never a slow out lap
+    const uncut = pool.filter(x => !x.cut && (x.used || x.best)), fastU = uncut.reduce((a, x) => !a || x.time < a.time ? x : a, null);
+    const near = fastU ? on.filter(x => !x.cut && (x.used || x.best) && x.time <= fastU.time * 1.03) : [];
+    const b = near.length ? near.reduce((a, x) => !a || x.time < a.time ? x : a, null) : fastU;
+    if (b && Number.isFinite(r.best) && Math.abs(b.time - r.best) > 0.0005 && b.time > r.best) { r.bestCut = r.best; r.best = +b.time.toFixed(3); for (const x of rows) x.best = x === b; changed = true; }
+    if (changed) { const used = rows.filter(x => x.used && !x.cut).map(x => x.time); if (used.length) { r.med = +med(used).toFixed(3); r.laps = used.length; }
+      L.stints[id] = r; csvTouched.add(r.car + '|' + r.track); fixed++; } }
+  // best-lap references: one quicker than every stint you have there came from a cut lap
+  for (const [k, ref] of Object.entries(L.refs)) { const [c, t] = k.split('|'); const bs = Object.values(L.stints).filter(r => r.car === c && String(r.track) === t && Number.isFinite(r.best)).map(r => r.best);
+    if (bs.length && ref && ref.best < Math.min(...bs) - 0.05) { delete L.refs[k]; fixed++; } }
+  mig.cut1 = Date.now(); console.log('fixCutLaps:', fixed); return true;
 }
 function seasonStart(t) {   // approx. iRacing season start: 2nd Tuesday of Mar / Jun / Sep / Dec
   let best = 0; const d = new Date(t);
