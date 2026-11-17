@@ -309,8 +309,10 @@ const runs = []; let current = 0;
 const G = 9.81;
 // understeer-angle thresholds (deg, relative to gentle-cornering baseline)
 // understeer-angle bands. They move with YOUR balance: the style you like and what you said each stint felt like (balPref)
-const US_BASE = {loose:-0.5, push:1.5, bad:2.5};
-let US_LOOSE = -0.5, US_PUSH = 1.5, US_PUSH_BAD = 2.5, BAL_SHIFT = 0;
+// the same scale as Bono and Corner by corner: neutral up to 0.7°, slight understeer to 1.6°, understeer beyond; oversteer below −0.4°
+// (0.15.13: was −0.5 / 1.5 / 2.5, which called 1.4° of mid-corner push "neutral" while Bono called it understeer)
+const US_BASE = {loose:-0.4, push:0.7, bad:1.6};
+let US_LOOSE = -0.4, US_PUSH = 0.7, US_PUSH_BAD = 1.6, BAL_SHIFT = 0;
 const STYLES = {
   stable:  {label:"Stable", sub:"likes a bit of understeer: a planted rear, safe on entry", s:+0.5},
   neutral: {label:"Balanced", sub:"neutral: the car turns and the rear follows", s:0},
@@ -620,14 +622,23 @@ function analyze(run){
   const us = new Float64Array(n).fill(NaN);
   const phaseOf = j => ch.Brake[j]>0.05 ? "entry" : ch.Throttle[j]<0.4 ? "mid" : "exit";
   const bandOf = v => v<125 ? "low" : v<175 ? "med" : "high";
-  const bins = {}; for (const p of ["entry","mid","exit"]) for (const b of ["low","med","high"]) bins[p+b]=[];
+  const bins = {}, binsAll = {}; for (const p of ["entry","mid","exit"]) for (const b of ["low","med","high"]){ bins[p+b]=[]; binsAll[p+b]=[]; }
+  // balance is what the car does near its grip limit: you feel understeer when the front runs out, not at half load.
+  // The grip the car makes at each speed (98th percentile of cornering g per 10 km/h) sets the limit; samples at 75%+ of it count.
+  // Without this, flat-out stretches and gentle kinks (light load, small angle) water the exit and entry numbers down to "neutral".
+  const envB=v=>Math.floor(v*3.6/10), envA={}; for (const j of idx){ const b=envB(ch.Speed[j]); (envA[b]=envA[b]||[]).push(Math.abs(ch.LatAccel[j])); }
+  const env={}; for (const [b,a] of Object.entries(envA)){ a.sort((x,y)=>x-y); env[b]=a[Math.floor(a.length*0.98)]; }
+  const lim=new Uint8Array(n);
   for (const j of idx){
     const V=ch.Speed[j], ay=Math.abs(ch.LatAccel[j]); if (ay<6 || V<12) continue;
     const r=ch.YawRate[j]*ysgn, st=ch.SteeringWheelAngle[j]; if (Math.abs(r)<0.03) continue;
     const u = (st/K - wb*r/V)*Math.sign(r)*180/Math.PI;
-    us[j]=u; bins[phaseOf(j)+bandOf(V*3.6)].push(u);
+    us[j]=u; const k=phaseOf(j)+bandOf(V*3.6); binsAll[k].push(u);
+    if (ay>=0.75*(env[envB(V)]||0)){ lim[j]=1; bins[k].push(u); }
   }
-  A.us=us; A.bins={};
+  // a band with too few samples near the limit falls back to all of its cornering samples
+  for (const k of Object.keys(bins)) if (bins[k].length<150 && binsAll[k].length>bins[k].length) bins[k]=binsAll[k];
+  A.us=us; A.usLim=lim; A.bins={};
   for (const [k,v] of Object.entries(bins)) A.bins[k] = {n:v.length, med:median(v)};
   const pool = (ph,bd) => { const a=[]; for (const p of ph) for (const b of bd) a.push(...bins[p+b]); return {n:a.length, med:median(a)}; };
   A.mechMid = pool(["mid"],["low","med"]);
@@ -3254,7 +3265,7 @@ async function loadStoList(run){
     <table>${files.map(f=>`<tr class="${f.rel.toLowerCase().endsWith(used)?"chg":""}"><td>${esc(f.rel)}</td><td class="muted">${f.time}</td></tr>`).join("")}</table>
     <p class="muted" style="font-size:12px">Folder: ${esc(d.folder)}</p></details>`;
 }
-const balWord = u => !Number.isFinite(u)?"not enough data": u>US_PUSH?"understeer": u<US_LOOSE?"loose / oversteer":"close to neutral";
+const balWord = u => !Number.isFinite(u)?"not enough data": u>US_PUSH_BAD?"understeer": u>US_PUSH?"slight understeer": u<US_LOOSE-0.6?"oversteer": u<US_LOOSE?"slight oversteer":"neutral";
 const esc = s => String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 function balanceTable(A){
   const rows=[["low","Slow < 125 km/h"],["med","Medium 125–175"],["high","Fast > 175"]];
@@ -3709,15 +3720,16 @@ const step5 = u => STEP5.find(s=>u<=s.max);
 function cornerBalance(run, A){
   const secs=cornerSections(run,A), ch=run.ch, us=A.us;
   return secs.map((s,i)=>{
-    const ph=[[],[],[]], vmid=[];
+    const ph=[[],[],[]], phL=[[],[],[]], vmid=[], L=A.usLim;
     for (const l of A.rep) for (let j=l.s;j<l.e;j++){ const p=ch.LapDistPct[j];
       if (p<s.b[0] || p>=s.b[3]) continue;
       // entry = turning while still on the brakes (trail braking), mid = off the brakes up to the apex, exit = apex → full throttle
       const k = p<s.b[2] ? (ch.Brake[j]>0.05 ? 0 : 1) : 2;
-      if (Number.isFinite(us[j])) ph[k].push(us[j]);
+      if (Number.isFinite(us[j])){ ph[k].push(us[j]); if (L && L[j]) phL[k].push(us[j]); }   // near the grip limit, where you feel it
       if (k===1) vmid.push(ch.Speed[j]*3.6); }
+    const m = k => phL[k].length>15 ? median(phL[k]) : ph[k].length>15 ? median(ph[k]) : NaN;
     const slides = A.events.filter(e=>{ const p=ch.LapDistPct[e.a]; return p>=s.b[0] && p<=s.b[3]; }).length / A.rep.length;
-    return {n:i+1, at:s.at, entry:ph[0].length>15?median(ph[0]):NaN, mid:ph[1].length>15?median(ph[1]):NaN, exit:ph[2].length>15?median(ph[2]):NaN, apex:pct(vmid,.05), slides};
+    return {n:i+1, at:s.at, entry:m(0), mid:m(1), exit:m(2), apex:pct(vmid,.05), slides};
   });
 }
 function cornerBalanceHTML(run, A){
@@ -5113,6 +5125,107 @@ function optimalHTML(run, A){
   </section>`;
 }
 const GPH={};
+// ---------- gears: the right gear for each corner's entry and exit ----------
+// From this recording alone: every gear's ratio (RPM per m/s), the engine's power curve (full-throttle acceleration + drag, against RPM,
+// the same whatever the gear), then each corner's exit is simulated from your apex speed in every gear you could be in there,
+// with ideal upshifts and the traction you actually had. The fastest one out is the right exit gear; the entry advice is
+// when you can change down into it without over-revving, and being in it before the apex.
+function gearModel(run, A){
+  if (A._gear!==undefined) return A._gear;
+  A._gear=null;
+  const ch=run.ch; if (!ch.Gear || !ch.RPM || !ch.LongAccel || !A.idx || !A.idx.length) return null;
+  const di=run.info.DriverInfo||{}, red=parseFloat(di.DriverCarRedLine), sl=parseFloat(di.DriverCarSLShiftRPM);
+  if (!(red>1000)) return null;
+  const wheels=!!(ch.LRspeed&&ch.RRspeed&&ch.LFspeed&&ch.RFspeed), spin=j=>wheels ? (ch.LRspeed[j]+ch.RRspeed[j])/(ch.LFspeed[j]+ch.RFspeed[j]+1e-6)-1 : 0;
+  const R={};
+  for (const j of A.idx){ const g=ch.Gear[j], v=ch.Speed[j]; if (g<1 || v<8 || ch.Throttle[j]<0.3 || ch.Brake[j]>0.05 || spin(j)>0.03) continue; (R[g]=R[g]||[]).push(ch.RPM[j]/v); }
+  const k={}; for (const [g,a] of Object.entries(R)) if (a.length>=run.tick/2) k[g]=median(a);
+  const gears=Object.keys(k).map(Number).sort((a,b)=>a-b); if (gears.length<3) return null;
+  // mass from the corner weights (driver and fuel are small next to the error in drag), drag from the straights
+  let m=1300; try { const cw=run.setupFlat.filter(e=>/cornerweight/i.test(e.key)).map(e=>{ const v=parseFloat(e.raw); return /lbs?\b/i.test(e.raw)?v*0.4536:/\bN\b/.test(e.raw)?v/9.81:v; }).filter(Number.isFinite); if (cw.length===4) m=cw.reduce((a,b)=>a+b,0)+75; } catch(e){}
+  let K=0.55; try { const top=gears[gears.length-1], X=[], y=[], h=Math.round(run.tick/2);
+    for (const j of A.idx){ const v=ch.Speed[j]; if (ch.Throttle[j]>0.98 && ch.Brake[j]<0.01 && v>150/3.6 && Math.abs(ch.LatAccel[j])<2 && ch.Gear[j]>=top-2 && j>h && ch.Gear[j-h]===ch.Gear[j]){ X.push([v**3]); y.push(m*ch.LongAccel[j]*v); } }
+    if (X.length>=run.tick*3){ const c=fitLS(X,y); if (c && c[1]<0) K=-c[1]; } } catch(e){}
+  // power at the wheels against RPM: full throttle, running straight, same gear for a quarter second, no wheelspin
+  const BIN=250, PB={}, h=Math.round(run.tick/4);
+  for (const j of A.idx){ const v=ch.Speed[j], g=ch.Gear[j]; if (g<1 || v<10 || ch.Throttle[j]<0.98 || ch.Brake[j]>0.01 || Math.abs(ch.LatAccel[j])>4 || j<h || ch.Gear[j-h]!==g || spin(j)>0.03) continue;
+    const P=(m*ch.LongAccel[j]+K*v*v)*v; if (P>0) (PB[Math.round(ch.RPM[j]/BIN)]=PB[Math.round(ch.RPM[j]/BIN)]||[]).push(P); }
+  const curve=Object.entries(PB).filter(([,a])=>a.length>=run.tick/3).map(([b,a])=>[+b*BIN, pct(a,0.85)]).sort((a,b)=>a[0]-b[0]);
+  if (curve.length<5) return null;
+  const peak=curve.reduce((a,b)=>b[1]>a[1]?b:a);
+  const pAt = rpm => { if (rpm>red) return 0; const c=curve; if (rpm<=c[0][0]) return c[0][1]*rpm/c[0][0]; if (rpm>=c[c.length-1][0]) return c[c.length-1][1];
+    for (let i=1;i<c.length;i++) if (rpm<=c[i][0]){ const f=(rpm-c[i-1][0])/(c[i][0]-c[i-1][0]); return c[i-1][1]+f*(c[i][1]-c[i-1][1]); } return 0; };
+  // time from v0 to v1 starting in gear g0, shifting up whenever the next gear pulls harder (or at the limiter); 50 ms per shift
+  const sim = (g0, v0, v1, cap) => { if (!k[g0] || k[g0]*v0>red*0.98) return Infinity; let v=v0, t=0, g=g0; const dv=0.25;
+    while (v<v1){ const nx=gears.find(x=>x>g); if (nx && (k[g]*v>=red-50 || pAt(k[nx]*v)>pAt(k[g]*v))){ g=nx; t+=0.05; }
+      const F=Math.min(pAt(k[g]*v)/v, cap), a=(F-K*v*v)/m; if (a<=0.1) return Infinity; t+=dv/a; v+=dv; }
+    return t; };
+  return A._gear={k, gears, red, sl, m, K, curve, peak, pAt, sim, wheels, spin};
+}
+function gearCorners(run, A){
+  if (A._gearC!==undefined) return A._gearC;
+  const G=gearModel(run,A); if (!G) return A._gearC=null;
+  const ch=run.ch, secs=cornerSections(run,A), TL=(parseFloat((run.info.WeekendInfo||{}).TrackLength)||0)*1000, dist=j=>ch.LapDist ? ch.LapDist[j] : ch.LapDistPct[j]*TL;
+  const mode=a=>{ const c={}; for (const x of a) c[x]=(c[x]||0)+1; return +Object.entries(c).sort((x,y)=>y[1]-x[1])[0][0]; };
+  const out=secs.map((s,i)=>{
+    const per=[];
+    for (const l of A.rep){
+      let j0=-1, j3=-1; for (let j=l.s;j<l.e;j++){ const p=ch.LapDistPct[j]; if (j0<0 && p>=s.b[0]-0.004) j0=j; if (j0>=0 && p>=s.b[3]){ j3=j; break; } }
+      if (j0<0 || j3<=j0) continue;
+      let apex=j0, smax=0; for (let j=j0;j<=j3;j++){ if (ch.Speed[j]<ch.Speed[apex]) apex=j; smax=Math.max(smax, Math.abs(ch.SteeringWheelAngle[j])); }
+      let ti=-1; for (let j=j0;j<=apex;j++) if (Math.abs(ch.SteeringWheelAngle[j])>0.33*smax){ ti=j; break; }
+      // exit: apex to where you brake for the next corner or the corner section ends
+      let je=j3; for (let j=apex+run.tick;j<=j3;j++) if (ch.Brake[j]>0.1){ je=j; break; }
+      const gA=ch.Gear[apex]; if (gA<1) continue;
+      // the last downshift into the apex gear: where, how fast, and the RPM it threw the engine to
+      // (every shift passes through neutral for a sample or two: step back over those to the gear before)
+      let jd=-1; { let j=apex; while (j>l.s && (ch.Gear[j-1]===gA || ch.Gear[j-1]===0)) j--; while (j<apex && ch.Gear[j]!==gA) j++; let q=j-1; while (q>l.s && ch.Gear[q]===0) q--; if (q>=l.s && ch.Gear[q]>gA) jd=j; }
+      let rpmDown=NaN; if (jd>=0){ rpmDown=0; for (let j=jd;j<Math.min(je,jd+Math.round(run.tick*0.4));j++) rpmDown=Math.max(rpmDown, ch.RPM[j]); }
+      // traction on the way out: part throttle or wheelspin after you pick up the throttle means the tyres, not the engine, set the pace
+      let pick=-1; for (let j=apex;j<=je;j++) if (ch.Throttle[j]>0.2 && ch.Brake[j]<0.05){ pick=j; break; }
+      let n=0, part=0, sp=0; const F=[]; if (pick>=0) for (let j=pick;j<=je;j++){ n++; if (ch.Throttle[j]<0.95) part++; if (G.spin(j)>0.06) sp++; const v=ch.Speed[j]; F.push(G.m*ch.LongAccel[j]+G.K*v*v); }
+      per.push({lap:l.lap, gA, vmin:ch.Speed[apex], vEnd:ch.Speed[je], jd, vDown:jd>=0?ch.Speed[jd]*3.6:NaN, rpmDown, lateDown: jd>=0 && ti>=0 && dist(jd)>dist(ti)+0.75*(dist(apex)-dist(ti)) && Math.abs(ch.LatAccel[jd])>8,   // still changing down near the apex, loaded up
+        afterTI: jd>=0 && ti>=0 ? dist(jd)-dist(ti) : NaN, trac: n ? (part+sp)/n : 0, Fmax: F.length ? pct(F,0.95) : NaN, time: ch.SessionTime[je]-ch.SessionTime[apex], apexRpm:ch.RPM[apex]});
+    }
+    if (per.length<2) return null;
+    const used=mode(per.map(p=>p.gA)), v0=median(per.map(p=>p.vmin)), v1=median(per.map(p=>p.vEnd)); if (!(v1>v0+3)) return null;   // nothing to accelerate out of: flat or a kink
+    const tracLim = median(per.map(p=>p.trac))>0.35, cap = tracLim ? median(per.map(p=>p.Fmax).filter(Number.isFinite)) : Infinity;
+    const cand=G.gears.filter(g=>G.k[g]*v0<=G.red*0.97 && Math.abs(g-used)<=2).map(g=>({g, t:G.sim(g, v0, v1, cap), rpm:G.k[g]*v0}));
+    const ok=cand.filter(c=>Number.isFinite(c.t)); if (!ok.length) return null;
+    const best=ok.reduce((a,b)=>b.t<a.t-0.005?b:a), cu=ok.find(c=>c.g===used);
+    // ties go to the higher gear: same drive, less wheelspin and fewer shifts
+    // and under 0.02 s isn't worth changing what you do: your gear stays
+    let pick=ok.filter(c=>c.t<=best.t+0.01).reduce((a,b)=>b.g>a.g?b:a);
+    if (cu && cu.t-pick.t<0.02) pick=cu;
+    const gain=cu ? cu.t-pick.t : NaN;
+    const kN=G.k[pick.g], vDownMax=(G.red-150)/kN*3.6;
+    const L=per.filter(p=>p.gA===used), overRev=L.filter(p=>p.rpmDown>=G.red-80).length, late=L.filter(p=>p.lateDown).length;
+    const usedN=per.filter(p=>p.gA===used).length, gearsSeen=[...new Set(per.map(p=>p.gA))].sort();
+    return {n:i+1, at:s.at, used, usedN, laps:per.length, gearsSeen, v0:v0*3.6, v1:v1*3.6, best:pick.g, gain, tracLim, cand,
+      apexRpm:pick.rpm, apexPow:G.pAt(pick.rpm)/G.peak[1], usedRpm:G.k[used]*v0, usedPow:G.pAt(G.k[used]*v0)/G.peak[1],
+      vDownMax, overRev, late, vDown:median(L.map(p=>p.vDown).filter(Number.isFinite)), rpmDown:median(L.map(p=>p.rpmDown).filter(Number.isFinite))};
+  }).filter(Boolean);
+  return A._gearC={G, rows:out};
+}
+function gearsHTML(run, A){
+  const X=gearCorners(run,A); if (!X || !X.rows.length) return "";
+  const {G, rows}=X, ord=g=>["","1st","2nd","3rd","4th","5th","6th","7th","8th"][g]||g+"th";
+  const tips=[];
+  for (const r of rows){
+    if (r.best!==r.used && r.gain>=0.02) tips.push({n:r.n, gain:r.gain, txt:`${ord(r.best)}, not ${ord(r.used)}: ${r.best<r.used?`${ord(r.used)} leaves the engine at ${Math.round(r.usedRpm)} RPM at the apex (${Math.round(r.usedPow*100)}% of its power), ${ord(r.best)} puts it at ${Math.round(r.apexRpm)} (${Math.round(r.apexPow*100)}%)`:`${ord(r.used)} is ${r.tracLim?"more torque than the tyres can use (you're feeding the throttle in or spinning the rears)":"past its best and has to shift up straight away"}, ${ord(r.best)} drives out as hard with less to manage`}. About ${r.gain.toFixed(2)} s out of the corner. Change down into ${ord(r.best)} only below ${Math.round(r.vDownMax)} km/h`});
+    else if (r.overRev>=Math.max(1, r.usedN/2)) tips.push({n:r.n, gain:0, txt:`the downshift into ${ord(r.used)} over-revs the engine (${Math.round(r.rpmDown)} RPM, limiter ${Math.round(G.red)}): it unsettles the rear on entry. Change down only below ${Math.round((G.red-150)/G.k[r.used]*3.6)} km/h (you're at ${Math.round(r.vDown)})`});
+    if (r.best===r.used && r.late>=Math.max(2, r.usedN/2)) tips.push({n:r.n, gain:0, txt:`you're still changing down into ${ord(r.used)} after turning in: be in gear before you turn, so the engine braking doesn't upset the rear mid-corner`}); }
+  return `<section><h2>Gears <small>the right gear for each corner, from your engine's power curve and your apex speeds</small></h2>
+   ${tips.length?`<ol style="margin:0 0 10px 20px;line-height:1.7">${tips.sort((a,b)=>b.gain-a.gain).map(t=>`<li><b>T${t.n}</b>: ${t.txt}.</li>`).join("")}</ol>`:`<p class="summary">You're in the right gear in every corner.</p>`}
+   <div class="tablewrap"><table><tr><th>Corner</th><th>Apex → exit speed</th><th>You use</th><th>Best gear</th><th>RPM at the apex</th><th>Change down below</th><th>Exit</th></tr>
+    ${rows.map(r=>`<tr><td>T${r.n}<div class="muted" style="font-size:11px">${fmt(r.at/1000,2)} km</div></td><td>${Math.round(r.v0)} → ${Math.round(r.v1)} km/h</td>
+      <td>${ord(r.used)}${r.gearsSeen.length>1?` <span class="muted" style="font-size:11px">(${r.usedN} of ${r.laps} laps; also ${r.gearsSeen.filter(g=>g!==r.used).map(ord).join(", ")})</span>`:""}</td>
+      <td style="font-weight:600;color:${r.best===r.used?"var(--good)":"var(--warn)"}">${ord(r.best)}${r.best!==r.used&&Number.isFinite(r.gain)?` <span class="muted" style="font-weight:400;font-size:11px">−${r.gain.toFixed(2)} s</span>`:""}</td>
+      <td>${Math.round(r.apexRpm)} <span class="muted" style="font-size:11px">${Math.round(r.apexPow*100)}% power</span></td>
+      <td>${Math.round(r.vDownMax)} km/h${r.overRev?` <span class="warn" style="font-size:11px">over-revs ${r.overRev}×</span>`:""}</td>
+      <td style="font-size:12px">${r.tracLim?"traction-limited":"engine-limited"}</td></tr>`).join("")}</table></div>
+   <p class="muted" style="font-size:12px">Ratios and the power curve come from this recording: peak power at about ${Math.round(G.peak[0])} RPM, limiter ${Math.round(G.red)}${Number.isFinite(G.sl)?`, shift light ${Math.round(G.sl)}`:""}. Each exit is worked out from your typical apex speed to where you brake next, in each gear you could be in, with ideal upshifts. Traction-limited = you were feeding the throttle in or spinning the rears, so more torque (a lower gear) wouldn't help; the higher gear wins a tie. Change down below = the fastest you can drop into that gear without hitting the limiter.</p></section>`;
+}
 function gpHist(run){ const k=run.carPath+"|"+learnTrackOf(run); if (GPH[k]===undefined && window.se && window.se.learnKvGet){ GPH[k]=null; window.se.learnKvGet("gp",k).then(v=>{ GPH[k]=v||false; if (view==="gp") rerender(); }).catch(()=>{ GPH[k]=false; }); } return GPH[k]||null; }
 const GP_ISSUE = {trailMuch:"too much trail braking", lateTurn:"turning in late", earlyTurn:"turning in early", brakeLater:"braking too early", brakeEarlier:"overshooting", brakeHarder:"not braking hard enough at first", trail:"too little trail braking", coast:"coasting", pickup:"late on the throttle", full:"late to full throttle", smooth:"lifting after picking up", hands:"steering corrections", apex:"low apex speed", over:"over the limit", under:"under the limit"};
 function gpHTML(run, A){
@@ -5143,7 +5256,7 @@ function gpHTML(run, A){
    <div class="tablewrap"><table><tr><th>Corner</th><th>Average vs your best</th><th>Vs the fastest</th><th>Most common</th><th>Limit</th><th>Laps</th></tr>
     ${hist.map(h=>`<tr><td><b>${esc(h.nm)}</b></td><td>${sg(h.avg)}</td><td>${sg(h.vsc)}</td><td>${h.iss?`${GP_ISSUE[h.iss[0]]||h.iss[0]} <span class="muted">(${h.iss[1]} of ${h.laps})</span>`:"–"}</td>
       <td style="font-size:12px">${h.lim?Object.entries(h.lim).map(([k,v])=>`${k} ${v}`).join(" · "):"–"}</td><td>${h.laps}</td></tr>`).join("")}</table></div></section>` : ""}`
-  + lossHTML(run, A) + limitHTML(run, A);
+  + lossHTML(run, A) + limitHTML(run, A) + (()=>{ try { return gearsHTML(run, A); } catch(e){ console.error(e); return ""; } })();
 }
 // ---------- tyre wear model: per-lap wear and a double-stint prediction, from at least 10 laps of measured wear ----------
 // iRacing measures tread only in the pits, so each stint is one point: laps run and tread used. Points from your stints
@@ -5732,6 +5845,12 @@ function tpSteps(run){
         S.push({id, block:"Wing (this track)", label, re:/Wing/i, kind, e0:e, lim:L?(kind==="wmin"?L.min:kind==="wmax"?L.max:null):null, how:`${how} (now ${esc(e.raw.trim())}). Nothing else; keep the static ride heights the same and check the splitter stays legal. Shows what each wing angle gives here in downforce, top speed and balance (Aero → wing sweep).`}); } }
   return S.map(s=>Object.assign(s,{laps:TP_LAPS})); }
 // which of your stints (since the programme started, this car and track, dry) did each step: only that setting changed from the baseline
+// the timed laps of a stored stint that weren't counted as clean, and why (the same rule Bono uses in the car)
+function lapsLeftOut(rec){
+  const rows=(rec && (rec.lapRows || ((lapRowsFor([rec])[0]||{}).rows)))||[]; if (!rows.length) return [];   // stored laps load in the background
+  const lap0=Math.min(...rows.map(r=>r.lap));
+  return rows.filter(r=>r.full && !r.used && r.lap!==lap0).map(r=>`lap ${r.lap} ${r.offTrack_s>=0.5?`(${fmt(r.offTrack_s,1)} s off track)`:r.cut?"(cut)":r.odd?"(odd lap: traffic or a moment)":"(over 3% off your best)"}`);
+}
 function tpStatus(run, P){
   const steps=tpSteps(run), recs=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===learnTrackOf(run) && !r.wet && r.date>=P.created-60e3 && r.setup).sort((a,b)=>a.date-b.date);
   const used=new Set(), firstChange=recs.find(r=>tpChanged(P.base, r.setup).length);
@@ -5785,7 +5904,7 @@ function testProgHTML(run){
       return head+`<tr${s===next?' style="background:rgba(80,140,255,.12)"':""}><td><input type="checkbox" class="tpcheck" data-id="${s.id}" ${s.complete?"checked":""} title="${s.manual===undefined?"ticked automatically when the laps are in; click to set it yourself":"set by you; click to change"}"></td>
         <td><b>${esc(s.label)}</b>${s.manual!==undefined?` <span class="muted" style="font-size:11px">(by hand)</span>`:""}</td><td style="min-width:260px">${s.how}</td>
         <td style="white-space:nowrap">${s.done>=s.laps?`<span class="ok">${s.done} / ${s.laps}</span>`:`${s.done} / ${s.laps}`}</td>
-        <td style="font-size:11px">${s.stints.length?s.stints.map(r=>`${dt(r.date)} (${r.laps} laps)`).join("<br>"):'<span class="muted">none yet</span>'}</td></tr>`; }).join("")}</table></div>
+        <td style="font-size:11px">${s.stints.length?s.stints.map(r=>{ const lo=lapsLeftOut(r); return `${dt(r.date)} (${r.laps} clean lap${r.laps===1?"":"s"})${lo.length?`<br><span class="muted">not counted: ${esc(lo.join(", "))}</span>`:""}`; }).join("<br>"):'<span class="muted">none yet</span>'}</td></tr>`; }).join("")}</table></div>
    <p class="muted" style="font-size:12px">A step counts a stint when only that setting changed from the baseline (static ride heights and perch offsets may differ: you put those back after a spring change), at this track, in the dry, since the programme started. ${TP_LAPS} clean laps each; a stint under ${TP_LAPS} laps still counts towards the total. If a setting at an extreme is undriveable, three laps tell the story: tick it by hand. Use the same tyres and a similar fuel load throughout.</p>
    <div class="row" style="gap:8px;margin-top:6px"><button class="ghost" id="tprebase" style="padding:3px 10px">Use this stint's setup as the baseline</button><button class="ghost" id="tpreset" style="padding:3px 10px">Stop this programme</button></div></section>`;
 }
