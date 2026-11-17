@@ -2163,7 +2163,8 @@ const drPads = () => { try { return [...(navigator.getGamepads ? navigator.getGa
 const drMap = () => PREFS.get("drillMap", {}) || {};
 function drAxis(c){ if (!c) return NaN; const P=drPads(), p=P.find(x=>x.id===c.id && x.index===c.pi) || P.find(x=>x.id===c.id); return p && Number.isFinite(p.axes[c.ax]) ? p.axes[c.ax] : NaN; }
 function drRead(){ const m=drMap(), o={};
-  for (const k of ["brk","thr"]){ const c=m[k], v=drAxis(c); o[k] = c && Number.isFinite(v) && c.full!==c.rest ? Math.min(1, Math.max(0, (v-c.rest)/(c.full-c.rest))) : NaN; }
+  for (const k of ["brk","thr"]){ const c=m[k], v=drAxis(c); o[k] = c && Number.isFinite(v) && c.full!==c.rest ? Math.min(1, Math.max(0, (v-c.rest)/(c.full-c.rest))) : NaN;
+    const dz=Math.min(0.5, Math.max(0, (+PREFS.get(k==="brk"?"drillDzB":"drillDzT", 0)||0)/100)); if (dz>0 && Number.isFinite(o[k])) o[k]=Math.max(0, (o[k]-dz)/(1-dz)); }
   { const c=m.steer, v=drAxis(c); o.steer = c && Number.isFinite(v) && c.full!==c.rest ? Math.min(1, Math.max(-1, (v-c.rest)/(c.full-c.rest))) : NaN; }
   return o; }
 // your usual peak brake, from the open stint (so the brake drills aim where you actually brake)
@@ -2222,7 +2223,8 @@ function renderDrills(){
       <div class="tablewrap"><table style="font-size:13px">${["thr","brk","steer"].map(calRow).join("")}</table></div>
       <p id="drcalmsg" style="margin:6px 0;font-size:13px"></p>
       <p class="muted" style="font-size:12px;margin:4px 0">"Find it": leave everything alone for a second, then press that pedal all the way (or turn the wheel fully right) and let go, when asked. Keep this window in front while you drill: the wheel is only read by the window you're using.
-        Wheel rotation <input id="drrot" type="number" value="${rot}" min="180" max="1440" step="10" style="width:70px"> degrees (as set in your wheel software), so steering misses read in degrees.</p></section>
+        Wheel rotation <input id="drrot" type="number" value="${rot}" min="180" max="1440" step="10" style="width:70px"> degrees (as set in your wheel software), so steering misses read in degrees.</p>
+      <p class="muted" style="font-size:12px;margin:4px 0">Dead zones: one set in your pedal software (MOZA Pit House) is already in what the drills read, the same as in iRacing, so leave it. One set in iRacing's own pedal calibration isn't: type it here so the drills match the car. Brake <input id="drdzb" type="number" value="${+PREFS.get("drillDzB",0)||0}" min="0" max="30" step="1" style="width:55px">% · throttle <input id="drdzt" type="number" value="${+PREFS.get("drillDzT",0)||0}" min="0" max="30" step="1" style="width:55px">%. Check: with your foot resting on the brake, the bar should stay empty until you start braking for real.</p></section>
     ${fy && fy.list.length?`<section><h3 style="margin:0 0 6px">2. For you</h3><p style="margin:4px 0;font-size:13px">From ${esc(fy.run)}: ${fy.list.slice(0,3).map(x=>`<b>${esc(defs.find(d=>d.id===x.id).name)}</b>, because ${esc(x.why)} (${[...x.at].slice(0,5).join(", ")})`).join("; ")}. These are marked below.</p></section>`
       : `<section><h3 style="margin:0 0 6px">2. For you</h3><p class="muted" style="margin:4px 0;font-size:13px">Open a stint (or drive one) and the drills that match where you lose time are marked here. The rest are good for anyone.</p></section>`}
     <section><h3 style="margin:0 0 6px">3. Drills</h3><div class="sheet">${defs.map(card).join("")}</div></section>
@@ -2235,6 +2237,7 @@ function renderDrills(){
     PREFS.set("drillMap", m); renderDrills(); const mm=$("#drcalmsg"); if (mm) mm.innerHTML=`<span class="ok">${DR_NAME[b.dataset.k]} inverted.</span> Check the bar moves the right way.`; });
   document.querySelectorAll(".drgo").forEach(b=>b.onclick=()=>drStart(defs[+b.dataset.i]));
   { const r=$("#drrot"); if (r) r.onchange=()=>{ PREFS.set("drillRot", +r.value||540); }; }
+  for (const [id,key] of [["drdzb","drillDzB"],["drdzt","drillDzT"]]){ const el=$("#"+id); if (el) el.onchange=()=>{ PREFS.set(key, Math.min(30, Math.max(0, +el.value||0))); }; }
   { const s=$("#drstop"); if (s) s.onclick=()=>{ DR.drill=null; renderDrills(); }; }
   drLoop();
 }
@@ -2746,7 +2749,11 @@ function render(){
     const rebase=()=>{ const P=tpGet(run)||{}; tpSet(run, Object.assign(P, {base:tpSetup(run), baseName:setupName(run).name||"", created:tpFrom(), manual:{}})); rerender(); };
     const rb=$("#tprebase"); if (rb) rb.onclick=()=>{ if (!confirm("Use this stint's setup as the new baseline? The programme starts again from this stint.")) return; rebase(); };
     const rb2=$("#tprebase2"); if (rb2) rb2.onclick=rebase;
-    const rs=$("#tpreset"); if (rs) rs.onclick=()=>{ if (!confirm("Stop this test programme? Your stints stay; only the checklist goes.")) return; tpSet(run, null); rerender(); };
+    const rs=$("#tpreset"); if (rs) rs.onclick=()=>{ if (!confirm("Delete this test programme? Your stints stay (the models keep learning from them); the checklist and its results summary go. To keep them, use Finish now instead.")) return; tpSet(run, null); rerender(); };
+    const setState=s=>{ const P=tpGet(run); if (!P) return; if (s) P.state=s; else delete P.state; if (s==="done") P.finished=Date.now(); tpSet(run, P); rerender(); };
+    { const b=$("#tppause"); if (b) b.onclick=()=>setState("paused"); }
+    { const b=$("#tpresume"); if (b) b.onclick=()=>setState(null); }
+    { const b=$("#tpfinish"); if (b) b.onclick=()=>{ if (confirm("Finish the programme now? The steps you've driven are kept and summarised; the rest are left undone. You can continue it later.")) setState("done"); }; }
     { const sh=$("#tpshow"); if (sh) sh.onchange=()=>{ TP_SHOW=sh.value; rerender(); }; const dd=$("#tpsheet"); if (dd) dd.ontoggle=()=>{ TP_SHEET_OPEN=dd.open; }; }
     document.querySelectorAll(".tpcheck").forEach(c=>c.onchange=()=>{ const P=tpGet(run); if (!P) return; P.manual=P.manual||{}; P.manual[c.dataset.id]={v:c.checked, at:Date.now()}; tpSet(run, P); rerender(); }); }
   for (const [id,key] of [["lctarget","lcTarget"],["tyreloss","tyreLoss"],["racestart","startH"]]){ const el=$("#"+id); if (el) el.onchange=()=>{ RACE[key]=el.value===""?"":+el.value; PREFS.set("race", RACE); rerender(); }; }
@@ -3337,7 +3344,7 @@ function whereOf(path){
 function publishPlan(run){
   if (!window.se || !window.se.publishPlan) return;
   const st=setupName(run), items=[...buildPlan(run).values()].map(p=>({where:whereOf(p.e.path), name:pretty(p.e.key), from:p.e.raw.trim(), to:p.to, done:!!(run.doneMap && run.doneMap[p.e.path+"="+p.to])}));
-  LAST_PLAN = {tests:Object.keys(PREFS.data||{}).filter(k=>k.startsWith("testprog|") && PREFS.data[k] && PREFS.data[k].created).map(k=>k.slice(9)), car:run.carName, load:st.name, saveAs:saveAsName(st.name||"my setup.sto"), items, done:items.filter(i=>i.done).length};
+  LAST_PLAN = {tests:Object.keys(PREFS.data||{}).filter(k=>k.startsWith("testprog|") && PREFS.data[k] && PREFS.data[k].created && !PREFS.data[k].state).map(k=>k.slice(9)), car:run.carName, load:st.name, saveAs:saveAsName(st.name||"my setup.sto"), items, done:items.filter(i=>i.done).length};
   publishProg();
 }
 // the Test step overlay's data rides along with the plan; sent again whenever the live garage changes
@@ -6204,7 +6211,10 @@ function tpOverlayData(){
   if (w && w.car){ const m=runs.filter(r=>liveMatches(r,w)); if (m.length){ if (!run || !m.includes(run)) run=m[m.length-1]; } else return {none:`No stint at ${w.trackDisplay||"this track"} in this car open yet: drive a lap or open one.`}; }
   if (!run || !run.setupFlat) return {none:"Open a stint in Setup Engineer."};
   const P=tpGet(run); if (!P) return {none:`No test programme for the ${run.carName} at ${((run.info.WeekendInfo||{}).TrackDisplayName)||"this track"}. Start one on the Test programme tab.`};
-  const steps=tpStatus(run,P), R=tpSheetRows(run,P,steps); if (!R) return {none:"The programme has no steps."};
+  const steps=tpStatus(run,P), st=tpStateOf(P,steps);
+  if (st==="paused") return {none:"Test programme paused. Continue it on the Test programme tab."};
+  if (st==="done") return {none:`Test programme finished: ${steps.filter(s=>s.complete).length} of ${steps.length} steps.`};
+  const R=tpSheetRows(run,P,steps); if (!R) return {none:"The programme has no steps."};
   const s=R.s, uniq=a=>a.filter((v,i,x)=>x.indexOf(v)===i);
   return { car:run.carName, track:((run.info.WeekendInfo||{}).TrackDisplayName)||"", baseName:P.baseName||"",
     n:steps.indexOf(s)+1, total:steps.length, doneN:steps.filter(x=>x.complete).length, label:s.label, block:s.block, laps:s.laps, lapsDone:s.done, complete:!!s.complete,
@@ -6284,6 +6294,7 @@ function tpInsightsHTML(run, steps){
       : `<p style="margin:4px 0">Only the baseline so far. Each step you drive adds a line here.</p>`}
     <p class="muted" style="margin:6px 0 0;font-size:12px">${left?`${left} step${left>1?"s":""} still to drive.`:"Every step driven."} The baseline checks take out the track rubbering in and you getting quicker, so drive them when they come up.</p></div>`;
 }
+const tpStateOf = (P, steps) => !P ? "none" : P.state==="paused" ? "paused" : (P.state==="done" || (steps && steps.length && steps.every(s=>s.complete))) ? "done" : "running";
 function testProgHTML(run){
   const P=tpGet(run), trk=((run.info.WeekendInfo||{}).TrackDisplayName)||"this track";
   const nt=schedNextTracks(true), tw=schedThisTracks(true), here=((run.info.WeekendInfo||{}).TrackDisplayName||"").toLowerCase(), isHere=x=>here && x.track.toLowerCase().startsWith(here.split(" ")[0]);
@@ -6311,10 +6322,13 @@ function testProgHTML(run){
      ${curCh.length>=5?`<div class="row" style="gap:8px;margin-top:6px"><button class="ghost" id="tprebase2" style="padding:3px 10px">Or make ${esc(setupName(run).name||"this setup")} the new baseline</button></div>`:""}</div>`
     : curCh.length>=5 ? `<div class="sugg p2" style="margin:0 0 10px"><h3>This stint ran a different setup from the programme's baseline</h3><p style="margin:4px 0 0"><b>${esc(setupName(run).name||"This setup")}</b> differs from the baseline${baseName?` (<b>${esc(baseName)}</b>)`:""} in ${curCh.length} settings (${esc(curCh.slice(0,5).map(c=>learnLabel(c.k)).join(", "))}${curCh.length>5?"…":""}), so it can't count for any step: each step is one change from the baseline. Nothing is lost: every stint is still learned by the models. If this is the setup you meant to start from, make it the baseline and the programme starts again from it.</p>
      <div class="row" style="gap:8px;margin-top:6px"><button id="tprebase2">Make ${esc(setupName(run).name||"this setup")} the baseline</button></div></div>` : "";
-  return `<section><h2>Test programme <small>${esc(run.carName)} at ${esc(trk)} · ${doneN} of ${steps.length} done · started ${dt(P.created)}${baseName?` · baseline ${esc(baseName)}`:""}</small></h2>${away}${away?"":other}${away?"":nextNote}${listNote}
+  return `<section><h2>Test programme <small>${esc(run.carName)} at ${esc(trk)} · ${doneN} of ${steps.length} done · ${({running:"running",paused:"paused",done:"finished"})[tpStateOf(P,steps)]} · started ${dt(P.created)}${baseName?` · baseline ${esc(baseName)}`:""}</small></h2>${away}${away?"":other}${away?"":nextNote}${listNote}
    ${(()=>{ try { return tpBaseHTML(run, P, steps); } catch(e){ console.error("tpbase",e); return ""; } })()}
    ${(()=>{ try { return tpInsightsHTML(run, steps); } catch(e){ console.error("tpins",e); return ""; } })()}
-   ${next?`<div class="sugg p3" style="margin:0 0 10px"><h3>Next: ${esc(next.label)}</h3><p style="margin:4px 0 0">${next.how} Drive <b>${next.laps} clean laps</b>${next.done?` (${next.done} so far)`:""}.</p></div>`:`<div class="sugg p3" style="margin:0 0 10px"><h3>Programme complete</h3><p style="margin:4px 0 0">Every step is done: the models in this tab now know each of these settings on this car. "What to test next" below shows anything still uncertain.</p></div>`}
+   ${(()=>{ const st=tpStateOf(P,steps), left=steps.filter(s=>!s.complete).length, ctl=h=>`<div class="row" style="gap:8px;margin-top:8px">${h}</div>`;
+     if (st==="paused") return `<div class="sugg p2" style="margin:0 0 10px"><h3>Paused at step ${steps.indexOf(next)+1} of ${steps.length}${next?`: ${esc(next.label)}`:""}</h3><p style="margin:4px 0 0">${doneN} of ${steps.length} steps done. While it's paused Bono gives his normal in-car advice and the Test step overlay stands down. A stint that matches a step still counts when you continue.</p>${ctl(`<button id="tpresume" style="padding:3px 12px">Continue the programme</button> <button class="ghost" id="tpfinish" style="padding:3px 12px">Finish now: use the data so far</button>`)}</div>`;
+     if (st==="done") return `<div class="sugg p3" style="margin:0 0 10px"><h3>${left?`Finished early: ${doneN} of ${steps.length} steps`:"Programme complete"}</h3><p style="margin:4px 0 0">${left?`You finished it${P.finished?` on ${dt(P.finished)}`:""}. "What the tests show" above uses only the stints captured. Every stint still teaches the models (Learning), programme or not.`:`Every step is done: the models now know each of these settings on this car. "What to test next" (Learning) shows anything still uncertain.`}</p>${left?ctl(`<button id="tpresume" style="padding:3px 12px">Continue the remaining ${left} step${left>1?"s":""}</button>`):""}</div>`;
+     return `<div class="sugg p3" style="margin:0 0 10px"><h3>Next: ${esc(next.label)} <small class="muted" style="font-weight:400">step ${steps.indexOf(next)+1} of ${steps.length}</small></h3><p style="margin:4px 0 0">${next.how} Drive <b>${next.laps} clean laps</b>${next.done?` (${next.done} so far)`:""}.</p>${ctl(`<button class="ghost" id="tppause" style="padding:3px 12px">Pause</button> <button class="ghost" id="tpfinish" style="padding:3px 12px">Finish now: use the data so far</button>`)}</div>`; })()}
    ${(()=>{ try { return tpSheetHTML(run,P,steps); } catch(e){ console.error("tpsheet",e); return ""; } })()}
    <div class="tablewrap"><table style="font-size:12px"><tr><th></th><th>Step</th><th>What to set</th><th>Clean laps</th><th>Stints found</th></tr>
     ${steps.map(s=>{ const head=s.block!==blk?`<tr><td colspan="5" style="background:rgba(127,127,127,.08);font-weight:700">${esc(s.block)}</td></tr>`:""; blk=s.block;
@@ -6324,7 +6338,7 @@ function testProgHTML(run){
         <td style="font-size:11px">${s.stints.length?s.stints.map(r=>{ const lo=lapsLeftOut(r); return `${dt(r.date)} (${r.laps} clean lap${r.laps===1?"":"s"})${lo.length?`<br><span class="muted">not counted: ${esc(lo.join(", "))}</span>`:""}`; }).join("<br>"):(s.near&&s.near.length?"":'<span class="muted">none yet</span>')}
           ${(s.near||[]).map(x=>`<div class="warn" style="margin-top:3px">${dt(x.r.date)} (${x.r.laps} laps): not counted, it also changed ${esc(tpExtraWords(x.extra).join(", "))}</div>`).join("")}</td></tr>`; }).join("")}</table></div>
    <p class="muted" style="font-size:12px">A step counts a stint when only that setting changed from the baseline (static ride heights and perch offsets may differ: you put those back after a spring change), at this track, in the dry, since the programme started. ${TP_LAPS} clean laps each; a stint under ${TP_LAPS} laps still counts towards the total. If a setting at an extreme is undriveable, three laps tell the story: tick it by hand. Use the same tyres and a similar fuel load throughout.</p>
-   <div class="row" style="gap:8px;margin-top:6px"><button class="ghost" id="tprebase" style="padding:3px 10px">Use this stint's setup as the baseline</button><button class="ghost" id="tpreset" style="padding:3px 10px">Stop this programme</button></div></section>`;
+   <div class="row" style="gap:8px;margin-top:6px"><button class="ghost" id="tprebase" style="padding:3px 10px">Use this stint's setup as the baseline</button><button class="ghost" id="tpreset" style="padding:3px 10px">Delete this programme</button></div></section>`;
 }
 // --- wing sweep at this track: every wing angle you've run here, and what it gave (downforce, top speed, balance, lap time) ---
 function wingSweepHTML(run, A){
