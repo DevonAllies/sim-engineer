@@ -2143,7 +2143,7 @@ function renderTracks(){
 // modelled from the ride heights at speed and the wing. Balance: iRacing's own aero-calculator points (or the stints' measured split).
 // Drag: coast-down on the straights, a = c0 + c1·v², × the car's weight. Squash: how far each axle sinks per N of downforce, × spring rate.
 // The fits run in a background worker on a button press: 1500 bootstrap resamples (margins of error) and leave-one-out checks.
-const TUN = {car:null, res:null, busy:false, anim:false, t:0, parts:null, x:null};
+const TUN = {car:null, res:null, busy:false, anim:false, t:0, parts:null, x:null, paused:true};   // a still picture by default; Play animates it
 const TUN_WORKER = `
 const solve=(M,b)=>{ const n=b.length, A=M.map((r,i)=>[...r,b[i]]); for(let c=0;c<n;c++){ let p=c; for(let r=c+1;r<n;r++) if(Math.abs(A[r][c])>Math.abs(A[p][c])) p=r; [A[c],A[p]]=[A[p],A[c]]; const d=A[c][c]; if(Math.abs(d)<1e-12) return null; for(let k=c;k<=n;k++) A[c][k]/=d; for(let r=0;r<n;r++) if(r!==c){ const f=A[r][c]; if(f) for(let k=c;k<=n;k++) A[r][k]-=f*A[c][k]; } } return A.map(r=>r[n]); };
 // ridge on standardised features: returns a predictor
@@ -2186,9 +2186,10 @@ function tunnelRun(){
   if (TUN.busy) return; const D=tunnelData(TUN.car), msg=$("#tunmsg"); TUN.busy=true; TUN.data=D; if (msg) msg.textContent="Starting…";
   const t0=performance.now();
   let w; try { w=new Worker(URL.createObjectURL(new Blob([TUN_WORKER],{type:"text/javascript"}))); } catch(e){ TUN.busy=false; if (msg) msg.textContent="Couldn't start the background worker: "+e.message; return; }
+  TUN.worker=w; { const s=$("#tunstop"); if (s) s.style.display=""; }
   w.onmessage=e=>{ if (e.data.progress){ if (msg) msg.textContent=e.data.progress; return; }
-    TUN.res=e.data.done; TUN.res.car=TUN.car; TUN.busy=false; TUN.ms=performance.now()-t0; w.terminate(); renderTunnel(); };
-  w.onerror=e=>{ TUN.busy=false; if (msg) msg.textContent="Model error: "+e.message; w.terminate(); };
+    TUN.res=e.data.done; TUN.res.car=TUN.car; TUN.busy=false; TUN.worker=null; TUN.ms=performance.now()-t0; w.terminate(); renderTunnel(); };
+  w.onerror=e=>{ TUN.busy=false; TUN.worker=null; if (msg) msg.textContent="Model error: "+e.message; w.terminate(); };
   w.postMessage({df:D.df, bal:D.bal, drag:D.drag});
 }
 // predict with a fitted model (and its bootstrap band)
@@ -2213,7 +2214,9 @@ function renderTunnel(){
   if (!TUN.car || !cars[TUN.car]) TUN.car=(runs[current]&&cars[runs[current].carPath]) ? runs[current].carPath : (Object.entries(cars).sort((a,b)=>b[1].n-a[1].n)[0]||[])[0];
   const head=`<h2>Wind tunnel <small>your car's aero, learned from your own stints: downforce, balance and drag at any speed, ride height and wing</small></h2>
    <div class="row" style="align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px"><label class="muted">Car <select id="tuncar">${Object.entries(cars).sort((a,b)=>b[1].n-a[1].n).map(([k,v])=>`<option value="${esc(k)}" ${k===TUN.car?"selected":""}>${esc(v.name)} (${v.n} stints with downforce)</option>`).join("")}</select></label>
-   <button id="tunrun" ${TUN.busy?"disabled":""}>${TUN.res?"Run the models again":"Run the models"}</button> <span class="muted" id="tunmsg" style="font-size:12px">${TUN.res?`Fitted in ${(TUN.ms/1000).toFixed(1)} s on your CPU (background worker: 1500 resamples per model + leave-one-out checks).`:"Fits the models in the background (a few seconds, on your CPU). Not while you drive."}</span></div>`;
+   <button id="tunrun" ${TUN.busy?"disabled":""}>${TUN.res?"Run the models again":"Run the models"}</button>
+   <button class="ghost" id="tunstop" style="${TUN.busy?"":"display:none"}">Stop</button>
+   ${TUN.res?`<button class="ghost" id="tunpause">${TUN.paused?"▶ Animate the airflow":"⏸ Still picture"}</button>`:""} <span class="muted" id="tunmsg" style="font-size:12px">${TUN.res?`Fitted in ${(TUN.ms/1000).toFixed(1)} s on your CPU (background worker: 1500 resamples per model + leave-one-out checks).`:"Fits the models in the background (a few seconds, on your CPU). Not while you drive."}</span></div>`;
   if (!TUN.car){ box.innerHTML=head+`<p class="muted">No stints with measured downforce yet: drive a few laps and come back.</p>`; return; }
   if (!TUN.res || TUN.res.car!==TUN.car){ if (TUN.res && TUN.res.car!==TUN.car) TUN.res=null;
     const D=tunnelData(TUN.car);
@@ -2248,12 +2251,17 @@ function renderTunnel(){
 function wireTunnel(){
   const c=$("#tuncar"); if (c) c.onchange=()=>{ TUN.car=c.value; TUN.res=null; TUN.x=null; renderTunnel(); };
   const b=$("#tunrun"); if (b) b.onclick=()=>{ b.disabled=true; if (TUN.res) TUN.res=null; tunnelRun(); };
+  // stop: ends the model fit straight away (keeps nothing half-done)
+  const st=$("#tunstop"); if (st) st.onclick=()=>{ if (TUN.worker){ TUN.worker.terminate(); TUN.worker=null; } TUN.busy=false; renderTunnel(); const m=$("#tunmsg"); if (m) m.textContent="Stopped."; };
+  // pause: stops the airflow animation (the numbers and sliders still work)
+  const pa=$("#tunpause"); if (pa) pa.onclick=()=>{ TUN.paused=!TUN.paused; pa.textContent=TUN.paused?"▶ Animate the airflow":"⏸ Still picture"; if (!TUN.paused) tunAnim(); else tunDraw(false); };
   for (const k of ["v","sF","sR","w","kF","kR"]){ const e=$("#tun"+k); if (e) e.oninput=()=>{ TUN.x[k]=parseFloat(e.value); $("#tun"+k+"v").textContent=e.value; tunUpdate(); }; }
   const r=$("#tunreset"); if (r) r.onclick=()=>{ TUN.x=null; renderTunnel(); };
 }
 function tunUpdate(){
   const S=TUN.x, R=TUN.res, D=TUN.data; if (!S || !R) return;
   const X=TUN.out=tunSolve(S), top=tunTop(S);
+  if (!TUN.looping) setTimeout(()=>tunDraw(false), 0);   // paused: still redraw the car for the new settings
   const inR=(M,x)=>!M||M.range.slice(0,x.length).every(([a,b],j)=>x[j]>=a-1&&x[j]<=b+1);
   const known=inR(R.df,[X.fA,X.rA,S.w]);
   const P=profileOf({carPath:TUN.car})||{}, win=P.frontRH?{f:P.frontRH, r:P.rearRH, tol:P.rhTol||2}:null;
@@ -2289,8 +2297,15 @@ const CAR_SHAPES = {
   dallarap217: {L:4.75, ax:[1.05,4.05], top:[[0,0.1],[0.25,0.22],[0.8,0.55],[1.25,0.6],[1.7,0.52],[2.15,0.92],[2.6,1.02],[3.1,0.95],[3.7,0.6],[4.3,0.55],[4.75,0.5]], wing:{x:4.55,h:0.98,c:0.4}, splitter:0.45, fin:true},
   _default: {L:4.6, ax:[1.0,3.65], top:[[0,0.16],[0.15,0.33],[0.9,0.52],[1.55,0.66],[2.0,1.08],[2.75,1.15],[3.6,0.95],[4.35,0.78],[4.6,0.72]], wing:{x:4.38,h:1.18,c:0.32}, splitter:0.35} };
 // the side view: car (ride heights exaggerated ×4), wing at its angle, flow lines, force arrows
-function tunAnim(){
-  const cv=$("#tuncv"); if (!cv || !TUN.anim || view!=="tunnel"){ TUN.anim=false; return; }
+// one loop at a time; it stops when you pause, leave the tab or go on track, and a still frame is drawn for any slider change
+function tunAnim(){ if (TUN.looping) return; TUN.looping=true; tunLoop(); }
+function tunLoop(){
+  const onTrack=!!(LIVE.latest && LIVE.latest.IsOnTrack);
+  if (view!=="tunnel" || TUN.paused || onTrack || !$("#tuncv")){ TUN.looping=false; TUN.anim=false; tunDraw(false);
+    if (onTrack && !TUN.paused && view==="tunnel") setTimeout(()=>{ if (view==="tunnel") tunAnim(); }, 5000); return; }
+  TUN.anim=true; tunDraw(true); requestAnimationFrame(()=>setTimeout(tunLoop, 0)); }
+function tunDraw(move){
+  const cv=$("#tuncv"); if (!cv || view!=="tunnel") return;
   const dpr=window.devicePixelRatio||1, Wc=cv.clientWidth||700, Hc=Math.round(Wc*0.42);
   if (cv.width!==Math.round(Wc*dpr)){ cv.width=Math.round(Wc*dpr); cv.height=Math.round(Hc*dpr); }
   const g=cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,Wc,Hc);
@@ -2305,20 +2320,32 @@ function tunAnim(){
   const top=x=>{ const P=SH.top; if (x<=0) return P[0][1]; for (let i=1;i<P.length;i++) if (x<=P[i][0]){ const [a,b]=[P[i-1],P[i]], t=(x-a[0])/(b[0]-a[0]); return a[1]+(b[1]-a[1])*t; } return P[P.length-1][1]; };
   const px=x=>x0+x*sc, py=y=>gy-y*sc;
   // ground + moving road marks
-  TUN.t+= (S.v/3.6)/60; g.strokeStyle=sub; g.lineWidth=1; g.beginPath(); g.moveTo(0,gy); g.lineTo(Wc,gy); g.stroke();
-  g.fillStyle=sub; const step=60, off=(TUN.t*sc)%step; for (let x=-off; x<Wc; x+=step) g.fillRect(Wc-x, gy+6, 22, 2);
-  // flow lines: particles from the left at many heights
-  if (!TUN.parts){ TUN.parts=Array.from({length:180},(_,i)=>({x:Math.random()*Wc, h:0.02+((i*0.618)%1)*2.3, s:0.85+Math.random()*0.3})); }
+  if (move) TUN.t+= (S.v/3.6)/60; g.strokeStyle=sub; g.lineWidth=1; g.beginPath(); g.moveTo(0,gy); g.lineTo(Wc,gy); g.stroke();
+  if (move){ g.fillStyle=sub; const step=60, off=(TUN.t*sc)%step; for (let x=-off; x<Wc; x+=step) g.fillRect(Wc-x, gy+6, 22, 2); }
+  // where the air goes at height h (free stream) and position xm (m from the nose): over the body, squeezed under it, thrown up by the wing.
+  // sp = how fast it moves relative to the free stream (faster = lower pressure: under the car that's the downforce)
   const df=X.df||0, wingK=Math.min(1.6,(Number.isFinite(X.dfR)?X.dfR:df/2)/4000), vpx=(S.v/3.6)/60*sc*0.9;
-  for (const p of TUN.parts){
-    const xm=(p.x-x0)/sc; let y=p.h, sp=1;
-    if (xm>-0.6 && xm<CL+0.6){ const xc=Math.min(CL,Math.max(0,xm)), T=top(xc)+under(xc), U=under(xc);
-      if (p.h>U*0.9){ const lift=Math.max(0,(T+0.05)-p.h), fade=Math.exp(-Math.max(0,p.h-T)/0.55), ramp=xm<0?Math.exp(xm/0.35):1; y=p.h+Math.max(lift, 0.18*fade)*ramp*Math.min(1,(xm+0.6)/0.6); sp=1+0.25*fade; }
-      else { y=Math.min(p.h, U*0.6); sp=1+Math.min(0.9, 0.03/Math.max(0.006,U)); }   // under the car: squeezed and fast (that's the ground effect)
-      if (xm>SH.wing.x-0.35){ const wy=SH.wing.h+under(SH.wing.x), up=wingK*0.55*Math.exp(-((p.h-wy)**2)/0.22)*Math.min(1,(xm-SH.wing.x+0.35)/0.8); y+=up; } }
-    p.x+=vpx*p.s*sp; if (p.x>Wc+10){ p.x=-Math.random()*40; }
-    const hue=sp>1.35?190:sp>1.1?205:225, a=dark?0.75:0.6;
-    g.fillStyle=`hsla(${hue},85%,${dark?62:45}%,${a})`; g.fillRect(p.x, py(y), 3+sp*3, 1.6);
+  const flow=(h,xm)=>{ if (xm<-0.6) return {y:h, sp:1};
+    // body effect at a point along the car (behind it, the effect at the tail fades out over ~1.5 m: the wake)
+    const xc=Math.min(CL,Math.max(0,xm)), wake=xm>CL?Math.exp(-(xm-CL)/1.5):1, T=top(xc)+under(xc), U=under(xc);
+    let dy, sp;
+    if (h>U*0.9){ const lift=Math.max(0,(T+0.05)-h), fade=Math.exp(-Math.max(0,h-T)/0.55), ramp=xm<0?Math.exp(xm/0.35)*Math.min(1,(xm+0.6)/0.6):1;
+      dy=Math.max(lift, 0.18*fade)*ramp*wake; sp=1+0.25*fade*wake; }
+    else { const yy=Math.min(h, U*0.6); dy=(yy-h)*wake; sp=1+Math.min(0.9, 0.03/Math.max(0.006,U))*wake; }   // under the car: squeezed and fast (the ground effect)
+    // the wing throws the air up behind it (that's its downforce), and the upwash fades slowly downstream
+    if (xm>SH.wing.x-0.35){ const wy=SH.wing.h+under(SH.wing.x), on=Math.min(1,(xm-SH.wing.x+0.35)/0.8), off=xm>CL+0.5?Math.exp(-(xm-CL-0.5)/2.5):1;
+      dy+=wingK*0.55*Math.exp(-((h-wy)**2)/0.22)*on*off; }
+    return {y:h+dy, sp}; };
+  const col=(sp,a)=>`hsla(${sp>1.35?190:sp>1.1?205:225},85%,${dark?62:45}%,${a})`;
+  if (move){   // moving: particles
+    if (!TUN.parts){ TUN.parts=Array.from({length:180},(_,i)=>({x:Math.random()*Wc, h:0.02+((i*0.618)%1)*2.3, s:0.85+Math.random()*0.3})); }
+    for (const p of TUN.parts){ const {y, sp}=flow(p.h,(p.x-x0)/sc); p.x+=vpx*p.s*sp; if (p.x>Wc+10) p.x=-Math.random()*40;
+      g.fillStyle=col(sp, dark?0.75:0.6); g.fillRect(p.x, py(y), 3+sp*3, 1.6); }
+  } else {   // still: streamlines, coloured by speed (light blue = faster air = lower pressure)
+    const hs=[0.015,0.03,0.05]; for (let h=0.12; h<2.4; h+=0.13) hs.push(h);
+    for (const h of hs){ let prev=null;
+      for (let X1=0; X1<=Wc; X1+=6){ const {y, sp}=flow(h,(X1-x0)/sc), P=[X1, py(y)];
+        if (prev){ g.strokeStyle=col(sp, dark?0.7:0.55); g.lineWidth=sp>1.35?1.8:1.1; g.beginPath(); g.moveTo(prev[0],prev[1]); g.lineTo(P[0],P[1]); g.stroke(); } prev=P; } }
   }
   // car body
   g.beginPath(); g.moveTo(px(0),py(under(0)+top(0))); for (let x=0;x<=CL;x+=0.05) g.lineTo(px(x),py(under(x)+top(x))); g.lineTo(px(CL),py(under(CL))); for (let x=CL;x>=0;x-=0.1) g.lineTo(px(x),py(under(x))); g.closePath();
@@ -2345,7 +2372,7 @@ function tunAnim(){
   // labels
   g.fillStyle=sub; g.font="11px system-ui"; g.fillText(`${S.v} km/h  ·  ride heights at speed ${fmt(X.fA,1)} / ${fmt(X.rA,1)} mm (drawn ×${ex})`, 10, 16);
   if (X.bottom){ g.fillStyle="#d64545"; g.fillText("bottoming: the floor would touch the road", 10, 32); }
-  requestAnimationFrame(()=>setTimeout(tunAnim, 0));
+  if (!move){ g.fillStyle=sub; g.fillText("Streamlines: lighter and thicker = faster air = lower pressure (under the car that's the ground effect).", 10, gy+22); }
 }
 function renderSchedule(){
   const box=$("#schedbox"); if (!box) return; if (!SCHED){ schedLoad(); return; }
