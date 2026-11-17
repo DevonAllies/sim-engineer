@@ -5891,31 +5891,33 @@ function tpGet(run){ try { return PREFS.get(tpKey(run))||null; } catch(e){ retur
 function tpSet(run, P){ try { PREFS.set(tpKey(run), P); } catch(e){} }
 const tpSetup = run => Object.fromEntries(run.setupFlat.filter(e=>!LEARN_SKIP.test(e.path) && Number.isFinite(learnNum(e.raw))).map(e=>[e.path.replace(/^CarSetup\./,""), e.raw.trim()]));
 // what differs from the baseline (left and right together; static ride height and perch offsets don't count: you put those back after a spring change)
+// (in-car settings, brake bias, TC, ABS, and the fuel load never stop a stint counting: you change those from the cockpit)
 function tpChanged(base, setup){ const a=smVals(base), b=smVals(setup), out=[];
-  for (const k of new Set([...Object.keys(a),...Object.keys(b)])){ if (/RideHeight$/i.test(k)) continue; const x=a[k], y=b[k]; if (Number.isFinite(x)&&Number.isFinite(y)&&Math.abs(x-y)>1e-6) out.push({k, from:x, to:y}); }
+  for (const k of new Set([...Object.keys(a),...Object.keys(b)])){ if (/RideHeight$|InCarAdjustments|InCarDials|FuelLevel|BrakePressureBias|TractionControl|ABSsetting|DashDisplay/i.test(k)) continue; const x=a[k], y=b[k]; if (Number.isFinite(x)&&Number.isFinite(y)&&Math.abs(x-y)>1e-6) out.push({k, from:x, to:y}); }
   return out; }
 // the steps, built from the settings this car actually has
-function tpSteps(run){
+function tpSteps(run, base){
+  const bv=e=>(base && base[e.path.replace(/^CarSetup\./,"")]) || e.raw.trim();   // the baseline's value (not the open stint's)
   const S=[], ent=(re)=>run.setupFlat.filter(e=>re.test(e.path)), first=a=>a[0];
   const spring=ax=>ent(new RegExp(`(Left|Right)${ax}.*SpringRate$|\\.${ax}[A-Za-z]*\\.SpringRate$`,"i")), arbE=ax=>ax==="Front"?SET.frontArb(run):SET.rearArb(run);
   const lim=e=>{ const L=e&&limitsFor(run,e), en=e&&enumFor(run,e); return en ? {min:en.values[0], max:en.values[en.values.length-1]} : L&&Number.isFinite(L.min)&&Number.isFinite(L.max) ? {min:L.min, max:L.max} : null; };
   S.push({id:"base", block:"Baseline", label:"Baseline: your normal setup", how:"Drive your normal setup. Everything else is measured against this stint.", kind:"base"});
   for (const ax of ["Front","Rear"]){ const e=first(spring(ax)); if (!e) continue; const L=lim(e), re=new RegExp(`${ax}[A-Za-z]*\\.SpringRate$`,"i");
     for (const end of ["min","max"]) S.push({id:`spr${ax}${end}`, block:"Springs", label:`${ax} springs ${end==="min"?"softest":"stiffest"}`, re, kind:end,
-      how:`Both ${ax.toLowerCase()} springs to ${L?`<b>${L[end]}</b>`:`the ${end==="min"?"softest":"stiffest"} the garage allows`} (now ${esc(e.raw.trim())}). Then use the spring perch offsets to put the static ride heights back to the baseline. Nothing else.`, lim:L?L[end]:null}); }
+      how:`Both ${ax.toLowerCase()} springs to ${L?`<b>${L[end]}</b>`:`the ${end==="min"?"softest":"stiffest"} the garage allows`} (baseline ${esc(bv(e))}). Then use the spring perch offsets to put the static ride heights back to the baseline. Nothing else.`, lim:L?L[end]:null}); }
   if (S.some(s=>/^spr/.test(s.id))){
     S.push({id:"base2", block:"Springs", label:"Baseline check", how:"Back to the baseline setup: shows how much the track and you improved meanwhile, so it isn't blamed on the springs.", kind:"base"});
     S.push({id:"sprApp", block:"Springs", label:"The app's spring suggestion", how:"Use the spring change the app suggests now (Changes / Suspension), with the ride heights put back to the baseline. This tests the prediction where you'll actually race.", kind:"between", re:/SpringRate$/i}); }
   const DN=[["highspeedcompression","high-speed bump","HighSpeedComp|HsComp|HSComp|HighSpeedBump"],["highspeedrebound","high-speed rebound","HighSpeedReb|HsReb|HSReb"],["lowspeedcompression","low-speed bump","LowSpeedComp|LsComp|LSComp|LowSpeedBump"],["lowspeedrebound","low-speed rebound","LowSpeedReb|LsReb|LSReb"]];
   let anyD=false; for (const [kind,label,pat] of DN) for (const [end,End] of [["front","Front"],["rear","Rear"]]){ const e=findDamp(run,end,kind); if (!e) continue; anyD=true;
     S.push({id:`d${end}${kind}`, block:"Dampers", label:`${End} ${label} +3`, re:new RegExp(`${End}.*(${pat})`,"i"), kind:"more", amount:3, e0:e[0],
-      how:`${End} ${label} 3 clicks stiffer (now ${esc(e[0].raw.trim())}${dirFor(run,e[0])<0?"; on this car a lower number is stiffer":""}), both sides. Nothing else.`}); }
+      how:`${End} ${label} 3 clicks stiffer (baseline ${esc(bv(e[0]))}${dirFor(run,e[0])<0?"; on this car a lower number is stiffer":""}), both sides. Nothing else.`}); }
   if (anyD) S.push({id:"base3", block:"Dampers", label:"Baseline check", how:"Back to the baseline setup.", kind:"base"});
-  for (const ax of ["Front","Rear"]){ const e=arbE(ax); if (!e) continue; S.push({id:`arb${ax}`, block:"Anti-roll bars", label:`${ax} anti-roll bar one step stiffer`, re:new RegExp(`${ax}[A-Za-z]*\\.(Arb|ArbBlades|ArbSetting|ArbSize|AntiRollBar)|${ax}Brakes[A-Za-z]*\\.Arb`,"i"), kind:"more", amount:1, e0:e, how:`${ax} bar one step stiffer (now ${esc(e.raw.trim())}). Nothing else.`}); }
+  for (const ax of ["Front","Rear"]){ const e=arbE(ax); if (!e) continue; S.push({id:`arb${ax}`, block:"Anti-roll bars", label:`${ax} anti-roll bar one step stiffer`, re:new RegExp(`${ax}[A-Za-z]*\\.(Arb|ArbBlades|ArbSetting|ArbSize|AntiRollBar)|${ax}Brakes[A-Za-z]*\\.Arb`,"i"), kind:"more", amount:1, e0:e, how:`${ax} bar one step stiffer (baseline ${esc(bv(e))}). Nothing else.`}); }
   // the wing at this track: the lowest, a bit lower, a bit higher, the highest (each track gets its own programme, so its own wing sweep)
   { const e=SET.wing(run); if (e){ const L=lim(e);
       for (const [id,kind,label,how] of [["wingMin","wmin","Wing at its lowest",`Rear wing to ${L?`<b>${L.min}</b>`:"the lowest the garage allows"}`],["wingLess","wless","Wing 2 steps lower","Rear wing 2 steps down"],["wingMore","wmore","Wing 2 steps higher","Rear wing 2 steps up"],["wingMax","wmax","Wing at its highest",`Rear wing to ${L?`<b>${L.max}</b>`:"the highest the garage allows"}`]])
-        S.push({id, block:"Wing (this track)", label, re:/Wing/i, kind, e0:e, lim:L?(kind==="wmin"?L.min:kind==="wmax"?L.max:null):null, how:`${how} (now ${esc(e.raw.trim())}). Nothing else; keep the static ride heights the same and check the splitter stays legal. Shows what each wing angle gives here in downforce, top speed and balance (Aero → wing sweep).`}); } }
+        S.push({id, block:"Wing (this track)", label, re:/Wing/i, kind, e0:e, lim:L?(kind==="wmin"?L.min:kind==="wmax"?L.max:null):null, how:`${how} (baseline ${esc(bv(e))}). Nothing else; keep the static ride heights the same and check the splitter stays legal. Shows what each wing angle gives here in downforce, top speed and balance (Aero → wing sweep).`}); } }
   return S.map(s=>Object.assign(s,{laps:TP_LAPS})); }
 // which of your stints (since the programme started, this car and track, dry) did each step: only that setting changed from the baseline
 // the timed laps of a stored stint that weren't counted as clean, and why (the same rule Bono uses in the car)
@@ -5925,7 +5927,7 @@ function lapsLeftOut(rec){
   return rows.filter(r=>r.full && !r.used && r.lap!==lap0).map(r=>`lap ${r.lap} ${r.offTrack_s>=0.5?`(${fmt(r.offTrack_s,1)} s off track)`:r.cut?"(cut)":r.odd?"(odd lap: traffic or a moment)":"(over 3% off your best)"}`);
 }
 function tpStatus(run, P){
-  const steps=tpSteps(run), recs=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===learnTrackOf(run) && !r.wet && r.date>=P.created-60e3 && r.setup).sort((a,b)=>a.date-b.date);
+  const steps=tpSteps(run, P.base), recs=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===learnTrackOf(run) && !r.wet && r.date>=P.created-60e3 && r.setup).sort((a,b)=>a.date-b.date);
   const used=new Set(), firstChange=recs.find(r=>tpChanged(P.base, r.setup).length);
   // wing-only stints: the lowest and highest wing run (when the garage limits aren't known, the extremes you actually ran count as min / max)
   const wingOnly=recs.map(r=>({r, ch:tpChanged(P.base, r.setup)})).filter(x=>x.ch.length && x.ch.every(c=>/Wing/i.test(c.k)));
@@ -5945,8 +5947,26 @@ function tpStatus(run, P){
         else { const d=s.e0?dirFor(run,s.e0):1, need=Math.max(1,s.amount-1); ok=ch.every(c=>(c.to-c.from)*d*(s.kind==="less"?-1:1)>=need-1e-6); } }
       if (ok && !used.has(r.id+s.id)){ s.stints.push(r); used.add(r.id+s.id); } }
     s.done=s.stints.reduce((a,r)=>a+(r.laps||0),0);
+    // what you actually ran for this step (the stint's value, e.g. the softest spring you found)
+    if (s.re && s.kind!=="base") s.ran=[...new Set(s.stints.map(r=>{ const e=Object.entries(r.setup||{}).find(([k])=>s.re.test(k)); return e ? String(e[1]).trim() : null; }).filter(Boolean))];
     const m=(P.manual||{})[s.id]; s.complete = m===true || (m!==false && s.done>=s.laps); s.manual=m; }
+  // near misses: a stint that made this step's change, but changed other things too (so it can't tell what the step did).
+  // Shown on the step with the extras named, so you know why it didn't tick.
+  const counted=new Set(steps.flatMap(s=>s.stints.map(r=>r.id)));
+  for (const s of steps){ s.near=[];
+    for (const r of recs){ if (counted.has(r.id)) continue; const x=tpNearHit(run, s, tpChanged(P.base, r.setup)); if (x) s.near.push(Object.assign({r}, x)); } }
   return steps; }
+// this step's change was made, in the step's direction, but other settings changed as well
+function tpNearHit(run, s, ch){
+  if (!s.re || s.kind==="base" || s.kind==="between") return null;
+  const hit=ch.filter(c=>s.re.test(c.k)), extra=ch.filter(c=>!s.re.test(c.k)); if (!hit.length || !extra.length) return null;
+  const L=learnNum(s.lim), dirOK = s.kind==="min" ? hit.every(c=>Number.isFinite(L)?Math.abs(c.to-L)<1e-6:c.to<c.from) : s.kind==="max" ? hit.every(c=>Number.isFinite(L)?Math.abs(c.to-L)<1e-6:c.to>c.from)
+    : /^w/.test(s.kind) ? hit.every(c=>s.kind==="wmin"||s.kind==="wless" ? c.to<c.from : c.to>c.from) : (()=>{ const d=s.e0?dirFor(run,s.e0):1; return hit.every(c=>(c.to-c.from)*d*(s.kind==="less"?-1:1)>0); })();
+  return dirOK ? {hit, extra} : null; }
+// the settings a stint changed, in words (for the near-miss note)
+const tpExtraWords = extra => { const seen=new Set(); for (const c of extra){ const k=c.k;
+    seen.add(/Arb/i.test(k)?"anti-roll bars":/Camber/i.test(k)?"camber":/Toe/i.test(k)?"toe":/Pressure/i.test(k)?"tyre pressures":/Spring/i.test(k)?"springs":/Wing/i.test(k)?"wing":/Comp|Reb|Damp/i.test(k)?"dampers":/Diff|Preload|Friction/i.test(k)?"diff":learnLabel(k)); }
+  return [...seen]; };
 function testProgHTML(run){
   const P=tpGet(run), trk=((run.info.WeekendInfo||{}).TrackDisplayName)||"this track";
   const nt=schedNextTracks(true), tw=schedThisTracks(true), here=((run.info.WeekendInfo||{}).TrackDisplayName||"").toLowerCase(), isHere=x=>here && x.track.toLowerCase().startsWith(here.split(" ")[0]);
@@ -5968,16 +5988,21 @@ function testProgHTML(run){
   let blk="";
   // this stint ran a different setup from the baseline (a whole other .sto, not one change): it counts for no step. Offer to make it the baseline.
   const curCh=tpChanged(P.base, tpSetup(run)), baseName=P.baseName || ((Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===learnTrackOf(run) && r.date>=P.created-60e3).sort((a,b)=>a.date-b.date)[0]||{}).setupName) || "";
-  const other = curCh.length>=5 ? `<div class="sugg p2" style="margin:0 0 10px"><h3>This stint ran a different setup from the programme's baseline</h3><p style="margin:4px 0 0"><b>${esc(setupName(run).name||"This setup")}</b> differs from the baseline${baseName?` (<b>${esc(baseName)}</b>)`:""} in ${curCh.length} settings (${esc(curCh.slice(0,5).map(c=>learnLabel(c.k)).join(", "))}${curCh.length>5?"…":""}), so it can't count for any step: each step is one change from the baseline. Nothing is lost: every stint is still learned by the models. If this is the setup you meant to start from, make it the baseline and the programme starts again from it.</p>
+  // the open stint made a step's change but changed other things too: say which step, and what else, before offering a new baseline
+  const nearS=steps.map(s=>({s, x:tpNearHit(run, s, curCh)})).find(o=>o.x && !o.s.stints.some(r=>r.id===run.learnedId));
+  const other = nearS ? `<div class="sugg p2" style="margin:0 0 10px"><h3>This stint can't count for "${esc(nearS.s.label)}"</h3><p style="margin:4px 0 0">You changed ${esc(nearS.x.hit.map(c=>`${learnLabel(c.k)} ${fmt(c.from,1)} → ${fmt(c.to,1)}`).filter((v,i,a)=>a.indexOf(v)===i).join(", "))}, which is that step, but also the <b>${esc(tpExtraWords(nearS.x.extra).join(", "))}</b> (${nearS.x.extra.length} setting${nearS.x.extra.length===1?"":"s"}). With more than one thing changed the app can't tell what that one change did. Nothing is lost: the stint is still learned by the models. To tick the step: load ${baseName?`<b>${esc(baseName)}</b>`:"the baseline"}, change only what the step says (put the static ride heights back with the perch offsets) and drive ${TP_LAPS} clean laps.</p>
+     ${curCh.length>=5?`<div class="row" style="gap:8px;margin-top:6px"><button class="ghost" id="tprebase2" style="padding:3px 10px">Or make ${esc(setupName(run).name||"this setup")} the new baseline</button></div>`:""}</div>`
+    : curCh.length>=5 ? `<div class="sugg p2" style="margin:0 0 10px"><h3>This stint ran a different setup from the programme's baseline</h3><p style="margin:4px 0 0"><b>${esc(setupName(run).name||"This setup")}</b> differs from the baseline${baseName?` (<b>${esc(baseName)}</b>)`:""} in ${curCh.length} settings (${esc(curCh.slice(0,5).map(c=>learnLabel(c.k)).join(", "))}${curCh.length>5?"…":""}), so it can't count for any step: each step is one change from the baseline. Nothing is lost: every stint is still learned by the models. If this is the setup you meant to start from, make it the baseline and the programme starts again from it.</p>
      <div class="row" style="gap:8px;margin-top:6px"><button id="tprebase2">Make ${esc(setupName(run).name||"this setup")} the baseline</button></div></div>` : "";
   return `<section><h2>Test programme <small>${esc(run.carName)} at ${esc(trk)} · ${doneN} of ${steps.length} done · started ${dt(P.created)}${baseName?` · baseline ${esc(baseName)}`:""}</small></h2>${away}${away?"":other}${away?"":nextNote}${listNote}
    ${next?`<div class="sugg p3" style="margin:0 0 10px"><h3>Next: ${esc(next.label)}</h3><p style="margin:4px 0 0">${next.how} Drive <b>${next.laps} clean laps</b>${next.done?` (${next.done} so far)`:""}.</p></div>`:`<div class="sugg p3" style="margin:0 0 10px"><h3>Programme complete</h3><p style="margin:4px 0 0">Every step is done: the models in this tab now know each of these settings on this car. "What to test next" below shows anything still uncertain.</p></div>`}
    <div class="tablewrap"><table style="font-size:12px"><tr><th></th><th>Step</th><th>What to set</th><th>Clean laps</th><th>Stints found</th></tr>
     ${steps.map(s=>{ const head=s.block!==blk?`<tr><td colspan="5" style="background:rgba(127,127,127,.08);font-weight:700">${esc(s.block)}</td></tr>`:""; blk=s.block;
       return head+`<tr${s===next?' style="background:rgba(80,140,255,.12)"':""}><td><input type="checkbox" class="tpcheck" data-id="${s.id}" ${s.complete?"checked":""} title="${s.manual===undefined?"ticked automatically when the laps are in; click to set it yourself":"set by you; click to change"}"></td>
-        <td><b>${esc(s.label)}</b>${s.manual!==undefined?` <span class="muted" style="font-size:11px">(by hand)</span>`:""}</td><td style="min-width:260px">${s.how}</td>
+        <td><b>${esc(s.label)}</b>${s.manual!==undefined?` <span class="muted" style="font-size:11px">(by hand)</span>`:""}</td><td style="min-width:260px">${s.how}${s.ran&&s.ran.length?`<div class="ok" style="margin-top:3px">You ran <b>${esc(s.ran.join(", "))}</b> for this.</div>`:""}</td>
         <td style="white-space:nowrap">${s.done>=s.laps?`<span class="ok">${s.done} / ${s.laps}</span>`:`${s.done} / ${s.laps}`}</td>
-        <td style="font-size:11px">${s.stints.length?s.stints.map(r=>{ const lo=lapsLeftOut(r); return `${dt(r.date)} (${r.laps} clean lap${r.laps===1?"":"s"})${lo.length?`<br><span class="muted">not counted: ${esc(lo.join(", "))}</span>`:""}`; }).join("<br>"):'<span class="muted">none yet</span>'}</td></tr>`; }).join("")}</table></div>
+        <td style="font-size:11px">${s.stints.length?s.stints.map(r=>{ const lo=lapsLeftOut(r); return `${dt(r.date)} (${r.laps} clean lap${r.laps===1?"":"s"})${lo.length?`<br><span class="muted">not counted: ${esc(lo.join(", "))}</span>`:""}`; }).join("<br>"):(s.near&&s.near.length?"":'<span class="muted">none yet</span>')}
+          ${(s.near||[]).map(x=>`<div class="warn" style="margin-top:3px">${dt(x.r.date)} (${x.r.laps} laps): not counted, it also changed ${esc(tpExtraWords(x.extra).join(", "))}</div>`).join("")}</td></tr>`; }).join("")}</table></div>
    <p class="muted" style="font-size:12px">A step counts a stint when only that setting changed from the baseline (static ride heights and perch offsets may differ: you put those back after a spring change), at this track, in the dry, since the programme started. ${TP_LAPS} clean laps each; a stint under ${TP_LAPS} laps still counts towards the total. If a setting at an extreme is undriveable, three laps tell the story: tick it by hand. Use the same tyres and a similar fuel load throughout.</p>
    <div class="row" style="gap:8px;margin-top:6px"><button class="ghost" id="tprebase" style="padding:3px 10px">Use this stint's setup as the baseline</button><button class="ghost" id="tpreset" style="padding:3px 10px">Stop this programme</button></div></section>`;
 }
