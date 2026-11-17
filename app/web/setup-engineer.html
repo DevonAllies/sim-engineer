@@ -5891,9 +5891,10 @@ function tpGet(run){ try { return PREFS.get(tpKey(run))||null; } catch(e){ retur
 function tpSet(run, P){ try { PREFS.set(tpKey(run), P); } catch(e){} }
 const tpSetup = run => Object.fromEntries(run.setupFlat.filter(e=>!LEARN_SKIP.test(e.path) && Number.isFinite(learnNum(e.raw))).map(e=>[e.path.replace(/^CarSetup\./,""), e.raw.trim()]));
 // what differs from the baseline (left and right together; static ride height and perch offsets don't count: you put those back after a spring change)
-// (in-car settings, brake bias, TC, ABS, and the fuel load never stop a stint counting: you change those from the cockpit)
+// (in-car settings, brake bias, TC, ABS, and the fuel load never stop a stint counting: you change those from the cockpit;
+//  nor do starting pressures: you trim them every stint to keep the hot pressures in the window, as the app suggests)
 function tpChanged(base, setup){ const a=smVals(base), b=smVals(setup), out=[];
-  for (const k of new Set([...Object.keys(a),...Object.keys(b)])){ if (/RideHeight$|InCarAdjustments|InCarDials|FuelLevel|BrakePressureBias|TractionControl|ABSsetting|DashDisplay/i.test(k)) continue; const x=a[k], y=b[k]; if (Number.isFinite(x)&&Number.isFinite(y)&&Math.abs(x-y)>1e-6) out.push({k, from:x, to:y}); }
+  for (const k of new Set([...Object.keys(a),...Object.keys(b)])){ if (/RideHeight$|InCarAdjustments|InCarDials|FuelLevel|BrakePressureBias|TractionControl|ABSsetting|DashDisplay|StartingPressure|ColdPressure/i.test(k)) continue; const x=a[k], y=b[k]; if (Number.isFinite(x)&&Number.isFinite(y)&&Math.abs(x-y)>1e-6) out.push({k, from:x, to:y}); }
   return out; }
 // the steps, built from the settings this car actually has
 function tpSteps(run, base){
@@ -5903,7 +5904,8 @@ function tpSteps(run, base){
   const lim=e=>{ const L=e&&limitsFor(run,e), en=e&&enumFor(run,e); return en ? {min:en.values[0], max:en.values[en.values.length-1]} : L&&Number.isFinite(L.min)&&Number.isFinite(L.max) ? {min:L.min, max:L.max} : null; };
   S.push({id:"base", block:"Baseline", label:"Baseline: your normal setup", how:"Drive your normal setup. Everything else is measured against this stint.", kind:"base"});
   for (const ax of ["Front","Rear"]){ const e=first(spring(ax)); if (!e) continue; const L=lim(e), re=new RegExp(`${ax}[A-Za-z]*\\.SpringRate$`,"i");
-    for (const end of ["min","max"]) S.push({id:`spr${ax}${end}`, block:"Springs", label:`${ax} springs ${end==="min"?"softest":"stiffest"}`, re, kind:end,
+    // a spring change moves the static camber and toe with it (the car sits differently, like the ride heights): those don't count as another change
+    for (const end of ["min","max"]) S.push({id:`spr${ax}${end}`, block:"Springs", label:`${ax} springs ${end==="min"?"softest":"stiffest"}`, re, kind:end, allow:/Camber|Toe|PerchOffset|SpringPerch/i,
       how:`Both ${ax.toLowerCase()} springs to ${L?`<b>${L[end]}</b>`:`the ${end==="min"?"softest":"stiffest"} the garage allows`} (baseline ${esc(bv(e))}). Then use the spring perch offsets to put the static ride heights back to the baseline. Nothing else.`, lim:L?L[end]:null}); }
   if (S.some(s=>/^spr/.test(s.id))){
     S.push({id:"base2", block:"Springs", label:"Baseline check", how:"Back to the baseline setup: shows how much the track and you improved meanwhile, so it isn't blamed on the springs.", kind:"base"});
@@ -5935,7 +5937,7 @@ function tpStatus(run, P){
   const lows=[...new Set(wingOnly.filter(x=>x.ch[0].to<x.ch[0].from).map(x=>x.ch[0].to))], highs=[...new Set(wingOnly.filter(x=>x.ch[0].to>x.ch[0].from).map(x=>x.ch[0].to))];
   const wLo=lows.length>=2?Math.min(...lows):NaN, wHi=highs.length>=2?Math.max(...highs):NaN;
   for (const s of steps){ s.stints=[];
-    for (const r of recs){ const ch=tpChanged(P.base, r.setup);
+    for (const r of recs){ const ch=tpChanged(P.base, r.setup).filter(c=>!(s.allow && s.allow.test(c.k)));
       let ok=false;
       if (s.kind==="base") ok=!ch.length && (s.id==="base" || (firstChange && r.date>firstChange.date));
       else if (ch.length && ch.every(c=>s.re.test(c.k))){ const c=ch[0];
@@ -5959,6 +5961,7 @@ function tpStatus(run, P){
 // this step's change was made, in the step's direction, but other settings changed as well
 function tpNearHit(run, s, ch){
   if (!s.re || s.kind==="base" || s.kind==="between") return null;
+  if (s.allow) ch=ch.filter(c=>!s.allow.test(c.k));
   const hit=ch.filter(c=>s.re.test(c.k)), extra=ch.filter(c=>!s.re.test(c.k)); if (!hit.length || !extra.length) return null;
   const L=learnNum(s.lim), dirOK = s.kind==="min" ? hit.every(c=>Number.isFinite(L)?Math.abs(c.to-L)<1e-6:c.to<c.from) : s.kind==="max" ? hit.every(c=>Number.isFinite(L)?Math.abs(c.to-L)<1e-6:c.to>c.from)
     : /^w/.test(s.kind) ? hit.every(c=>s.kind==="wmin"||s.kind==="wless" ? c.to<c.from : c.to>c.from) : (()=>{ const d=s.e0?dirFor(run,s.e0):1; return hit.every(c=>(c.to-c.from)*d*(s.kind==="less"?-1:1)>0); })();
@@ -5990,7 +5993,7 @@ function testProgHTML(run){
   const curCh=tpChanged(P.base, tpSetup(run)), baseName=P.baseName || ((Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===learnTrackOf(run) && r.date>=P.created-60e3).sort((a,b)=>a.date-b.date)[0]||{}).setupName) || "";
   // the open stint made a step's change but changed other things too: say which step, and what else, before offering a new baseline
   const nearS=steps.map(s=>({s, x:tpNearHit(run, s, curCh)})).find(o=>o.x && !o.s.stints.some(r=>r.id===run.learnedId));
-  const other = nearS ? `<div class="sugg p2" style="margin:0 0 10px"><h3>This stint can't count for "${esc(nearS.s.label)}"</h3><p style="margin:4px 0 0">You changed ${esc(nearS.x.hit.map(c=>`${learnLabel(c.k)} ${fmt(c.from,1)} → ${fmt(c.to,1)}`).filter((v,i,a)=>a.indexOf(v)===i).join(", "))}, which is that step, but also the <b>${esc(tpExtraWords(nearS.x.extra).join(", "))}</b> (${nearS.x.extra.length} setting${nearS.x.extra.length===1?"":"s"}). With more than one thing changed the app can't tell what that one change did. Nothing is lost: the stint is still learned by the models. To tick the step: load ${baseName?`<b>${esc(baseName)}</b>`:"the baseline"}, change only what the step says (put the static ride heights back with the perch offsets) and drive ${TP_LAPS} clean laps.</p>
+  const other = nearS ? `<div class="sugg p2" style="margin:0 0 10px"><h3>This stint can't count for "${esc(nearS.s.label)}"</h3><p style="margin:4px 0 0">You changed ${esc(nearS.x.hit.map(c=>`${learnLabel(c.k)} ${fmt(c.from,1)} → ${fmt(c.to,1)}`).filter((v,i,a)=>a.indexOf(v)===i).join(", "))}, which is that step, but also <b>${esc(nearS.x.extra.length<=4 ? [...new Set(nearS.x.extra.map(c=>`${learnLabel(c.k)} ${fmt(c.from,1)} → ${fmt(c.to,1)}`))].join(", ") : tpExtraWords(nearS.x.extra).join(", "))}</b>${nearS.x.extra.length>4?` (${nearS.x.extra.length} settings)`:""}. With more than one thing changed the app can't tell what that one change did. Nothing is lost: the stint is still learned by the models. To tick the step: load ${baseName?`<b>${esc(baseName)}</b>`:"the baseline"}, change only what the step says (put the static ride heights back with the perch offsets) and drive ${TP_LAPS} clean laps.</p>
      ${curCh.length>=5?`<div class="row" style="gap:8px;margin-top:6px"><button class="ghost" id="tprebase2" style="padding:3px 10px">Or make ${esc(setupName(run).name||"this setup")} the new baseline</button></div>`:""}</div>`
     : curCh.length>=5 ? `<div class="sugg p2" style="margin:0 0 10px"><h3>This stint ran a different setup from the programme's baseline</h3><p style="margin:4px 0 0"><b>${esc(setupName(run).name||"This setup")}</b> differs from the baseline${baseName?` (<b>${esc(baseName)}</b>)`:""} in ${curCh.length} settings (${esc(curCh.slice(0,5).map(c=>learnLabel(c.k)).join(", "))}${curCh.length>5?"…":""}), so it can't count for any step: each step is one change from the baseline. Nothing is lost: every stint is still learned by the models. If this is the setup you meant to start from, make it the baseline and the programme starts again from it.</p>
      <div class="row" style="gap:8px;margin-top:6px"><button id="tprebase2">Make ${esc(setupName(run).name||"this setup")} the baseline</button></div></div>` : "";
