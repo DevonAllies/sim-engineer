@@ -363,6 +363,16 @@ ipcMain.handle('event:open', (_e, id) => { const d = evDirOf(id); if (d && fs.ex
 ipcMain.handle('team:info', () => { const d = teamDir(); if (!d) return null; try { return JSON.parse(fs.readFileSync(path.join(d, 'team.json'), 'utf8')); } catch (e) { return {}; } });
 ipcMain.handle('team:saveInfo', (_e, info) => { const d = teamDir(); if (!d) return false; const o = { name: String((info && info.name) || ''), link: String((info && info.link) || '') };
   if (o.link && !/^https:\/\/drive\.google\.com\//.test(o.link)) return false; fs.writeFileSync(path.join(d, 'team.json'), JSON.stringify(o, null, 1)); return true; });
+const safeName = (s) => String(s || '').replace(/[\\/:*?"<>|]/g, '-').replace(/\.\./g, '').trim().slice(0, 60);
+ipcMain.handle('team:hello', (_e, name, version) => { const d = teamDir(), n = safeName(name); if (!d || !n) return false; const dir = path.join(d, 'members'); fs.mkdirSync(dir, { recursive: true });
+  const f = path.join(dir, n + '.json'); let o = {}; try { o = JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) {}
+  o = Object.assign(o, { name: n, version: String(version || ''), seen: Date.now(), since: o.since || Date.now() }); fs.writeFileSync(f, JSON.stringify(o, null, 1)); return true; });
+ipcMain.handle('team:members', () => { const d = teamDir(); if (!d) return []; const dir = path.join(d, 'members'); let L = []; try { L = fs.readdirSync(dir).filter(x => x.endsWith('.json')); } catch (e) {}
+  return L.map(x => { try { return JSON.parse(fs.readFileSync(path.join(dir, x), 'utf8')); } catch (e) { return null; } }).filter(Boolean); });
+ipcMain.handle('event:reply', (_e, id, name, how) => { const d = evDirOf(id), n = safeName(name); if (!d || !n || !fs.existsSync(d)) return false; const dir = path.join(d, 'replies'); fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, n + '.json'), JSON.stringify({ name: n, reply: String(how || ''), at: Date.now() })); return true; });
+ipcMain.handle('event:replies', (_e, id) => { const d = evDirOf(id); if (!d) return []; const dir = path.join(d, 'replies'); let L = []; try { L = fs.readdirSync(dir).filter(x => x.endsWith('.json')); } catch (e) {}
+  return L.map(x => { try { return JSON.parse(fs.readFileSync(path.join(dir, x), 'utf8')); } catch (e) { return null; } }).filter(Boolean); });
 ipcMain.handle('team:openLink', (_e, url) => { const u = String(url || ''); if (/^https:\/\/drive\.google\.com\//.test(u)) { shell.openExternal(u); return true; } return false; });
 ipcMain.handle('team:open', () => { if (teamDir()) shell.openPath(teamDir()); return teamDir(); });
 // export for your own analysis: a folder with a copy of the database, flat CSVs (stints, laps, setups) and a README with the columns

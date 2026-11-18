@@ -4,7 +4,7 @@
 const { app } = require('electron');
 const pkg = require('./package.json');
 
-let autoUpdater = null, status = { state: 'idle' }, send = () => {};
+let autoUpdater = null, status = { state: 'idle' }, send = () => {}, retry = null;
 
 // the installed app carries app-update.yml (the GitHub repo to update from); package.json loses its build section when packaged
 function configured() {
@@ -25,9 +25,10 @@ function init(sendFn) {
   autoUpdater.on('download-progress', (p) => set({ state: 'downloading', version: status.version, percent: Math.round(p.percent) }));
   autoUpdater.on('update-downloaded', (i) => set({ state: 'ready', version: i.version }));
   autoUpdater.on('update-not-available', () => set({ state: 'latest' }));
-  autoUpdater.on('error', (e) => set({ state: 'error', message: String(e && e.message || e).slice(0, 200) }));
+  // a failed check (offline, or a release still uploading) tries again in 10 minutes
+  autoUpdater.on('error', (e) => { set({ state: 'error', message: String(e && e.message || e).slice(0, 200) }); clearTimeout(retry); retry = setTimeout(check, 10 * 60 * 1000); });
   check();
-  setInterval(check, 4 * 60 * 60 * 1000);
+  setInterval(check, 60 * 60 * 1000);   // every hour
 }
 
 function check() { if (autoUpdater) autoUpdater.checkForUpdates().catch(() => {}); return status; }

@@ -1,7 +1,7 @@
 {
   "name": "setup-engineer",
   "productName": "Setup Engineer",
-  "version": "0.15.36",
+  "version": "0.15.37",
   "description": "iRacing setup engineer and overlays",
   "main": "main.js",
   "author": "Setup Engineer",

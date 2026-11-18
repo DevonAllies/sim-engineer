@@ -2485,13 +2485,18 @@ async function renderEvents(){
       <li><b>Everyone</b> opens the link, then on the folder: <b>Organize → Add shortcut → My Drive</b>. Google Drive for desktop syncs it to the PC.</li>
       <li><b>Everyone</b> points Setup Engineer at it: <b>Settings → Learning → Team folder → Choose folder</b> (a teammate's link goes in <b>Join a team</b> there; once you're in, <b>Copy invite for Discord</b> writes the message for the next person) (it's under your Google Drive, e.g. <code>G:\\My Drive\\Setup Engineer team</code>), and types their name there.</li></ol>
       <p class="muted" style="font-size:12px;margin:6px 0 0">Only the people the folder is shared with can see it. After this, events are made and joined from this page.</p></section>`; return; }
+  const meName=TEAM.driver||(runs[current]?myName(runs[current]):"");
+  if (meName && window.se.teamHello) await window.se.teamHello(meName, APPVER);
+  const members=window.se.teamMembers ? (await window.se.teamMembers()).sort((a,b)=>(b.seen||0)-(a.seen||0)) : [];
+  const ago=t=>{ const m=(Date.now()-t)/6e4; return m<2?"now":m<60?Math.round(m)+" min ago":m<1440?Math.round(m/60)+" h ago":Math.round(m/1440)+" days ago"; };
+  const replies={}; if (window.se.eventReplies) for (const e of EVS.list) replies[e.id]=await window.se.eventReplies(e.id);
   const run=runs[current], combos=(()=>{ const o={}; for (const r of Object.values(LEARN||{})) if (r.car && r.track) { const k=r.car+"|"+r.track; if (!o[k]) o[k]={car:r.car, carName:r.carName||r.car, track:r.track, trackName:r.trackName||r.track, n:0}; o[k].n++; }
     if (run && run.carPath){ const k=run.carPath+"|"+learnTrackOf(run); o[k]=o[k]||{car:run.carPath, carName:run.carName, track:learnTrackOf(run), trackName:((run.info.WeekendInfo||{}).TrackDisplayName)||"", n:0}; }
     return Object.values(o).sort((a,b)=>b.n-a.n); })();
   const me=TEAM.driver||(run?myName(run):""), active=evActive(), J=new Set(EVS.joined), Dc=new Set(EVS.declined);
   const upcoming=EVS.list.filter(e=>!e.closed).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
   const evRow=e=>{ const st=e.id===EVS.active?"in":J.has(e.id)?"joined":Dc.has(e.id)?"no":"new";
-    return `<tr${e.id===EVS.active?' style="background:color-mix(in srgb,var(--accent) 10%,transparent)"':""}><td><b>${esc(e.name)}</b><div class="muted" style="font-size:11px">by ${esc(e.by||"?")}</div></td><td>${esc(e.carName)}</td><td>${esc(e.trackName)}</td><td>${esc(e.date)}${e.hours?` · ${e.hours} h`:""}</td>
+    return `<tr${e.id===EVS.active?' style="background:color-mix(in srgb,var(--accent) 10%,transparent)"':""}><td><b>${esc(e.name)}</b><div class="muted" style="font-size:11px">by ${esc(e.by||"?")}${(()=>{ const R=replies[e.id]||[], inn=R.filter(x=>x.reply==="in").map(x=>x.name), no=R.filter(x=>x.reply==="no").map(x=>x.name), wait=members.map(m=>m.name).filter(n=>!R.some(x=>x.name===n)); return ` · in: ${inn.length?inn.map(esc).join(", "):"nobody yet"}${no.length?` · out: ${no.map(esc).join(", ")}`:""}${wait.length?` · no answer yet: ${wait.map(esc).join(", ")}`:""}`; })()}</div></td><td>${esc(e.carName)}</td><td>${esc(e.trackName)}</td><td>${esc(e.date)}${e.hours?` · ${e.hours} h`:""}</td>
       <td style="white-space:nowrap">${st==="in"?'<span class="tag" style="background:var(--good);color:#fff">In it</span> <button class="ghost evresp" data-id="'+e.id+'" data-how="leave" style="padding:2px 8px">Pause sharing</button>'
         : st==="joined"?'<button class="evresp" data-id="'+e.id+'" data-how="active" style="padding:2px 10px">Make it my current event</button>'
         : `<button class="evresp" data-id="${e.id}" data-how="join" style="padding:2px 10px">Join</button> <button class="ghost evresp" data-id="${e.id}" data-how="decline" style="padding:2px 10px">${st==="no"?"Said no":"Not this one"}</button>`}</td></tr>`; };
@@ -2517,6 +2522,8 @@ async function renderEvents(){
       <h3 style="font-size:14px;margin:12px 0 4px">After the race</h3>
       <div class="row" style="gap:8px;flex-wrap:wrap"><button class="ghost" id="evopen" style="padding:3px 10px">Open the event folder</button><button class="ghost" id="evkeep" style="padding:3px 10px">Close: keep the plan and summaries, delete the lap traces</button><button class="ghost" id="evmine" style="padding:3px 10px">Remove my data from this event</button>${active.by===me?`<button class="ghost" id="evdel" style="padding:3px 10px">Delete the whole event</button>`:""}</div></section>`; }
   box.innerHTML=`<h2>Team events <small>one race, one car and track, shared only with your team</small></h2>
+    <section><h3 style="margin:0 0 6px">The team <small class="muted" style="font-weight:400">${members.length} member${members.length===1?"":"s"}: everyone whose app uses this team folder</small></h3>
+      ${members.length?`<div style="display:flex;flex-wrap:wrap;gap:8px">${members.map(m=>`<span class="tag" style="padding:4px 10px"${m.name===meName?' title="you"':""}><b>${esc(m.name)}</b>${m.name===meName?" (you)":""} <span class="muted" style="font-size:11px">· seen ${ago(m.seen)}${m.version?` · v${esc(m.version)}`:""}</span></span>`).join("")}</div>`:`<p class="muted" style="font-size:13px">Nobody yet. Set your name in Settings → Learning → Team folder.</p>`}</section>
     <section><h3 style="margin:0 0 6px">Events in the team folder</h3>${upcoming.length?`<div class="tablewrap"><table style="font-size:13px"><tr><th>Event</th><th>Car</th><th>Track</th><th>Date</th><th></th></tr>${upcoming.map(evRow).join("")}</table></div>`:'<p class="muted" style="font-size:13px">No events yet. Start one below; it shows up here for everyone in the team folder.</p>'}</section>
     ${detail}
     <section><h3 style="margin:0 0 6px">Start a new event</h3>
@@ -2525,12 +2532,12 @@ async function renderEvents(){
         Date <input id="evdate" type="date" value="${esc(EV_FORM.date||"")}"> Race length <input id="evhrs" type="number" step="0.5" min="0" value="${esc(EV_FORM.hours||"")}" style="width:60px"> h
         <button id="evcreate" style="padding:3px 12px">Start the event</button></div>
       <p class="muted" style="font-size:12px;margin:6px 0 0">Car and track come from what you've driven (drive a lap there first if it's missing). Everyone in the team folder sees the event within a minute or two and chooses to join or not. Starting it as ${esc(me||"you")} (your name is set in Settings → Learning → Team folder).</p></section>`;
-  document.querySelectorAll(".evresp").forEach(b=>b.onclick=async()=>{ await window.se.eventRespond(b.dataset.id, b.dataset.how); await teamLoadCfg(); TEAMREF={}; renderEvents(); });
+  document.querySelectorAll(".evresp").forEach(b=>b.onclick=async()=>{ await window.se.eventRespond(b.dataset.id, b.dataset.how); if (me && window.se.eventReply && /^(join|decline|leave|active)$/.test(b.dataset.how)) await window.se.eventReply(b.dataset.id, me, b.dataset.how==="decline"?"no":b.dataset.how==="leave"?"paused":"in"); await teamLoadCfg(); TEAMREF={}; renderEvents(); });
   const cr=$("#evcreate"); if (cr) cr.onclick=async()=>{ const c=combos[+$("#evcombo").value], name=$("#evname").value.trim(), date=$("#evdate").value, hours=+$("#evhrs").value||0;
     EV_FORM={name, combo:$("#evcombo").value, date, hours};
     if (!c || !name || !date){ alert("Give the event a name, a car and track, and a date."); return; }
     const id=evId(); await window.se.eventCreate({v:1, id, name, car:c.car, carName:c.carName, track:c.track, trackName:c.trackName, date, hours, by:me||"someone", created:Date.now()});
-    await window.se.eventRespond(id, "join"); EV_FORM={}; await teamLoadCfg(); TEAMREF={}; renderEvents(); };
+    await window.se.eventRespond(id, "join"); if (window.se.eventReply) await window.se.eventReply(id, me||"someone", "in"); EV_FORM={}; await teamLoadCfg(); TEAMREF={}; renderEvents(); };
   const opt=()=>{ EV_OPT={hours:+$("#evhours").value||0, tank:+$("#evtank").value||0, margin:+$("#evmargin").value||1, pit:+$("#evpit").value||60, order:$("#evorder").value.split(",").map(s=>s.trim()).filter(Boolean)}; renderEvents(); };
   for (const id of ["evhours","evtank","evmargin","evpit","evorder"]){ const el=$("#"+id); if (el) el.onchange=opt; }
   const sv=$("#evsave"); if (sv && active) sv.onclick=async()=>{ const D=await evData(active); await evSavePlan(active, evPlan(active, D, Object.assign({hours:active.hours}, EV_OPT))); const m=$("#evmsg"); if (m) m.textContent="Saved: plan.csv and fuel-map.csv in the event folder (open them with Google Sheets)."; };
@@ -7966,7 +7973,7 @@ function showUpdate(s){
   const el=$("#updbar"); if (!s) return;
   const txt = s.state==="downloading" ? `Downloading update v${s.version}… ${s.percent||0}%`
     : s.state==="ready" ? `Update v${s.version} is ready. <button id="updgo">Restart and update</button> <span class="muted">(or it installs when you quit)</span>`
-    : s.state==="error" ? `<span class="muted">Update check failed: ${esc(s.message||"")}</span>` : "";
+    : "";   // a failed check shows in Settings → Updates only (it tries again by itself)
   el.innerHTML = txt; el.classList.toggle("hidden", !txt);
   const b=$("#updgo"); if (b) b.onclick=()=>window.se.updateInstall();
 }
