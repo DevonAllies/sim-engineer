@@ -2824,7 +2824,8 @@ function render(){
   // test programme (Test programme tab): start, re-baseline, stop, tick steps by hand
   // when this stint began (a live stint is stored when it ends, so take its length off), so the stint itself counts
   const tpFrom=()=>{ const L=run.learnedId&&LEARN&&LEARN[run.learnedId]; const d=L&&L.date ? L.date : runDate(run)-(run.live&&run.n&&run.tick?run.n/run.tick*1000:0); return Math.min(d, runDate(run))-120e3; };
-  { const st=$("#tpstart"); if (st) st.onclick=()=>{ tpSet(run, {created:tpFrom(), base:tpSetup(run), baseName:setupName(run).name||"", manual:{}}); rerender(); };
+  document.querySelectorAll(".tpkind").forEach(b=>b.onclick=()=>{ TP_KIND=b.dataset.k; TP_SHOW=null; rerender(); });
+  { const st=$("#tpstart"); if (st) st.onclick=()=>{ const k=tpKindFor(run); tpSet(run, {kind:k, track:learnTrackOf(run), trackName:((run.info.WeekendInfo||{}).TrackDisplayName)||"", created:tpFrom(), base:tpSetup(run), baseName:setupName(run).name||"", manual:{}}); rerender(); };
     // a new baseline: the programme starts again from this stint (stints before it ran the old baseline, so they no longer count)
     const rebase=()=>{ const P=tpGet(run)||{}; tpSet(run, Object.assign(P, {base:tpSetup(run), baseName:setupName(run).name||"", created:tpFrom(), manual:{}})); rerender(); };
     const rb=$("#tprebase"); if (rb) rb.onclick=()=>{ if (!confirm("Use this stint's setup as the new baseline? The programme starts again from this stint.")) return; rebase(); };
@@ -3424,7 +3425,7 @@ function whereOf(path){
 function publishPlan(run){
   if (!window.se || !window.se.publishPlan) return;
   const st=setupName(run), items=[...buildPlan(run).values()].map(p=>({where:whereOf(p.e.path), name:pretty(p.e.key), from:p.e.raw.trim(), to:p.to, done:!!(run.doneMap && run.doneMap[p.e.path+"="+p.to])}));
-  LAST_PLAN = {tests:Object.keys(PREFS.data||{}).filter(k=>k.startsWith("testprog|") && PREFS.data[k] && PREFS.data[k].created && !PREFS.data[k].state).map(k=>k.slice(9)), car:run.carName, load:st.name, saveAs:saveAsName(st.name||"my setup.sto"), items, done:items.filter(i=>i.done).length};
+  LAST_PLAN = {tests:Object.keys(PREFS.data||{}).filter(k=>k.startsWith("testprog|") && PREFS.data[k] && PREFS.data[k].created && !PREFS.data[k].state).map(k=>{ const v=PREFS.data[k], p=k.split("|"); return p[2]==="car" ? `${p[1]}|${v.track}` : `${p[1]}|${p[2]}`; }), car:run.carName, load:st.name, saveAs:saveAsName(st.name||"my setup.sto"), items, done:items.filter(i=>i.done).length};
   publishProg();
 }
 // the Test step overlay's data rides along with the plan; sent again whenever the live garage changes
@@ -6177,7 +6178,17 @@ function dampCrossHTML(run, A){
 }
 // ================= test programme: one change at a time from a baseline, ticked off automatically as stints come in =================
 const TP_LAPS=5;
-const tpKey = run => `testprog|${run.carPath}|${learnTrackOf(run)}`;
+let TP_KIND=null;   // "car" | "track", picked on the Test programme tab (null: the car programme at its test track, else this track's check)
+const tpKeyOf = (run, kind) => kind==="car" ? `testprog|${run.carPath}|car` : `testprog|${run.carPath}|${learnTrackOf(run)}`;
+// programmes from before the split were per track and had every step: the latest one becomes the car programme at its track (and stays that track's check)
+function tpMigrate(run){ try { const ck=tpKeyOf(run,"car"); if (PREFS.get(ck)) return;
+  const olds=Object.entries(PREFS.data||{}).filter(([k,v])=>k.startsWith(`testprog|${run.carPath}|`) && k!==ck && v && v.created && !v.kind); if (!olds.length) return;
+  const [k,v]=olds.sort((a,b)=>Object.keys(b[1].manual||{}).length-Object.keys(a[1].manual||{}).length || b[1].created-a[1].created)[0], track=k.split("|")[2];
+  const r=Object.values(LEARN||{}).find(x=>x.car===run.carPath && String(x.track)===track);
+  PREFS.set(ck, Object.assign(JSON.parse(JSON.stringify(v)), {kind:"car", track, trackName:(r&&r.trackName)||track}));
+  for (const [k2,v2] of olds){ v2.kind="track"; v2.track=k2.split("|")[2]; PREFS.set(k2, v2); } } catch(e){} }
+const tpKindFor = run => { tpMigrate(run); if (TP_KIND) return TP_KIND; const C=PREFS.get(tpKeyOf(run,"car")); return !C || C.track===learnTrackOf(run) ? "car" : "track"; };
+const tpKey = run => tpKeyOf(run, tpKindFor(run));
 function tpGet(run){ try { return PREFS.get(tpKey(run))||null; } catch(e){ return null; } }
 function tpSet(run, P){ try { PREFS.set(tpKey(run), P); } catch(e){} }
 const tpSetup = run => tpSetupFlat(run.setupFlat);
@@ -6189,7 +6200,7 @@ function tpChanged(base, setup){ const a=smVals(base), b=smVals(setup), out=[];
   for (const k of new Set([...Object.keys(a),...Object.keys(b)])){ if (/RideHeight$|InCarAdjustments|InCarDials|FuelLevel|BrakePressureBias|TractionControl|ABSsetting|DashDisplay|StartingPressure|ColdPressure/i.test(k)) continue; const x=a[k], y=b[k]; if (Number.isFinite(x)&&Number.isFinite(y)&&Math.abs(x-y)>1e-6) out.push({k, from:x, to:y}); }
   return out; }
 // the steps, built from the settings this car actually has
-function tpSteps(run, base){
+function tpSteps(run, base, kind){
   const bv=e=>(base && base[e.path.replace(/^CarSetup\./,"")]) || e.raw.trim();   // the baseline's value (not the open stint's)
   const S=[], ent=(re)=>run.setupFlat.filter(e=>re.test(e.path)), first=a=>a[0];
   const spring=ax=>ent(new RegExp(`(Left|Right)${ax}.*SpringRate$|\\.${ax}[A-Za-z]*\\.SpringRate$`,"i")), arbE=ax=>ax==="Front"?SET.frontArb(run):SET.rearArb(run);
@@ -6212,7 +6223,7 @@ function tpSteps(run, base){
   { const e=SET.wing(run); if (e){ const L=lim(e);
       for (const [id,kind,label,how] of [["wingMin","wmin","Wing at its lowest",`Rear wing to ${L?`<b>${L.min}</b>`:"the lowest the garage allows"}`],["wingLess","wless","Wing 2 steps lower","Rear wing 2 steps down"],["wingMore","wmore","Wing 2 steps higher","Rear wing 2 steps up"],["wingMax","wmax","Wing at its highest",`Rear wing to ${L?`<b>${L.max}</b>`:"the highest the garage allows"}`]])
         S.push({id, block:"Wing (this track)", label, re:/Wing/i, kind, e0:e, lim:L?(kind==="wmin"?L.min:kind==="wmax"?L.max:null):null, how:`${how} (baseline ${esc(bv(e))}). Nothing else; keep the static ride heights the same and check the splitter stays legal. Shows what each wing angle gives here in downforce, top speed and balance (Aero → wing sweep).`}); } }
-  return S.map(s=>Object.assign(s,{laps:TP_LAPS})); }
+  return S.filter(s=> kind==="car" ? !/^Wing/.test(s.block) : kind==="track" ? (s.block==="Baseline" || /^Wing/.test(s.block)) : true).map(s=>Object.assign(s,{laps:TP_LAPS})); }
 // which of your stints (since the programme started, this car and track, dry) did each step: only that setting changed from the baseline
 // the timed laps of a stored stint that weren't counted as clean, and why (the same rule Bono uses in the car)
 function lapsLeftOut(rec){
@@ -6221,7 +6232,7 @@ function lapsLeftOut(rec){
   return rows.filter(r=>r.full && !r.used && r.lap!==lap0).map(r=>`lap ${r.lap} ${r.offTrack_s>=0.5?`(${fmt(r.offTrack_s,1)} s off track)`:r.cut?"(cut)":r.odd?"(odd lap: traffic or a moment)":"(over 3% off your best)"}`);
 }
 function tpStatus(run, P){
-  const steps=tpSteps(run, P.base), recs=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===learnTrackOf(run) && !r.wet && r.date>=P.created-60e3 && r.setup).sort((a,b)=>a.date-b.date);
+  const steps=tpSteps(run, P.base, P.kind), ptrack=P.track||learnTrackOf(run), recs=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===ptrack && !r.wet && r.date>=P.created-60e3 && r.setup).sort((a,b)=>a.date-b.date);
   const used=new Set(), firstChange=recs.find(r=>tpChanged(P.base, r.setup).length);
   // wing-only stints: the lowest and highest wing run (when the garage limits aren't known, the extremes you actually ran count as min / max)
   const wingOnly=recs.map(r=>({r, ch:tpChanged(P.base, r.setup)})).filter(x=>x.ch.length && x.ch.every(c=>/Wing/i.test(c.k)));
@@ -6299,13 +6310,14 @@ function tpOverlayData(){
   const w=liveWhere(); let run=runs[current];
   if (w && w.car){ const m=runs.filter(r=>liveMatches(r,w)); if (m.length){ if (!run || !m.includes(run)) run=m[m.length-1]; } else return {none:`No stint at ${w.trackDisplay||"this track"} in this car open yet: drive a lap or open one.`}; }
   if (!run || !run.setupFlat) return {none:"Open a stint in Setup Engineer."};
-  const P=tpGet(run); if (!P) return {none:`No test programme for the ${run.carName} at ${((run.info.WeekendInfo||{}).TrackDisplayName)||"this track"}. Start one on the Test programme tab.`};
+  tpMigrate(run); const CPo=PREFS.get(tpKeyOf(run,"car")), kindO = CPo && CPo.track===learnTrackOf(run) && !CPo.state && !tpStatus(run,CPo).every(s=>s.complete) ? "car" : "track", P=PREFS.get(tpKeyOf(run,kindO));
+  if (!P) return {none:`No car programme or track check running for the ${run.carName} at ${((run.info.WeekendInfo||{}).TrackDisplayName)||"this track"}. Start one on the Test programme tab.`};
   const steps=tpStatus(run,P), st=tpStateOf(P,steps);
   if (st==="paused") return {none:"Test programme paused. Continue it on the Test programme tab."};
   if (st==="done") return {none:`Test programme finished: ${steps.filter(s=>s.complete).length} of ${steps.length} steps.`};
   const R=tpSheetRows(run,P,steps); if (!R) return {none:"The programme has no steps."};
   const s=R.s, uniq=a=>a.filter((v,i,x)=>x.indexOf(v)===i);
-  return { car:run.carName, track:((run.info.WeekendInfo||{}).TrackDisplayName)||"", baseName:P.baseName||"",
+  return { kind:kindO, car:run.carName, track:((run.info.WeekendInfo||{}).TrackDisplayName)||"", baseName:P.baseName||"",
     n:steps.indexOf(s)+1, total:steps.length, doneN:steps.filter(x=>x.complete).length, label:s.label, block:s.block, laps:s.laps, lapsDone:s.done, complete:!!s.complete,
     nothing: R.noSugg ? "The app doesn't suggest a spring change right now: nothing to test. Tick this step by hand on the Test programme tab to skip it." : "",
     spr:R.isSpr&&!R.noSugg, change:uniq(R.set.map(r=>`${learnLabel(r.path)}: ${r.raw} → ${r.to}${R.lcs && r.now!=null && r.now!==r.to && !/^-?d/.test(r.to) ? ` (garage now ${r.now})` : ""}`)), live:!!R.lcs && !R.noSugg,
@@ -6434,7 +6446,10 @@ function tpInsightsHTML(run, steps){
 }
 const tpStateOf = (P, steps) => !P ? "none" : P.state==="paused" ? "paused" : (P.state==="done" || (steps && steps.length && steps.every(s=>s.complete))) ? "done" : "running";
 function testProgHTML(run){
-  const P=tpGet(run), trk=((run.info.WeekendInfo||{}).TrackDisplayName)||"this track";
+  const kind=tpKindFor(run), P=tpGet(run), trk=((run.info.WeekendInfo||{}).TrackDisplayName)||"this track", hereT=learnTrackOf(run);
+  const CP=PREFS.get(tpKeyOf(run,"car")), TPc=PREFS.get(tpKeyOf(run,"track")), cTrack=CP?(CP.trackName||CP.track):"";
+  const kindBar = `<div class="row" style="gap:6px;margin:0 0 10px;flex-wrap:wrap">${[["car",`Car programme${CP?` <span class="muted" style="font-size:11px">(at ${esc(cTrack)})</span>`:""}`,"springs, dampers and anti-roll bars: learned once, used at every track"],["track",`Track check: ${esc(trk)}`,"baseline and wing sweep for this track"]].map(([k,l,tt])=>`<button class="${k===kind?"":"ghost "}tpkind" data-k="${k}" title="${tt}" style="padding:4px 12px">${l}</button>`).join("")}</div>`;
+  const kTitle = kind==="car" ? "Car programme" : "Track check";
   const nt=schedNextTracks(true), tw=schedThisTracks(true), here=((run.info.WeekendInfo||{}).TrackDisplayName||"").toLowerCase(), isHere=x=>here && x.track.toLowerCase().startsWith(here.split(" ")[0]);
   const hereNext=nt.find(isHere), hereNow=tw.find(isHere), lst=a=>a.map(x=>`<b>${esc(x.track)}</b>${ownsTrack(x.track)?"":' <span class="warn" style="font-size:11px">not owned</span>'} (${esc(x.series.join(", "))})`).join(" · ");
   // the open stint isn't at this week's or next week's track: say so up front, and where to go
@@ -6443,13 +6458,19 @@ function testProgHTML(run){
     ? `<div class="sugg p2" style="margin:0 0 10px"><h3>This stint is at ${esc(trk)}, which isn't on your schedule this week or next</h3><p style="margin:4px 0 0">${tw.length?`<b>This week:</b> ${lst(tw)}. `:""}${nt.length?`<b>Next week:</b> ${lst(nt)}. `:""}A programme is kept per car and track, built from a stint there: drive a few laps there (Test Drive) and open that stint, or just drive it with the app running, and the programme for that track starts from its setup. ${tw.concat(nt).some(x=>!ownsTrack(x.track))?`<span class="muted">Own a track marked "not owned"? Click "I own it" next to it in the Schedule.</span>`:""}</p></div>`
     : nt.length||tw.length ? `<p class="muted" style="margin:4px 0;font-size:12px">${hereNow?`<b class="ok">This is this week's track</b> in ${esc(hereNow.series.join(", "))}. `:""}${hereNext?`<b class="ok">This is next week's track</b> in ${esc(hereNext.series.join(", "))}. `:""}${!hereNow&&tw.length?`This week (Schedule): ${lst(tw)}. `:""}${!hereNext&&nt.length?`Next week: ${lst(nt)}. `:""}</p>` : "";
   // every programme you've started, with its progress (open a stint at that track to carry on)
-  const allP=Object.entries(PREFS.data||{}).filter(([k,v])=>k.startsWith("testprog|") && v && v.created).map(([k,v])=>{ const [,car,track]=k.split("|"), r=Object.values(LEARN||{}).find(x=>x.car===car && String(x.track)===track); return {k, car, track, carName:(r&&r.carName)||car, trackName:(r&&r.trackName)||track, created:v.created, here:k===tpKey(run)}; });
+  const allP=Object.entries(PREFS.data||{}).filter(([k,v])=>k.startsWith("testprog|") && v && v.created).map(([k,v])=>{ const [,car,tk]=k.split("|"), track=tk==="car"?v.track:tk, r=Object.values(LEARN||{}).find(x=>x.car===car && String(x.track)===String(track)); return {k, car, track, carName:(r&&r.carName)||car, trackName:(tk==="car"?"car programme at ":"track check at ")+((r&&r.trackName)||v.trackName||track), created:v.created, here:k===tpKeyOf(run,"car")||k===tpKeyOf(run,"track")}; });
   const others=allP.filter(p=>!p.here);
-  const listNote = others.length ? `<p class="muted" style="margin:4px 0;font-size:12px">Your other programmes: ${others.map(p=>`${esc(p.carName)} at ${esc(p.trackName)} (started ${new Date(p.created).toLocaleDateString([], {day:"2-digit", month:"short"})})`).join(" · ")}. Open a stint at that track to carry on.</p>` : "";
+  const listNote = others.length ? `<p class="muted" style="margin:4px 0;font-size:12px">Your other programmes: ${others.map(p=>`${esc(p.carName)}, ${esc(p.trackName)} (started ${new Date(p.created).toLocaleDateString([], {day:"2-digit", month:"short"})})`).join(" · ")}. Open a stint at that track to carry on.</p>` : "";
   const away=liveElsewhereHTML(run);
-  if (!P) return `<section><h2>Test programme <small>one change at a time from a baseline, so the app learns this car properly</small></h2>${away||nextNote}${listNote}
-    <p style="margin:4px 0">A list of stints to drive: a baseline, then each spring, damper, anti-roll bar and wing change on its own, with exactly what to set and how many clean laps. Each step ticks itself off when a stint with only that change comes in.</p>
-    ${away?"":`<button id="tpstart">Start a test programme for the ${esc(run.carName)} at ${esc(trk)}, with this stint's setup as the baseline</button>`}</section>`;
+  if (!P) return `<section><h2>${kTitle} <small>${kind==="car"?"springs, dampers and anti-roll bars, one change at a time":"baseline and wing sweep at this track"}</small></h2>${kindBar}${away||nextNote}${listNote}
+    ${kind==="car"
+      ? `<p style="margin:4px 0">Like an F1 test: drive it once, at one track. A baseline, then each spring, damper and anti-roll bar change on its own, with exactly what to set and how many clean laps; each step ticks itself off when a stint with only that change comes in. What it learns about the car is used at every track. Pick a track with every kind of corner (slow, medium and fast), a smooth surface and few kerbs you need to use: F1 tested at Barcelona for that reason.</p>`
+      : `<p style="margin:4px 0">The short check at each new track: a baseline, then the wing at its lowest, a bit lower, a bit higher and its highest. The wing is the one trade-off that changes with the track (straights against fast corners). Springs, dampers and bars come from the car programme${CP?` (driven at ${esc(cTrack)})`:""}.</p>`}
+    ${away?"":`<button id="tpstart">Start the ${kind==="car"?"car programme":"track check"} for the ${esc(run.carName)} here at ${esc(trk)}, with this stint's setup as the baseline</button>`}</section>`;
+  if (kind==="car" && P.track && P.track!==hereT){ const st0=tpStatus(run,P), d0=st0.filter(s=>s.complete).length;
+    return `<section><h2>Car programme <small>${esc(run.carName)} · at ${esc(cTrack)} · ${d0} of ${st0.length} done</small></h2>${kindBar}
+      <div class="sugg p2" style="margin:0 0 10px"><h3>The car programme runs at ${esc(cTrack)}</h3><p style="margin:4px 0 0">Its baseline and every step are measured there, so stints here at ${esc(trk)} don't count for it (they still teach the models). Open or drive a stint at ${esc(cTrack)} to carry on. Here, use the Track check.</p></div>
+      ${(()=>{ try { return tpInsightsHTML(run, st0); } catch(e){ return ""; } })()}</section>`; }
   const steps=tpStatus(run,P), next=steps.find(s=>!s.complete), doneN=steps.filter(s=>s.complete).length, dt=d=>new Date(d).toLocaleString([], {weekday:"short", day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit"});
   let blk="";
   // this stint ran a different setup from the baseline (a whole other .sto, not one change): it counts for no step. Offer to make it the baseline.
@@ -6460,7 +6481,7 @@ function testProgHTML(run){
      ${curCh.length>=5?`<div class="row" style="gap:8px;margin-top:6px"><button class="ghost" id="tprebase2" style="padding:3px 10px">Or make ${esc(setupName(run).name||"this setup")} the new baseline</button></div>`:""}</div>`
     : curCh.length>=5 ? `<div class="sugg p2" style="margin:0 0 10px"><h3>This stint ran a different setup from the programme's baseline</h3><p style="margin:4px 0 0"><b>${esc(setupName(run).name||"This setup")}</b> differs from the baseline${baseName?` (<b>${esc(baseName)}</b>)`:""} in ${curCh.length} settings (${esc(curCh.slice(0,5).map(c=>learnLabel(c.k)).join(", "))}${curCh.length>5?"…":""}), so it can't count for any step: each step is one change from the baseline. Nothing is lost: every stint is still learned by the models. If this is the setup you meant to start from, make it the baseline and the programme starts again from it.</p>
      <div class="row" style="gap:8px;margin-top:6px"><button id="tprebase2">Make ${esc(setupName(run).name||"this setup")} the baseline</button></div></div>` : "";
-  return `<section><h2>Test programme <small>${esc(run.carName)} at ${esc(trk)} · ${doneN} of ${steps.length} done · ${({running:"running",paused:"paused",done:"finished"})[tpStateOf(P,steps)]} · started ${dt(P.created)}${baseName?` · baseline ${esc(baseName)}`:""}</small></h2>
+  return `<section><h2>${kTitle} <small>${esc(run.carName)} at ${esc(trk)} · ${doneN} of ${steps.length} done · ${({running:"running",paused:"paused",done:"finished"})[tpStateOf(P,steps)]} · started ${dt(P.created)}${baseName?` · baseline ${esc(baseName)}`:""}</small></h2>${kindBar}
    ${(()=>{ const st=tpStateOf(P,steps), left=steps.filter(s=>!s.complete).length, b=(id,txt,ghost)=>`<button ${ghost?'class="ghost" ':''}id="${id}" style="padding:4px 14px">${txt}</button>`;
      const chip={running:'<span class="tag" style="background:var(--good);color:#fff">Running</span>', paused:'<span class="tag" style="background:var(--warn);color:#000">Paused</span>', done:'<span class="tag">Finished</span>'}[st];
      const btns = st==="running" ? b("tppause","Pause")+b("tpfinish","Finish now: use the data so far",1) : st==="paused" ? b("tpresume","Continue")+b("tpfinish","Finish now: use the data so far",1) : (left ? b("tpresume",`Continue (${left} step${left>1?"s":""} left)`) : "");
