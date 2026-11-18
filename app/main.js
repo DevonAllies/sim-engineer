@@ -394,6 +394,7 @@ ipcMain.handle('team:find', (_e, id) => { id = String(id || '').replace(/[^A-Za-
       let b = []; try { b = fs.readdirSync(d1, { withFileTypes: true }).filter(y => y.isDirectory()).slice(0, 200); } catch (e) {}
       for (const y of b){ const d2 = path.join(d1, y.name); if (hit(d2)) { cfg.settings.teamDir = d2; saveCfg(); return d2; } } } }
   return null; });
+ipcMain.handle('team:writeIndex', (_e, bytes) => { const d = teamDir(); if (!d) return false; const dir = path.join(d, 'events'); fs.mkdirSync(dir, { recursive: true }); const f = path.join(dir, 'index.json'); fs.writeFileSync(f + '.tmp', Buffer.from(bytes)); fs.renameSync(f + '.tmp', f); return true; });
 ipcMain.handle('team:openLink', (_e, url) => { const u = String(url || ''); if (/^https:\/\/drive\.google\.com\//.test(u)) { shell.openExternal(u); return true; } return false; });
 ipcMain.handle('team:open', () => { if (teamDir()) shell.openPath(teamDir()); return teamDir(); });
 // export for your own analysis: a folder with a copy of the database, flat CSVs (stints, laps, setups) and a README with the columns

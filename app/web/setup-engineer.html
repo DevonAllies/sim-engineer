@@ -2441,7 +2441,7 @@ async function evData(e){ if (!e) return {stints:[], laps:[]};
   return {stints:S, laps:L}; }
 // after each of your stints: if it's the event's car and track, share its laps and summary there
 async function evShareStint(run, A, rec){
-  if (!EVS.loaded){ await evLoad(); EVS.loaded=true; }
+  if (!EVS.loaded){ await evLoad(); EVS.loaded=true; } if (!TEAM.loaded) await teamLoadCfg();
   const e=evActive(); if (!e || !window.se || !window.se.eventWrite || run.team || !A || A.error || !A.best) return;
   if (run.carPath!==e.car || learnTrackOf(run)!==e.track) return;
   const who=myName(run), fm=String(run.name||"").match(/(\d{4}-\d\d-\d\d) (\d\d)-(\d\d)/), when=fm?`${fm[1]} ${fm[2]}.${fm[3]}`:new Date().toISOString().slice(0,16).replace("T"," ").replace(":",".");
@@ -2450,7 +2450,7 @@ async function evShareStint(run, A, rec){
   for (const l of [A.best, ...typ]){ try { await window.se.eventWrite(e.id, `laps/${fileSafe(run.carPath)}/${fileSafe(learnTrackOf(run))}/${fileSafe(who)} ${when} ${l.time.toFixed(3)}.json.gz`, await gz(JSON.stringify(lapObj(run, A, l, who, when)))); } catch(x){} }
   if (rec && rec.laps>=1){ const r={v:1, driver:who}; for (const k of TEAM_STINT_KEYS) if (rec[k]!==undefined) r[k]=rec[k];
     try { await window.se.eventWrite(e.id, `stints/${fileSafe(who)}/${fileSafe(rec.id.replace(/\|/g," "))}.json.gz`, await gz(JSON.stringify(r)), true); } catch(x){} }
-  EVS.stints={}; }
+  EVS.stints={}; evWriteFiles(); }
 // the fuel map and the start plan, from everyone's stints in the event
 function evPlan(e, D, opts){
   const by={}; for (const s of D.stints) (by[s.driver]=by[s.driver]||[]).push(s);
@@ -2477,6 +2477,30 @@ async function evSavePlan(e, P){
     ["Stint","Driver","From lap","Laps","Fuel at the start of the stint (L)","Fuel to add at the stop (L)"], ...P.stints.map(s=>[s.n, s.driver, s.startLap, s.laps, fmt(s.fuel,1), s.add==null?"start":fmt(s.add,1)])];
   const enc=s=>new TextEncoder().encode(s);
   await window.se.eventWrite(e.id, "fuel-map.csv", enc(evCsv(fm)), true); await window.se.eventWrite(e.id, "plan.csv", enc(evCsv(pl)), true); }
+// files for other apps (e.g. a teammate's overlay), read straight from the synced team folder: events/index.json and events/<id>/plan.json.
+// Written whenever this app has something new (a stint shared, the Team events page opened); the reading app needs nothing else running.
+const EV_FILES_V=1;
+async function evWriteFiles(){
+  if (!window.se || !window.se.eventAll || !window.se.teamWriteIndex) return;
+  try { await teamLoadCfg(); if (!TEAM.dir) return; await evLoad(); EVS.loaded=true;
+    const n=v=>Number.isFinite(v)?+v.toFixed(3):null, parseSet=s=>{ const S=new Set(); for (const p of String(s||"").split(",")){ const m=p.trim().match(/^(\d+)(?:\s*-\s*(\d+))?$/); if (m){ const a=+m[1], b=m[2]?+m[2]:a; for (let k=Math.min(a,b);k<=Math.max(a,b)&&k<200;k++) S.add(k); } } return S.size?S:null; };
+    const index=[];
+    for (const e of EVS.list.filter(x=>!x.closed)){
+      const D=await evData(e), RR=window.se.eventReplies ? await window.se.eventReplies(e.id) : [];
+      const avail=Object.fromEntries(RR.filter(r=>r.avail).map(r=>[r.name, {set:parseSet(r.avail.stints), max:+r.avail.max||0}])), inDrivers=RR.filter(r=>r.reply==="in").map(r=>r.name);
+      const P=evPlan(e, D, Object.assign({hours:e.hours, avail, inDrivers}, e.id===EVS.active?EV_OPT:{}));
+      const doc={v:EV_FILES_V, updated:new Date().toISOString(), event:{id:e.id, name:e.name, car:e.car, carName:e.carName, track:e.track, trackName:e.trackName, date:e.date, hours:e.hours, startedBy:e.by||null},
+        replies:RR.map(r=>({name:r.name, reply:r.reply||null, stints:r.avail?r.avail.stints||null:null, maxStints:r.avail?r.avail.max||null:null})),
+        drivers:P.drivers.map(d=>({driver:d.driver, laps:d.laps, bestLap:n(d.best), typicalLap:n(d.med), lapSpread:n(d.sd), fuelPerLap:n(d.fuel), coastingPerLap:n(d.coast), fuelSavedPerSecondCoasting:n(d.perS), frontTreadPerLap:n(d.wearF), rearTreadPerLap:n(d.wearR)})),
+        plan: P.stints.length ? {tank:n(P.tank), fuelPerLap:n(P.fuel), typicalLap:n(P.lap), lapsPerTank:P.perTank, raceLaps:P.raceLaps, stops:P.stops, pitLossTotal:n(P.pitTime),
+          stints:P.stints.map(s=>({stint:s.n, driver:s.driver||null, fromLap:s.startLap, toLap:s.startLap+s.laps-1, laps:s.laps, fuelAtStart:n(s.fuel), fuelToAdd:s.add==null?null:n(s.add), canDrive:s.options||[]}))} : {missing:P.why||"not enough data yet"}};
+      // only rewritten when something changed (Drive syncs every write)
+      const body=JSON.stringify({...doc, updated:undefined}); EVS.planSig=EVS.planSig||{};
+      if (EVS.planSig[e.id]!==body){ EVS.planSig[e.id]=body; await window.se.eventWrite(e.id, "plan.json", new TextEncoder().encode(JSON.stringify(doc, null, 1)), true); }
+      index.push({id:e.id, name:e.name, carName:e.carName, trackName:e.trackName, date:e.date, hours:e.hours, folder:"events/"+e.id, plan:"events/"+e.id+"/plan.json", in:inDrivers}); }
+    const ib=JSON.stringify(index); if (EVS.indexSig!==ib){ EVS.indexSig=ib; await window.se.teamWriteIndex(new TextEncoder().encode(JSON.stringify({v:EV_FILES_V, updated:new Date().toISOString(), events:index}, null, 1))); }
+  } catch(x){ console.error("event files", x); } }
+setTimeout(()=>{ evWriteFiles(); setInterval(evWriteFiles, 5*60000); }, 20000);
 // the page
 let EV_FORM={}, EV_OPT={};
 async function renderEvents(){
@@ -2541,6 +2565,7 @@ async function renderEvents(){
         <button id="evcreate" style="padding:3px 12px">Start the event</button></div>
       <p class="muted" style="font-size:12px;margin:6px 0 0">Car and track come from what you've driven (drive a lap there first if it's missing). Everyone in the team folder sees the event within a minute or two and chooses to join or not. Starting it as ${esc(me||"you")} (your name is set in Settings → Learning → Team folder).</p></section>`;
   document.querySelectorAll(".evresp").forEach(b=>b.onclick=async()=>{ await window.se.eventRespond(b.dataset.id, b.dataset.how); if (me && window.se.eventReply && /^(join|decline|leave|active)$/.test(b.dataset.how)) await window.se.eventReply(b.dataset.id, me, b.dataset.how==="decline"?"no":b.dataset.how==="leave"?"paused":"in"); await teamLoadCfg(); TEAMREF={}; renderEvents(); });
+  evWriteFiles();
   const cr=$("#evcreate"); if (cr) cr.onclick=async()=>{ const c=combos[+$("#evcombo").value], name=$("#evname").value.trim(), date=$("#evdate").value, hours=+$("#evhrs").value||0;
     EV_FORM={name, combo:$("#evcombo").value, date, hours};
     if (!c || !name || !date){ alert("Give the event a name, a car and track, and a date."); return; }
@@ -2874,7 +2899,10 @@ function render(){
   const run=runs[current], A=run.A=analyze(run), S=settingsFor(run);
   applyBalance(run);   // your style and feel set the understeer / oversteer bands for this car
   run.ratio=A.ratio; run.ysgn=A.ysgn;
-  if (A.error){ run.sug=null; renderNav(); showPanels(); out.innerHTML=`<section><h2>${esc(run.short)}</h2><p>${run.live && !run.ended ? "Live stint started. The analysis appears after your first full lap (the out lap is only used to calibrate)." : A.error}</p></section>`; return; }
+  if (A.error){ run.sug=null; renderNav(); showPanels(); out.innerHTML=`<section><h2>${esc(run.short)}</h2><p>${run.live && !run.ended ? "Live stint started. The analysis appears after your first full lap (the out lap is only used to calibrate)." : A.error}</p></section>`;
+    // the programme works from the car and its setup alone: start one, or see where it stands, before a full lap
+    if (view==="programme" && run.setupFlat && run.setupFlat.length){ try { out.innerHTML+=testProgHTML(run); wireProg(run); } catch(x){ console.error("programme", x); } }
+    return; }
   syncInCar(run);
   if (!A.bottom) A.bottom = bottoming(run, A);          // where the car touches down
   if (!A.limit) A.limit = limitCorners(run, A);         // how much grip you use per corner
@@ -2953,6 +2981,17 @@ function render(){
   { const es=$("#endupit"); if (es) es.onchange=()=>{ RACE.pitLoss=+es.value||60; PREFS.set("race", RACE); rerender(); }; }
   document.querySelectorAll(".mrange").forEach(s=>s.onchange=()=>{ const R=modelRange(); R[s.dataset.k]=s.value; try { PREFS.set("modelRange", R); } catch(e){}
     runs.forEach(r=>{ if (r.A) r.A.tw=null; }); rerender(); });   // the measured tyre window follows the range too
+  wireProg(run);
+  for (const [id,key] of [["lctarget","lcTarget"],["tyreloss","tyreLoss"],["racestart","startH"]]){ const el=$("#"+id); if (el) el.onchange=()=>{ RACE[key]=el.value===""?"":+el.value; PREFS.set("race", RACE); rerender(); }; }
+  if (view==="aero" && A.rh) drawRH(run,A,S);
+  if (view==="laps") drawTrace(run,A);
+  if (view==="dampers") for (const c of Object.keys(A.damp||{})) drawHist($("#dh"+c), A.damp[c].hist);
+  wireSugInputs(run); wireRace(run); wireFfb(); wireTabs(); if (view==="learn") wireLearn(run);
+  document.querySelectorAll("[data-goto]").forEach(b=>b.onclick=()=>{ view=b.dataset.goto; render(); window.scrollTo(0,0); });
+  document.querySelectorAll("[data-rot]").forEach(b=>b.onclick=()=>{ ROT_SEL=b.dataset.rot; const y=window.scrollY; render(); window.scrollTo(0,y); });
+}
+// the Test programme tab's buttons (also when the open stint has no full lap: the programme doesn't need one)
+function wireProg(run){
   // test programme (Test programme tab): start, re-baseline, stop, tick steps by hand
   // when this stint began (a live stint is stored when it ends, so take its length off), so the stint itself counts
   const tpFrom=()=>{ const L=run.learnedId&&LEARN&&LEARN[run.learnedId]; const d=L&&L.date ? L.date : runDate(run)-(run.live&&run.n&&run.tick?run.n/run.tick*1000:0); return Math.min(d, runDate(run))-120e3; };
@@ -2974,13 +3013,6 @@ function render(){
     { const b=$("#tpfinish"); if (b) b.onclick=()=>{ if (confirm("Finish the programme now? The steps you've driven are kept and summarised; the rest are left undone. You can continue it later.")) setState("done"); }; }
     { const sh=$("#tpshow"); if (sh) sh.onchange=()=>{ TP_SHOW=sh.value; rerender(); }; const dd=$("#tpsheet"); if (dd) dd.ontoggle=()=>{ TP_SHEET_OPEN=dd.open; }; }
     document.querySelectorAll(".tpcheck").forEach(c=>c.onchange=()=>{ const P=tpGet(run); if (!P) return; P.manual=P.manual||{}; P.manual[c.dataset.id]={v:c.checked, at:Date.now()}; tpSet(run, P); rerender(); }); }
-  for (const [id,key] of [["lctarget","lcTarget"],["tyreloss","tyreLoss"],["racestart","startH"]]){ const el=$("#"+id); if (el) el.onchange=()=>{ RACE[key]=el.value===""?"":+el.value; PREFS.set("race", RACE); rerender(); }; }
-  if (view==="aero" && A.rh) drawRH(run,A,S);
-  if (view==="laps") drawTrace(run,A);
-  if (view==="dampers") for (const c of Object.keys(A.damp||{})) drawHist($("#dh"+c), A.damp[c].hist);
-  wireSugInputs(run); wireRace(run); wireFfb(); wireTabs(); if (view==="learn") wireLearn(run);
-  document.querySelectorAll("[data-goto]").forEach(b=>b.onclick=()=>{ view=b.dataset.goto; render(); window.scrollTo(0,0); });
-  document.querySelectorAll("[data-rot]").forEach(b=>b.onclick=()=>{ ROT_SEL=b.dataset.rot; const y=window.scrollY; render(); window.scrollTo(0,y); });
 }
 function wireSugInputs(run){
   document.querySelectorAll('.incl input[type="checkbox"]').forEach(cb=>cb.onchange=()=>{ const s=run.sug[+cb.dataset.s];
@@ -6586,7 +6618,7 @@ function tpOverlayData(){
   return { kind:kindO, car:run.carName, track:((run.info.WeekendInfo||{}).TrackDisplayName)||"", baseName:P.baseName||"",
     n:steps.indexOf(s)+1, total:steps.length, doneN:steps.filter(x=>x.complete).length, label:s.label, block:s.block, laps:s.laps, lapsDone:s.done, complete:!!s.complete,
     nothing: R.noSugg ? (s.combo && s.combo.done ? "The sweeps say the baseline springs and bars are right: nothing to test. Tick this step by hand to skip it." : "The app doesn't suggest a spring change right now: nothing to test. Tick this step by hand on the Test programme tab to skip it.") : "",
-    spr:R.isSpr&&!R.noSugg, change:uniq(R.set.map(r=>`${learnLabel(r.path)}: ${r.raw} → ${r.to}${R.lcs && r.now!=null && r.now!==r.to && !/^-?d/.test(r.to) ? ` (garage now ${r.now})` : ""}`)), live:!!R.lcs && !R.noSugg,
+    spr:R.isSpr&&!R.noSugg, change:uniq(R.set.map(r=>`${learnLabel(r.path)}: ${r.raw} → ${r.to}${R.lcs && r.now!=null && r.now!==r.to ? ` (garage now ${r.now}${r.off?"":", close enough"})` : ""}`)), live:!!R.lcs && !R.noSugg,
     off:uniq(R.off.map(r=>`${r.label}: ${r.now} (should be ${r.st==="set"?r.to:r.raw})`)), offRH:uniq(R.offRH.map(r=>`${r.label}: ${r.now} (baseline ${r.raw})`)),
     base:tpBaseKey(P, s.base), moved: s.base!==P.base }; }
 // one step against the baseline and the garage (live when you're in the car here, else the open stint): what to set, put back, keep, and what's off

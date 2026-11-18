@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld('se', {
   teamSaveInfo: (info) => ipcRenderer.invoke('team:saveInfo', info),
   teamOpenLink: (url) => ipcRenderer.invoke('team:openLink', url),
   teamFind: (id) => ipcRenderer.invoke('team:find', id),
+  teamWriteIndex: (bytes) => ipcRenderer.invoke('team:writeIndex', bytes),
   teamHello: (name, version) => ipcRenderer.invoke('team:hello', name, version),
   teamMembers: () => ipcRenderer.invoke('team:members'),
   eventReply: (id, name, how, avail) => ipcRenderer.invoke('event:reply', id, name, how, avail),
