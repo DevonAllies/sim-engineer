@@ -13,11 +13,10 @@ Hi! This gets you into our shared team folder, so we can plan team races togethe
 
 - https://www.google.com/drive/download/ — sign in with your Google account.
 
-## 3. Add the team folder
+## 3. Join the team
 
-- Open the team folder link from Discord (or paste it into Setup Engineer: **Settings → Learning → Team folder → Join a team → Open the team folder**).
-- In the browser: **Organize → Add shortcut → My Drive**. Wait a minute for Google Drive to sync it to your PC.
-- In Setup Engineer: **Settings → Learning → Team folder → Choose folder**, and pick it (it's in your Google Drive, for example `G:\My Drive\Setup Engineer team`). Type your name there too.
+- In Setup Engineer: **Settings → Learning → Team folder**: type your name, paste the **team key** from Discord (it starts with `SE1-`) in **Join a team**, and click **Join**.
+- The first time, your browser opens the team folder: click **Add shortcut to Drive**. Google Drive syncs it, the app finds it by itself, and you're in.
 
 ## 4. Team races
 

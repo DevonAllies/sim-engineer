@@ -5172,11 +5172,11 @@ async function learnSettings(){
       <p style="margin:0 0 6px">${TEAM.dir?`<code>${esc(TEAM.dir)}</code>`:'<span class="muted">not set</span>'} <button class="ghost" id="teamdir" style="padding:2px 10px">${TEAM.dir?"Change":"Choose"} folder</button> ${TEAM.dir?`<button class="ghost" id="teamopen" style="padding:2px 10px">Open</button>`:""}
        · Your name <input id="teamname" value="${esc(TEAM.driver||"")}" placeholder="your iRacing name" style="width:150px;padding:2px 6px"> · <label><input type="checkbox" id="teamauto" ${TEAM.auto?"checked":""}> share my best lap after every stint</label></p>
       ${TEAM.dir ? await (async()=>{ const I=(window.se.teamInfo && await window.se.teamInfo())||{}; return `<p style="margin:0 0 6px"><b>Team key</b> <span class="muted" style="font-size:12px">the team folder's Google Drive link, which you send to teammates. Get it once: in Google Drive, right-click the team folder → <b>Share</b> → General access: <b>Anyone with the link</b>, role <b>Editor</b> (then nobody has to request access) → <b>Copy link</b>, and paste it here. Saved in the team folder. Anyone with the key can open the folder, so send it only to your team.</span><br>
-        <input id="teamlink" value="${esc(I.link||"")}" placeholder="https://drive.google.com/drive/folders/…" style="width:380px;padding:2px 6px"> <button class="ghost" id="teamlinksave" style="padding:2px 10px">Save</button> <button id="teaminvite" style="padding:2px 10px" ${I.link?"":"disabled"}>Copy the invite (with the key) for Discord</button> <span id="teamlinkmsg" class="muted" style="font-size:12px"></span></p>`; })()
+        <input id="teamlink" value="${esc(I.link||"")}" placeholder="https://drive.google.com/drive/folders/…" style="width:380px;padding:2px 6px"> <button class="ghost" id="teamlinksave" style="padding:2px 10px">Save</button> <button id="teaminvite" style="padding:2px 10px" ${I.link?"":"disabled"}>Copy the invite (with the key) for Discord</button>${I.key?`<br><span style="font-size:13px">Team key: <code>${esc(I.key)}</code></span>`:""} <span id="teamlinkmsg" class="muted" style="font-size:12px"></span></p>`; })()
       : `<p style="margin:0 0 6px"><b>Start a team</b> <span class="muted" style="font-size:12px">you run it: the app makes the team folder in your Google Drive, then you get the key to send</span><br><button id="teamcreate" style="padding:2px 12px">Create the team folder</button> <span class="muted" style="font-size:12px">pick your Google Drive (e.g. <code>G:\\My Drive</code>); it makes <i>Setup Engineer team</i> in it</span></p>
         <p style="margin:0 0 6px"><b>Join a team</b> <span class="muted" style="font-size:12px">someone sent you a team key (a Google Drive link): paste it here</span><br>
-        <input id="teamjoin" placeholder="https://drive.google.com/drive/folders/…" style="width:380px;padding:2px 6px"> <button class="ghost" id="teamjoingo" style="padding:2px 10px">Open the team folder</button>
-        <span class="muted" style="font-size:12px">then in the browser: <b>Organize → Add shortcut → My Drive</b>, wait a minute for Google Drive for desktop to sync it, and click <b>Choose folder</b> above to pick it (it's in your Google Drive, e.g. <code>G:\\My Drive</code>).</span></p>`}`; })():""}
+        <input id="teamjoin" placeholder="SE1-… (the team key)" style="width:330px;padding:2px 6px"> <button id="teamjoingo" style="padding:2px 12px">Join</button> <span id="teamjoinmsg" style="font-size:13px"></span>
+        <br><span class="muted" style="font-size:12px">Needs Google Drive for desktop, signed in. The first time, your browser opens the team folder: click <b>Add shortcut to Drive</b> (or Organize → Add shortcut → My Drive). The app then finds the folder by itself once Google Drive has synced it, and you're in.</span></p>`}`; })():""}
     ${window.se.dataCsv?`<p style="margin:0 0 6px"><label><input type="checkbox" id="csvon" ${await window.se.dataCsv()?"checked":""}> Also keep a CSV copy per car and track (for Excel)</label> <span class="muted" style="font-size:12px">Everything is in the database either way; the CSV is only a copy.</span></p>`:""}
     ${(HH=>HH.length?`<p style="margin:8px 0 4px"><b>Historic</b> <span class="muted" style="font-size:12px">kept, never learned from (older iRacing builds)</span></p>
       <div class="tablewrap"><table style="font-size:12px"><tr><th>Car</th><th>Track</th><th>Stints</th><th>Moved</th><th></th></tr>${HH.map(x=>`<tr><td>${esc(x.carName||x.car)}</td><td>${esc(x.trackName||x.track)}</td><td>${x.n}</td><td>${x.moved?new Date(x.moved).toLocaleDateString():""}</td><td><button class="ghost histback" data-car="${esc(x.car)}" data-track="${esc(String(x.track))}" style="padding:1px 8px">Restore</button></td></tr>`).join("")}</table></div>`:"")(window.se.learnHistInfo?await window.se.learnHistInfo():[])}
@@ -5206,15 +5206,21 @@ async function learnSettings(){
 1. Install Setup Engineer: https://github.com/DevonAllies/sim-engineer/releases/latest
    (download the Setup-Engineer-Setup .exe; if Windows says "protected your PC", click More info → Run anyway)
 2. Install Google Drive for desktop and sign in: https://www.google.com/drive/download/
-3. Open our team folder and add it to your Drive (Organize → Add shortcut → My Drive):
-   ${I.link}
-4. In Setup Engineer: Settings → Learning → Team folder → Choose folder, and pick it (it's in your Google Drive). Type your name there too.
+3. In Setup Engineer: Settings → Learning → Team folder → type your name, paste this team key in Join a team and click Join:
+   ${I.key||I.link}
+4. Your browser opens our team folder once: click Add shortcut to Drive. The app finds it and you're in.
 
 Then open Team events (left menu): our races are listed there, click Join on the ones you're in.
 Your own data stays on your PC; only what you share goes into the team folder.`;
       try { await navigator.clipboard.writeText(txt); msg("Invite copied: paste it in Discord."); } catch(e){ msg("Couldn't copy."); } };
     const tc=$("#teamcreate"); if (tc) tc.onclick=async()=>{ const nm=($("#teamname")||{}).value||""; const d=await window.se.teamCreate(nm.trim()); if (d){ TEAMREF={}; await teamLoadCfg(); await learnSettings(); } };
-    const tj=$("#teamjoingo"); if (tj) tj.onclick=async()=>{ const v=$("#teamjoin").value.trim(); if (!(await window.se.teamOpenLink(v))) alert("Paste the Google Drive link your teammate sent (it starts with https://drive.google.com/)."); }; }
+    const tj=$("#teamjoingo"); if (tj) tj.onclick=async()=>{ const v=$("#teamjoin").value.trim(), m=v.match(/^SE1-([A-Za-z0-9_-]{10,})$/) || v.match(/folders\/([A-Za-z0-9_-]{10,})/), say=t=>{ const e=$("#teamjoinmsg"); if (e) e.innerHTML=t; };
+      if (!m){ say('<span class="warn">That isn\'t a team key. It looks like SE1- followed by letters and numbers.</span>'); return; }
+      const id=m[1], done=async d=>{ say('<span class="ok">You\'re in the team.</span>'); TEAMREF={}; await teamLoadCfg(); setTimeout(()=>learnSettings(), 800); };
+      let d=await window.se.teamFind(id); if (d) return done(d);
+      await window.se.teamOpenLink("https://drive.google.com/drive/folders/"+id);
+      say("Your browser opened the team folder: click <b>Add shortcut to Drive</b>. Waiting for Google Drive to sync it…");
+      const t0=Date.now(); const poll=async()=>{ d=await window.se.teamFind(id); if (d) return done(d); if (Date.now()-t0<10*60000) setTimeout(poll, 5000); else say('<span class="warn">Not found yet. Check Google Drive for desktop is running and signed in, then click Join again.</span>'); }; setTimeout(poll, 5000); }; }
   const tn=$("#teamname"); if (tn) tn.onchange=async()=>{ await window.se.teamSet({teamDriver:tn.value.trim()}); await teamLoadCfg(); TEAMREF={}; };
   const ta=$("#teamauto"); if (ta) ta.onchange=async()=>{ await window.se.teamSet({teamAuto:ta.checked}); await teamLoadCfg(); };
   box.querySelectorAll(".histback").forEach(b=>b.onclick=async()=>{ await window.se.learnHistoric(b.dataset.car, b.dataset.track, true); LEARN=await learnStore.load(); LEARN_VER++;

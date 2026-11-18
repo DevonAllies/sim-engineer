@@ -362,7 +362,9 @@ ipcMain.handle('event:remove', (_e, id, what) => { const d = evDirOf(id); if (!d
 ipcMain.handle('event:open', (_e, id) => { const d = evDirOf(id); if (d && fs.existsSync(d)) shell.openPath(d); return d; });
 ipcMain.handle('team:info', () => { const d = teamDir(); if (!d) return null; try { return JSON.parse(fs.readFileSync(path.join(d, 'team.json'), 'utf8')); } catch (e) { return {}; } });
 ipcMain.handle('team:saveInfo', (_e, info) => { const d = teamDir(); if (!d) return false; const o = { name: String((info && info.name) || ''), link: String((info && info.link) || '') };
-  if (o.link && !/^https:\/\/drive\.google\.com\//.test(o.link)) return false; fs.writeFileSync(path.join(d, 'team.json'), JSON.stringify(o, null, 1)); return true; });
+  if (o.link && !/^https:\/\/drive\.google\.com\//.test(o.link)) return false;
+  let prev = {}; try { prev = JSON.parse(fs.readFileSync(path.join(d, 'team.json'), 'utf8')); } catch (e) {}
+  const m = o.link.match(/folders\/([A-Za-z0-9_-]{10,})/); fs.writeFileSync(path.join(d, 'team.json'), JSON.stringify(Object.assign(prev, o, m ? { key: 'SE1-' + m[1] } : {}), null, 1)); return true; });
 const safeName = (s) => String(s || '').replace(/[\\/:*?"<>|]/g, '-').replace(/\.\./g, '').trim().slice(0, 60);
 ipcMain.handle('team:hello', (_e, name, version) => { const d = teamDir(), n = safeName(name); if (!d || !n) return false; const dir = path.join(d, 'members'); fs.mkdirSync(dir, { recursive: true });
   const f = path.join(dir, n + '.json'); let o = {}; try { o = JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) {}
@@ -383,6 +385,15 @@ ipcMain.handle('team:create', async (_e, owner) => { const { dialog } = require(
   fs.mkdirSync(path.join(d, 'events'), { recursive: true }); fs.mkdirSync(path.join(d, 'members'), { recursive: true });
   const tj = path.join(d, 'team.json'); if (!fs.existsSync(tj)) fs.writeFileSync(tj, JSON.stringify({ owner: String(owner || ''), created: Date.now(), link: '' }, null, 1));
   cfg.settings.teamDir = d; saveCfg(); return d; });
+ipcMain.handle('team:find', (_e, id) => { id = String(id || '').replace(/[^A-Za-z0-9_-]/g, ''); if (id.length < 10) return null;
+  const roots = []; for (const L of 'CDEFGHIJKLMNOPQRSTUVWXYZ') for (const sub of ['My Drive', 'Mijn Drive', 'Meine Ablage', 'Mon Drive', 'Mi unidad', 'Shared drives']) { const p = L + ':\\' + sub; try { if (fs.existsSync(p)) roots.push(p); } catch (e) {} }
+  const hit = (dir) => { try { const j = JSON.parse(fs.readFileSync(path.join(dir, 'team.json'), 'utf8')); return (j.key && j.key.includes(id)) || (j.link && j.link.includes(id)); } catch (e) { return false; } };
+  for (const r of roots){ if (hit(r)) { cfg.settings.teamDir = r; saveCfg(); return r; }
+    let a = []; try { a = fs.readdirSync(r, { withFileTypes: true }).filter(x => x.isDirectory()); } catch (e) {}
+    for (const x of a){ const d1 = path.join(r, x.name); if (hit(d1)) { cfg.settings.teamDir = d1; saveCfg(); return d1; }
+      let b = []; try { b = fs.readdirSync(d1, { withFileTypes: true }).filter(y => y.isDirectory()).slice(0, 200); } catch (e) {}
+      for (const y of b){ const d2 = path.join(d1, y.name); if (hit(d2)) { cfg.settings.teamDir = d2; saveCfg(); return d2; } } } }
+  return null; });
 ipcMain.handle('team:openLink', (_e, url) => { const u = String(url || ''); if (/^https:\/\/drive\.google\.com\//.test(u)) { shell.openExternal(u); return true; } return false; });
 ipcMain.handle('team:open', () => { if (teamDir()) shell.openPath(teamDir()); return teamDir(); });
 // export for your own analysis: a folder with a copy of the database, flat CSVs (stints, laps, setups) and a README with the columns
