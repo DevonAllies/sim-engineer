@@ -2733,11 +2733,30 @@ function tunUpdate(){
 // (simplified outlines, not iRacing's 3D models)
 const CAR_SHAPES = {
   // measured from side-on screenshots (wheelbase as the ruler): outline points [metres from the front, height above the ground]
-  acuransxevo22gt3: {L:4.33, ax:[0.80,3.43], top:[[0,0.17],[0.09,0.49],[0.39,0.65],[0.97,0.74],[1.29,0.82],[1.70,1.04],[1.99,1.11],[2.43,1.12],[2.87,0.98],[3.46,0.75],[3.95,0.69],[4.03,0.49]], wing:{x:4.16,h:1.10,c:0.36}, splitter:0.38},
+  acuransxevo22gt3: {L:4.33, ax:[0.80,3.43], wheelR:0.335, rimR:0.23, spokes:10, archGap:0.05,
+    top:[[0,0.15],[0.04,0.36],[0.12,0.50],[0.30,0.60],[0.55,0.66],[0.97,0.73],[1.29,0.82],[1.50,0.92],[1.70,1.04],[1.99,1.11],[2.43,1.12],[2.70,1.05],[2.95,0.94],[3.30,0.80],[3.70,0.73],[3.92,0.72],[3.97,0.66],[4.02,0.52],[4.03,0.40]],
+    low:[[0,0.06],[0.30,0.03],[0.6,0],[3.55,0],[3.8,0.08],[4.03,0.26]],
+    glass:[[[1.40,0.82],[1.71,1.02],[1.98,1.08],[2.40,1.08],[2.46,0.98],[2.44,0.83]], [[2.52,0.98],[2.70,1.00],[2.62,0.86],[2.52,0.85]]],
+    dark:[[[2.47,0.80],[2.76,0.93],[2.80,0.70],[2.62,0.52],[2.50,0.56]], [[0.02,0.20],[0.30,0.24],[0.42,0.34],[0.10,0.32]], [[3.80,0.30],[4.03,0.30],[4.03,0.40],[3.86,0.44]],
+      [[3.62,0.0],[4.13,0.0],[4.13,0.10],[4.03,0.26],[3.80,0.10]],
+      [[0.04,0.22],[0.30,0.31],[0.31,0.28],[0.06,0.19]],   // canard (dive plane)
+      [[1.27,0.86],[1.42,0.88],[1.45,0.81],[1.30,0.79]]],   // door mirror
+    mirrorStalk:[[1.40,0.81],[1.47,0.78]],
+    strakes:{x0:3.80, x1:4.11, n:5, h0:0.0, h1:0.20},
+    light:[[[0.07,0.48],[0.40,0.59],[0.46,0.56],[0.12,0.45]], [[3.88,0.63],[4.00,0.64],[4.01,0.58],[3.90,0.58]]],
+    lines:[[[0.45,0.50],[1.20,0.56],[2.45,0.62]], [[1.40,0.80],[1.36,0.20]], [[2.44,0.80],[2.44,0.22]], [[1.36,0.20],[2.44,0.22]], [[3.30,0.62],[3.95,0.62]]],
+    wing:{x:4.16,h:1.10,c:0.36,mount:3.72}, splitter:0.38},
   lamborghinievogt3: {L:4.55, ax:[1.0,3.645], top:[[0,0.12],[0.2,0.3],[1.6,0.62],[2.2,1.12],[2.55,1.15],[3.4,1.0],[4.2,0.9],[4.55,0.84]], wing:{x:4.3,h:1.22,c:0.34}, splitter:0.36},
   mercedesamgevogt3: {L:4.75, ax:[1.0,3.63], top:[[0,0.18],[0.15,0.36],[1.0,0.6],[2.0,0.74],[2.55,1.14],[3.05,1.24],[3.75,1.06],[4.5,0.92],[4.75,0.88]], wing:{x:4.5,h:1.28,c:0.36}, splitter:0.4},
   porsche992rgt3: {L:4.62, ax:[0.95,3.45], top:[[0,0.16],[0.15,0.36],[0.9,0.62],[1.65,0.72],[2.1,1.16],[2.7,1.22],[3.5,1.03],[4.3,0.9],[4.62,0.84]], wing:{x:4.35,h:1.32,c:0.36}, splitter:0.38},
-  dallarap217: {L:4.75, ax:[0.93,3.94], top:[[0,0.10],[0.28,0.60],[0.95,0.72],[1.37,0.75],[1.58,0.86],[1.82,1.02],[2.0,1.08],[2.59,1.09],[2.95,0.65],[3.40,0.74],[4.14,0.74],[4.62,0.60],[4.75,0.51]], wing:{x:4.56,h:1.04,c:0.32}, splitter:0.45, fin:true},
+  dallarap217: {L:4.75, ax:[0.93,3.94], wheelR:0.315, rimR:0.24, spokes:12, archGap:0.04,
+    top:[[0,0.10],[0.10,0.40],[0.28,0.60],[0.62,0.70],[0.95,0.72],[1.37,0.75],[1.58,0.86],[1.82,1.02],[2.0,1.08],[2.59,1.09],[2.70,0.98],[2.95,0.65],[3.20,0.70],[3.40,0.74],[4.14,0.74],[4.45,0.68],[4.62,0.60],[4.75,0.51]],
+    low:[[0,0.04],[0.5,0],[3.6,0],[4.1,0.10],[4.75,0.28]],
+    glass:[[[1.80,0.73],[1.86,0.88],[2.36,0.88],[2.36,0.74]], [[1.58,0.86],[1.80,1.00],[1.84,0.92]]],
+    dark:[[[1.88,0.40],[2.33,0.42],[2.36,0.20],[1.95,0.19]], [[2.42,0.32],[2.80,0.30],[2.86,0.18],[2.48,0.20]]],
+    light:[[[0.06,0.42],[0.28,0.56],[0.32,0.52],[0.10,0.40]]],
+    lines:[[[1.30,0.40],[2.95,0.45],[3.30,0.62]], [[1.10,0.25],[3.55,0.22]]],
+    wing:{x:4.56,h:1.04,c:0.32}, splitter:0.45, fin:true},
   _default: {L:4.6, ax:[1.0,3.65], top:[[0,0.16],[0.15,0.33],[0.9,0.52],[1.55,0.66],[2.0,1.08],[2.75,1.15],[3.6,0.95],[4.35,0.78],[4.6,0.72]], wing:{x:4.38,h:1.18,c:0.32}, splitter:0.35} };
 // the side view: car (ride heights exaggerated ×4), wing at its angle, flow lines, force arrows
 // one loop at a time; it stops when you pause, leave the tab or go on track, and a still frame is drawn for any slider change
@@ -2790,20 +2809,40 @@ function tunDraw(move){
       for (let X1=0; X1<=Wc; X1+=6){ const {y, sp}=flow(h,(X1-x0)/sc), P=[X1, py(y)];
         if (prev){ g.strokeStyle=col(sp, dark?0.7:0.55); g.lineWidth=sp>1.35?1.8:1.1; g.beginPath(); g.moveTo(prev[0],prev[1]); g.lineTo(P[0],P[1]); g.stroke(); } prev=P; } }
   }
-  // car body
-  g.beginPath(); g.moveTo(px(0),py(under(0)+top(0))); for (let x=0;x<=CL;x+=0.05) g.lineTo(px(x),py(under(x)+top(x))); g.lineTo(px(CL),py(under(CL))); for (let x=CL;x>=0;x-=0.1) g.lineTo(px(x),py(under(x))); g.closePath();
+  // car body (to the tail: a wing may hang behind it), with the underside shaped where the car has a profile for it (nose, diffuser)
+  const CB=SH.top[SH.top.length-1][0], low=x=>{ const P=SH.low; if (!P) return 0; if (x<=P[0][0]) return P[0][1]; for (let i=1;i<P.length;i++) if (x<=P[i][0]){ const a=P[i-1], b=P[i], q=(x-a[0])/(b[0]-a[0]); return a[1]+(b[1]-a[1])*q; } return P[P.length-1][1]; };
+  const WR=SH.wheelR||0.34, at=(x,h)=>[px(x), py(under(x)+h)], poly=(L,fill,stroke,lw)=>{ g.beginPath(); L.forEach(([x,h],i)=>{ const [X,Y]=at(x,h); i?g.lineTo(X,Y):g.moveTo(X,Y); }); g.closePath(); if (fill){ g.fillStyle=fill; g.fill(); } if (stroke){ g.strokeStyle=stroke; g.lineWidth=lw||1; g.stroke(); } };
+  g.beginPath(); g.moveTo(px(0),py(under(0)+top(0))); for (let x=0;x<=CB;x+=0.04) g.lineTo(px(x),py(under(x)+top(x))); g.lineTo(px(CB),py(under(CB)+low(CB))); for (let x=CB;x>=0;x-=0.04) g.lineTo(px(x),py(under(x)+low(x))); g.closePath();
   g.fillStyle=dark?"#2a3446":"#c9d3e3"; g.fill(); g.strokeStyle=ink; g.lineWidth=1.4; g.stroke();
-  // windows: a darker band along the cabin (where the roofline is highest)
-  { const hiT=Math.max(...SH.top.map(p=>p[1])), cab=SH.top.filter(p=>p[1]>hiT*0.82); if (cab.length>=2){ const xa=cab[0][0], xb=cab[cab.length-1][0];
+  // wheel arches (the openings the wheels sit in)
+  for (const ax of [axF,axR]){ g.save(); g.beginPath(); g.moveTo(px(0),py(under(0)+top(0))); for (let x=0;x<=CB;x+=0.04) g.lineTo(px(x),py(under(x)+top(x))); g.lineTo(px(CB),py(0)); g.lineTo(px(0),py(0)); g.closePath(); g.clip();
+    g.beginPath(); g.arc(px(ax), py(WR), (WR+(SH.archGap||0.04))*sc, 0, Math.PI*2); g.fillStyle=dark?"#0d1118":"#3a414e"; g.fill(); g.strokeStyle=ink; g.lineWidth=1; g.stroke(); g.restore(); }
+  // the car's own details: body lines, intakes and lights, windows
+  const glassCol=dark?"#151b26":"#56627a", darkCol=dark?"#11161f":"#4a5262";
+  if (SH.mirrorStalk){ const [p,q]=SH.mirrorStalk.map(([x,h])=>at(x,h)); g.strokeStyle=ink; g.lineWidth=1.5; g.beginPath(); g.moveTo(p[0],p[1]); g.lineTo(q[0],q[1]); g.stroke(); }
+  for (const L of SH.lines||[]){ g.beginPath(); L.forEach(([x,h],i)=>{ const [X,Y]=at(x,h); i?g.lineTo(X,Y):g.moveTo(X,Y); }); g.strokeStyle=ink; g.globalAlpha=0.45; g.lineWidth=1; g.stroke(); g.globalAlpha=1; }
+  for (const P of SH.dark||[]) poly(P, darkCol, ink, 0.8);
+  for (const P of SH.light||[]) poly(P, dark?"#c9d6ea":"#f2f5fa", ink, 0.8);
+  if (SH.strakes){ const Z=SH.strakes; g.strokeStyle=ink; g.globalAlpha=0.6; g.lineWidth=1; for (let k=0;k<Z.n;k++){ const x=Z.x0+(Z.x1-Z.x0)*k/(Z.n-1), top=Z.h0+(Z.h1-Z.h0)*(x-Z.x0)/(Z.x1-Z.x0)+0.04; const [X,Y0]=at(x,Z.h0), Y1=py(under(x)+top); g.beginPath(); g.moveTo(X,Y0); g.lineTo(X,Y1); g.stroke(); } g.globalAlpha=1; }
+  if (SH.glass) for (const P of SH.glass) poly(P, glassCol, ink, 0.8);
+  // windows otherwise: a darker band along the cabin (where the roofline is highest)
+  else { const hiT=Math.max(...SH.top.map(p=>p[1])), cab=SH.top.filter(p=>p[1]>hiT*0.82); if (cab.length>=2){ const xa=cab[0][0], xb=cab[cab.length-1][0];
       g.beginPath(); for (let x=xa;x<=xb;x+=0.05) g.lineTo(px(x),py(under(x)+top(x)-0.04)); for (let x=xb;x>=xa;x-=0.05) g.lineTo(px(x),py(under(x)+top(x)-0.3)); g.closePath(); g.fillStyle=dark?"#151b26":"#56627a"; g.fill(); } }
   if (SH.fin){ g.beginPath(); g.moveTo(px(2.7),py(under(2.7)+top(2.7))); g.lineTo(px(SH.wing.x),py(under(SH.wing.x)+SH.wing.h)); g.lineTo(px(SH.wing.x),py(under(SH.wing.x)+top(SH.wing.x))); g.closePath(); g.fillStyle=dark?"#3a4558":"#aab6c9"; g.fill(); g.stroke(); }
   // splitter, wheels
   g.fillStyle=ink; g.fillRect(px(-0.05),py(under(0))-1,SH.splitter*sc,2);
-  for (const ax of [axF,axR]){ g.beginPath(); g.arc(px(ax), py(0.34), 0.34*sc, 0, Math.PI*2); g.fillStyle=dark?"#11161f":"#2b2f38"; g.fill(); g.beginPath(); g.arc(px(ax), py(0.34), 0.2*sc, 0, Math.PI*2); g.fillStyle=dark?"#556":"#8a93a3"; g.fill(); }
+  for (const ax of [axF,axR]){ const cx=px(ax), cy=py(WR), rim=(SH.rimR||WR*0.68)*sc;
+    g.beginPath(); g.arc(cx, cy, WR*sc, 0, Math.PI*2); g.fillStyle=dark?"#11161f":"#2b2f38"; g.fill();
+    g.beginPath(); g.arc(cx, cy, rim, 0, Math.PI*2); g.fillStyle=dark?"#3c4352":"#6f7887"; g.fill();
+    g.strokeStyle=dark?"#0c0f15":"#3b414c"; g.lineWidth=Math.max(1.5, rim*0.16); const n=SH.spokes||5, rot=TUN.t*2/WR;   // spokes turn with the road
+    for (let k=0;k<n;k++){ const a=rot+k*2*Math.PI/n; g.beginPath(); g.moveTo(cx+Math.cos(a)*rim*0.22, cy+Math.sin(a)*rim*0.22); g.lineTo(cx+Math.cos(a)*rim*0.95, cy+Math.sin(a)*rim*0.95); g.stroke(); }
+    g.beginPath(); g.arc(cx, cy, rim*0.2, 0, Math.PI*2); g.fillStyle=dark?"#8a93a3":"#d5dae3"; g.fill(); }
   // wing at its angle
   const wx=px(SH.wing.x), wy=py(under(SH.wing.x)+SH.wing.h), ang=-(S.w||5)*Math.PI/180*1.6, hc=SH.wing.c/2;
   g.save(); g.translate(wx,wy); g.rotate(ang); g.fillStyle=ink; g.fillRect(-hc*sc,-2.5,2*hc*sc,5); g.fillRect(-hc*sc-2,-6,3,11); g.fillRect(hc*sc-1,-6,3,11); g.restore();   // wing with endplates
-  g.strokeStyle=ink; g.lineWidth=2; g.beginPath(); g.moveTo(wx,wy); g.lineTo(wx,py(under(SH.wing.x)+top(SH.wing.x))); g.stroke();
+  // the wing mount: down to the rear deck (a swan neck when the wing hangs behind the tail)
+  { const mx=SH.wing.mount!=null ? SH.wing.mount : Math.min(SH.wing.x, CB-0.12), bx=px(mx), by=py(under(mx)+top(mx));
+    g.strokeStyle=ink; g.lineWidth=2; g.beginPath(); g.moveTo(wx,wy); if (Math.abs(bx-wx)>3) g.quadraticCurveTo(wx+(bx-wx)*0.15, by, bx, by); else g.lineTo(bx, by); g.stroke(); }
   // force arrows: downforce at each axle, drag at the back
   const arrow=(x,y,dx,dy,col,txt)=>{ g.strokeStyle=col; g.fillStyle=col; g.lineWidth=3; g.beginPath(); g.moveTo(x,y); g.lineTo(x+dx,y+dy); g.stroke();
     const a=Math.atan2(dy,dx); g.beginPath(); g.moveTo(x+dx,y+dy); g.lineTo(x+dx-9*Math.cos(a-0.4),y+dy-9*Math.sin(a-0.4)); g.lineTo(x+dx-9*Math.cos(a+0.4),y+dy-9*Math.sin(a+0.4)); g.closePath(); g.fill();
