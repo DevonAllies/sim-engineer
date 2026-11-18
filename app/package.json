@@ -1,7 +1,7 @@
 {
   "name": "setup-engineer",
   "productName": "Setup Engineer",
-  "version": "0.15.32",
+  "version": "0.15.33",
   "description": "iRacing setup engineer and overlays",
   "main": "main.js",
   "author": "Setup Engineer",
@@ -67,7 +67,8 @@
       {
         "provider": "github",
         "owner": "DevonAllies",
-        "repo": "sim-engineer"
+        "repo": "sim-engineer",
+        "releaseType": "release"
       }
     ]
   },

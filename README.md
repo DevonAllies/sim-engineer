@@ -4,13 +4,11 @@ A race engineer for iRacing. It reads your telemetry (recorded `.ibt` files and 
 
 Built mainly around the **Acura NSX GT3 EVO 22**, with profiles for the other GT3s, Porsche Cup and Dallara P217 LMP2.
 
-Private repo: for the four of us only.
-
 ---
 
-## Install (for the team)
+## Install
 
-1. Download the latest `Setup-Engineer-Setup-x.y.z.exe` (from the team Google Drive folder, or build it yourself, see below).
+1. Download the latest `Setup-Engineer-Setup-x.y.z.exe` from [Releases](https://github.com/DevonAllies/sim-engineer/releases/latest) (or build it yourself, see below).
 2. Close iRacing, run the installer and approve the Windows admin prompt. It installs to `C:\Program Files\Setup Engineer` for everyone on the PC (an older per-user copy is removed automatically).
 3. Start **Setup Engineer**. It finds your iRacing telemetry folder (`Documents\iRacing\telemetry`) and starts reading.
 4. In iRacing, turn on telemetry recording (Alt+L in the car, or "Telemetry" in the options) so every stint is saved as an `.ibt`.
@@ -20,7 +18,7 @@ Your data stays on your PC in `Documents\Setup Engineer`; only the team folder i
 
 **Updates:** from 0.13.4 on, the app checks this repo's [Releases](https://github.com/DevonAllies/sim-engineer/releases) every 4 hours, downloads a new version in the background and installs it when you close the app (one Windows admin click). Versions before 0.13.4 don't check: install 0.13.4 by hand once.
 
-**Releasing a new version** (maintainer): bump `version` in `app/package.json`, run `npm run dist` in `app/`, then create a GitHub release tagged `v<version>` with `app/dist/Setup-Engineer-Setup-<version>.exe`, its `.blockmap` and `latest.yml` attached.
+**Releasing a new version** (maintainer): bump `version` in `app/package.json`, then in `app/` run `npm run release` with a GitHub token in `GH_TOKEN` (for example `$env:GH_TOKEN = gh auth token`). It builds the installer and publishes it, with the `latest.yml` the updater reads, as release `v<version>`; installed apps pick it up within 4 hours, or at once with **Settings → Check for updates**.
 
 ---
 
@@ -183,6 +181,7 @@ Not in the repo: `node_modules`, installers, `.ibt` telemetry, the database, and
 | 0.15.30 | Car programme builds step by step, like F1 testing: spring sweeps, then 'Springs: the best of both sweeps', which once driven becomes the baseline; then the anti-roll bars on those springs (one step softer and one step stiffer per axle), then 'Bars: the best side on these springs' (the quicker side, or the one that puts mid-corner balance nearest a touch of understeer), which becomes the baseline; then the dampers. The baseline box and the Test step overlay show the baseline as it is now. |
 | 0.15.31 | Car programme choices use one score from all the data, in seconds of lap time: typical lap, consistency, balance (entry, mid, exit against a touch of understeer), slides and kerb slides, bump-rubber contact, and tyre temperature against the working window. Each choice says what it won and lost on. A combination step counts any stint after its sweeps that changes only its settings, and each new baseline builds on the one before. |
 | 0.15.32 | Car programme: a ride-height (rake) step after the springs and before the bars: rear 3 mm lower, rear 3 mm higher (within 1 mm counts), then 'Ride height: the best rake' on the combined score, which becomes the baseline for the bars. A combination step takes only the laps it needs, so later stints on the same setup go to the next steps. |
+| 0.15.33 | Public on GitHub: install from Releases. Releases publish straight away (not as drafts), so installed apps update themselves. Settings shows the version, the update state and a Check for updates button. |
 | 0.15.15 | Test programme: each step shows the baseline value (not the open stint's) and, once done, what you ran; a stint that made a step's change but changed other settings too is listed on that step with what else changed, and the open stint says so at the top. Brake bias, TC, ABS and fuel never stop a stint counting. |
 | 0.15.14 | Bono counts clean laps again (0.15.13 reused a name, so every lap looked too slow). Balance tab: "Where it pushes or slides, and why": every corner split into entry, mid (to the apex) and exit, each marked understeer / oversteer / neutral and driving, setup, or both, judged lap against lap (more push on faster turn-ins, off the brake before turning, slides on earlier throttle) with what to change. |
 | 0.15.13 | Balance: judged near the grip limit (75%+ of the cornering g the car makes at that speed), so light-load stretches no longer water exit and entry down to "neutral"; one scale everywhere (neutral to 0.7°, slight understeer to 1.6°, oversteer below −0.4°), the same as Bono. Gears (GP tab): the best exit gear for each corner from the engine's power curve and your apex speeds, the fastest speed to change down into it, and late downshifts. Clean laps: Bono counts them the way the learning does (up to 0.5 s off track, within 3% of your best) and logs laps it leaves out; the test programme lists the laps it didn't count and why. |
