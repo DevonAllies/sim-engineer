@@ -369,10 +369,20 @@ ipcMain.handle('team:hello', (_e, name, version) => { const d = teamDir(), n = s
   o = Object.assign(o, { name: n, version: String(version || ''), seen: Date.now(), since: o.since || Date.now() }); fs.writeFileSync(f, JSON.stringify(o, null, 1)); return true; });
 ipcMain.handle('team:members', () => { const d = teamDir(); if (!d) return []; const dir = path.join(d, 'members'); let L = []; try { L = fs.readdirSync(dir).filter(x => x.endsWith('.json')); } catch (e) {}
   return L.map(x => { try { return JSON.parse(fs.readFileSync(path.join(dir, x), 'utf8')); } catch (e) { return null; } }).filter(Boolean); });
-ipcMain.handle('event:reply', (_e, id, name, how) => { const d = evDirOf(id), n = safeName(name); if (!d || !n || !fs.existsSync(d)) return false; const dir = path.join(d, 'replies'); fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, n + '.json'), JSON.stringify({ name: n, reply: String(how || ''), at: Date.now() })); return true; });
+ipcMain.handle('event:reply', (_e, id, name, how, avail) => { const d = evDirOf(id), n = safeName(name); if (!d || !n || !fs.existsSync(d)) return false; const dir = path.join(d, 'replies'); fs.mkdirSync(dir, { recursive: true });
+  const f = path.join(dir, n + '.json'); let o = {}; try { o = JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) {}
+  if (how) o.reply = String(how); if (avail) o.avail = { stints: String(avail.stints || '').replace(/[^0-9,\- ]/g, '').slice(0, 40), max: Math.max(0, Math.min(99, +avail.max || 0)) };
+  fs.writeFileSync(f, JSON.stringify(Object.assign(o, { name: n, at: Date.now() }))); return true; });
 ipcMain.handle('event:replies', (_e, id) => { const d = evDirOf(id); if (!d) return []; const dir = path.join(d, 'replies'); let L = []; try { L = fs.readdirSync(dir).filter(x => x.endsWith('.json')); } catch (e) {}
   return L.map(x => { try { return JSON.parse(fs.readFileSync(path.join(dir, x), 'utf8')); } catch (e) { return null; } }).filter(Boolean); });
+// the owner makes the team folder: pick where (your Google Drive), the app makes "Setup Engineer team" in it and uses it
+ipcMain.handle('team:create', async (_e, owner) => { const { dialog } = require('electron');
+  const r = await dialog.showOpenDialog(main, { title: 'Where to make the team folder (pick your Google Drive, e.g. G:\\My Drive)', properties: ['openDirectory'], defaultPath: app.getPath('home') });
+  if (r.canceled || !r.filePaths[0]) return null; let d = r.filePaths[0];
+  if (path.basename(d).toLowerCase() !== 'setup engineer team') d = path.join(d, 'Setup Engineer team');
+  fs.mkdirSync(path.join(d, 'events'), { recursive: true }); fs.mkdirSync(path.join(d, 'members'), { recursive: true });
+  const tj = path.join(d, 'team.json'); if (!fs.existsSync(tj)) fs.writeFileSync(tj, JSON.stringify({ owner: String(owner || ''), created: Date.now(), link: '' }, null, 1));
+  cfg.settings.teamDir = d; saveCfg(); return d; });
 ipcMain.handle('team:openLink', (_e, url) => { const u = String(url || ''); if (/^https:\/\/drive\.google\.com\//.test(u)) { shell.openExternal(u); return true; } return false; });
 ipcMain.handle('team:open', () => { if (teamDir()) shell.openPath(teamDir()); return teamDir(); });
 // export for your own analysis: a folder with a copy of the database, flat CSVs (stints, laps, setups) and a README with the columns
