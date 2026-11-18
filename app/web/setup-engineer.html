@@ -2515,8 +2515,11 @@ function evCarId(name){ const known={}; for (const r of Object.values(LEARN||{})
   let best=null; for (const [id,nm] of Object.entries(known)) if (evNameMatch(name, nm) && evNameMatch(nm, name)) best=id; return best; }
 function evTrackId(name){ const base=String(name).split(/ - | \(/)[0]; let best=null; for (const r of Object.values(LEARN||{})) if (r.track && r.trackName && evNameMatch(base, r.trackName)) { best=r.track; if (evNameMatch(name, r.trackName)) break; } return best; }
 // a schedule week's length: hours, minutes or laps
-function evSchedList(){ if (!SCHED){ schedLoad(); return []; } const out=[], from=Date.now()-7*864e5, to=Date.now()+56*864e5;
-  for (const s of schedMine()) for (const w of s.weeks||[]){ const t0=Date.parse(w.start+"T00:00:00Z"); if (!(t0>=from && t0<=to)) continue;
+let EV_SCHED_ALL=false, EV_SCHED_Q="";
+function evSchedList(){ if (!SCHED){ schedLoad(); return []; } const out=[], from=Date.now()-7*864e5, to=Date.now()+56*864e5, mine=new Set(schedMine().map(s=>s.name)), q=evNorm(EV_SCHED_Q);
+  for (const s of SCHED.series||[]) for (const w of s.weeks||[]){ const t0=Date.parse(w.start+"T00:00:00Z"); if (!(t0>=from && t0<=to)) continue;
+    const long=(evLen(w.length).hours||0)>=1.5;
+    if (q){ if (!evNorm(s.name+" "+w.track+" "+s.cars).includes(q)) continue; } else if (!EV_SCHED_ALL && !mine.has(s.name) && !long) continue;
     out.push({series:s.name, cars:String(s.cars||"").split(/,\s*/).filter(Boolean), week:w.week, date:w.start, track:w.track, length:w.length||""}); }
   return out.sort((a,b)=>a.date.localeCompare(b.date) || a.series.localeCompare(b.series)).slice(0,300); }
 function evLen(s){ s=String(s||""); const h=s.match(/([\d.]+)\s*(h|hour)/i), m=s.match(/(\d+)\s*min/i), l=s.match(/(\d+)\s*lap/i); return {hours: h?+h[1]:m?+m[1]/60:0, laps: l&&!h&&!m?+l[1]:0}; }
@@ -2583,11 +2586,12 @@ async function renderEvents(){
     ${detail}
     <section><h3 style="margin:0 0 6px">Start a new event</h3>
       <div class="row" style="gap:6px;margin:0 0 8px">${[["schedule","From the iRacing schedule"],["manual","Enter it yourself (leagues and others)"]].map(([k,l])=>`<button class="${EV_SRC===k?"":"ghost "}evsrc" data-k="${k}" style="padding:3px 12px">${l}</button>`).join("")}</div>
+      ${EV_SRC==="schedule" ? `<div class="row" style="gap:10px;flex-wrap:wrap;align-items:center;font-size:13px;margin:0 0 6px">Find <input id="evschedq" value="${esc(EV_SCHED_Q)}" placeholder="series, track or car (e.g. Global Endurance)" style="width:260px"> <label><input type="checkbox" id="evschedall" ${EV_SCHED_ALL?"checked":""}> show every series</label></div>` : ""}
       ${EV_SRC==="schedule" ? (()=>{ const list=evSchedList(); return list.length ? `<div class="row" style="gap:10px;flex-wrap:wrap;align-items:center;font-size:13px">Race <select id="evsched" style="max-width:560px">${list.map((x,i)=>`<option value="${i}"${EV_FORM.sched==i?" selected":""}>${esc(x.date)} · ${esc(x.track)} · ${esc(x.series)}${x.length?` · ${esc(x.length)}`:""}</option>`).join("")}</select>
           Car <select id="evschedcar">${(list[+EV_FORM.sched||0]||list[0]).cars.map(c=>`<option${EV_FORM.car===c?" selected":""}>${esc(c)}</option>`).join("")}</select>
           <button id="evcreate" style="padding:3px 12px">Start the event</button></div>
-        <p class="muted" style="font-size:12px;margin:6px 0 0">The races of the next 8 weeks in the series you follow (Schedule page)${PREFS.get("schedSeries")?"":" (all series: pick yours on the Schedule page to shorten this)"}. The name, date, track and length come from the schedule.</p>`
-        : `<p class="muted" style="font-size:13px">No schedule loaded yet. Open the Schedule page once, or enter the race yourself.</p>`; })()
+        <p class="muted" style="font-size:12px;margin:6px 0 0">The next 8 weeks: the series you follow (Schedule page) and every race of 1½ hours or more from any series${EV_SCHED_ALL?" (now: every series)":""}. Type to find any series, track or car. The name, date, track and length come from the schedule.</p>`
+        : `<p class="muted" style="font-size:13px">${EV_SCHED_Q?"Nothing in the next 8 weeks matches that.":"No schedule loaded yet. Open the Schedule page once, or enter the race yourself."}</p>`; })()
       : `<div class="row" style="gap:10px;flex-wrap:wrap;align-items:center;font-size:13px">Name <input id="evname" value="${esc(EV_FORM.name||"")}" placeholder="e.g. League round 3" style="width:170px">
         Car and track <select id="evcombo">${combos.map((c,i)=>`<option value="${i}"${EV_FORM.combo==i?" selected":""}>${esc(c.carName)} · ${esc(c.trackName)}</option>`).join("")}<option value="type"${EV_FORM.combo==="type"?" selected":""}>Type the car and track…</option></select>
         ${EV_FORM.combo==="type"?`Car <input id="evcarname" value="${esc(EV_FORM.carName||"")}" placeholder="e.g. Acura NSX GT3 EVO 22" style="width:180px"> Track <input id="evtrackname" value="${esc(EV_FORM.trackName||"")}" placeholder="e.g. Spa" style="width:150px">`:""}
@@ -2597,6 +2601,7 @@ async function renderEvents(){
   document.querySelectorAll(".evresp").forEach(b=>b.onclick=async()=>{ await window.se.eventRespond(b.dataset.id, b.dataset.how); if (me && window.se.eventReply && /^(join|decline|leave|active)$/.test(b.dataset.how)) await window.se.eventReply(b.dataset.id, me, b.dataset.how==="decline"?"no":b.dataset.how==="leave"?"paused":"in"); await teamLoadCfg(); TEAMREF={}; renderEvents(); });
   evWriteFiles();
   document.querySelectorAll(".evsrc").forEach(b=>b.onclick=()=>{ EV_SRC=b.dataset.k; renderEvents(); });
+  { const sq=$("#evschedq"); if (sq) sq.onchange=()=>{ EV_SCHED_Q=sq.value.trim(); EV_FORM.sched=0; EV_FORM.car=""; renderEvents(); }; const sa=$("#evschedall"); if (sa) sa.onchange=()=>{ EV_SCHED_ALL=sa.checked; EV_FORM.sched=0; renderEvents(); }; }
   { const s=$("#evsched"); if (s) s.onchange=()=>{ EV_FORM.sched=s.value; EV_FORM.car=""; renderEvents(); }; const sc=$("#evschedcar"); if (sc) sc.onchange=()=>{ EV_FORM.car=sc.value; };
     const cb=$("#evcombo"); if (cb) cb.onchange=()=>{ EV_FORM={...EV_FORM, combo:cb.value, name:$("#evname").value, date:$("#evdate").value, hours:$("#evhrs").value, laps:$("#evlaps").value}; if (cb.value==="type") renderEvents(); }; }
   const cr=$("#evcreate"); if (cr) cr.onclick=async()=>{ let ev;
