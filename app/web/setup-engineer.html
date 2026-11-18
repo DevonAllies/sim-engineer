@@ -2826,6 +2826,11 @@ function render(){
   // when this stint began (a live stint is stored when it ends, so take its length off), so the stint itself counts
   const tpFrom=()=>{ const L=run.learnedId&&LEARN&&LEARN[run.learnedId]; const d=L&&L.date ? L.date : runDate(run)-(run.live&&run.n&&run.tick?run.n/run.tick*1000:0); return Math.min(d, runDate(run))-120e3; };
   document.querySelectorAll(".tpkind").forEach(b=>b.onclick=()=>{ TP_KIND=b.dataset.k; TP_SHOW=null; rerender(); });
+  { const c=$("#trshare"), m=()=>$("#trmsg"), say=r=>{ const e=m(); if (e) e.textContent = r==="ok"?"Shared.":r==="same"?"Already up to date.":r==="nofolder"?"Set the team folder first (Settings → Learning).":r==="fail"?"Couldn't write to the team folder.":""; };
+    if (c) c.onchange=async()=>{ if (c.checked && !confirm("Share your test programme results for this car, anonymously, so they can go into Setup Engineer updates for everyone?\n\nShared: the settings you tested and what they did to the car.\nNever shared: your name, account, laps, telemetry or anything else.")){ c.checked=false; return; } PREFS.set("shareTests", c.checked); if (c.checked) say(await trShare(run,true)); rerender(); };
+    const x=$("#trexport"); if (x) x.onclick=()=>trExport(run);
+    const nw=$("#trnow"); if (nw) nw.onclick=async()=>say(await trShare(run,true));
+    if (view==="programme") trShare(run).catch(()=>{}); }
   { const st=$("#tpstart"); if (st) st.onclick=()=>{ const k=tpKindFor(run); tpSet(run, {kind:k, track:learnTrackOf(run), trackName:((run.info.WeekendInfo||{}).TrackDisplayName)||"", created:tpFrom(), base:tpSetup(run), baseName:setupName(run).name||"", manual:{}}); rerender(); };
     // a new baseline: the programme starts again from this stint (stints before it ran the old baseline, so they no longer count)
     const rebase=()=>{ const P=tpGet(run)||{}; tpSet(run, Object.assign(P, {base:tpSetup(run), baseName:setupName(run).name||"", created:tpFrom(), manual:{}})); rerender(); };
@@ -3863,7 +3868,7 @@ function newStint(s){
 function learnLive(run){
   try { const A = run.A && !run.A.error ? run.A : analyze(run); if (A.error) return;
     const S=settingsFor(run); if (!A.tw) A.tw=tyreWindow(run,A,S); if (!A.bottom) A.bottom=bottoming(run,A); if (!A.limit) A.limit=limitCorners(run,A);
-    learnRecord(run, A); } catch(e){}
+    learnRecord(run, A); try { trShare(run).catch(()=>{}); } catch(e){} } catch(e){}
 }
 // the .ibt iRacing saved for a live stint: same car, written in the last few minutes, not loaded yet
 async function loadStintIbt(run, tries, lastSize){
@@ -6544,6 +6549,63 @@ function tpInsightsHTML(run, steps){
     ${!pairs.length&&!singles.length?`<p style="margin:4px 0">Only the baseline so far. Each step you drive adds to this.</p>`:""}
     <p class="muted" style="margin:6px 0 0;font-size:12px">${left?`${left} step${left>1?"s":""} still to drive.`:"Every step driven."} Ride height at speed and bump-rubber contact are measured on the straights. Tyre temperatures are the garage-equivalent readings.</p></div>`;
 }
+// ================= test results for the app: what each tested change did to the car, anonymous, shared only if you switch it on =================
+// Only the car: the setting, its value before and after, and what it did (lap time, balance, ride height at speed, tyres, slides) against the stints it was
+// tested from. Never a name, an iRacing ID, laps or telemetry. Each tester writes one file per car; the maintainer merges them into the car knowledge
+// that ships with each release (scripts/build-knowledge.mjs).
+const TR_MEAS = ["med","fA","rA","onF","onR","fpct","vmax","entry","mid","exit","slow","fast","slides","kerbS","tF","tR","cF","cR"];
+function trAnon(){ let a=PREFS.get("testerId",""); if (!a){ a="t"+Math.random().toString(36).slice(2,10)+Math.random().toString(36).slice(2,6); PREFS.set("testerId", a); } return a; }
+function trMeasure(L){ const W=f=>{ let s=0,n=0; for (const r of L){ const v=f(r), w=r.laps||1; if (Number.isFinite(v)){ s+=v*w; n+=w; } } return n?s/n:NaN; }, o={};
+  for (const m of TP_MEAS) if (TR_MEAS.includes(m[0])){ const v=W(m[2]); if (Number.isFinite(v)) o[m[0]]=Math.round(v*1000)/1000; } return o; }
+// the stints a step was measured against: its baseline as it was then (the combination that set it, and the baseline checks of that phase)
+function trRef(steps, s){ const L = s.after ? steps.filter(q=>(q.setsBase && q.stints.length && q.stints[q.stints.length-1].date<=s.after) || (q.kind==="base" && q.after===s.after)).flatMap(q=>q.stints) : steps.filter(q=>q.kind==="base" && !q.after).flatMap(q=>q.stints);
+  return [...new Set(L)]; }
+function trBuild(run){
+  const out={v:1, tester:trAnon(), car:run.carPath, carName:run.carName, made:new Date().toISOString().slice(0,10), programmes:[]};
+  for (const kind of ["car","track"]){ const P=PREFS.get(tpKeyOf(run,kind)); if (!P || !P.base) continue;
+    if (kind==="track" && P.track && P.track!==learnTrackOf(run)) continue;
+    let steps; try { steps=tpStatus(run,P); } catch(e){ continue; }
+    const rows=steps.filter(s=>s.kind!=="base" && s.stints.length).map(s=>{ const ref=trRef(steps,s).filter(r=>!s.stints.includes(r)); if (!ref.length) return null;
+      const keys=Object.keys(s.base||P.base).filter(k=>s.re && s.re.test(learnNorm(k)));
+      const from=[...new Set(keys.map(k=>String((s.base||P.base)[k]).trim()))], to=[...new Set(s.stints.flatMap(r=>keys.map(k=>r.setup&&r.setup[k]!=null?String(r.setup[k]).trim():null)).filter(Boolean))];
+      const hrs=Math.abs(mean(s.stints.map(r=>r.date))-mean(ref.map(r=>r.date)))/3.6e6;
+      return {id:s.id, label:s.label, block:s.block, kind:s.kind, setting:keys.map(k=>learnLabel(k)).filter((v,i,a)=>a.indexOf(v)===i).join(", "), from, to,
+        laps:s.stints.reduce((a,r)=>a+(r.laps||0),0), refLaps:ref.reduce((a,r)=>a+(r.laps||0),0), hoursApart:Math.round(hrs*10)/10, m:trMeasure(s.stints), ref:trMeasure(ref)}; }).filter(Boolean);
+    if (rows.length) out.programmes.push({kind, track:P.track||learnTrackOf(run), trackName:P.trackName||((run.info.WeekendInfo||{}).TrackDisplayName)||"", base:tpBaseKey(P), steps:rows}); }
+  return out; }
+// written to the team folder when sharing is on and something changed (each tester only ever writes their own file)
+async function trShare(run, force){
+  if (!PREFS.get("shareTests",false) || !run || run.team) return null;
+  const T=trBuild(run); if (!T.programmes.length) return null;
+  const sig=JSON.stringify(T.programmes.map(p=>p.steps.map(s=>s.id+":"+s.laps))), key="shareSig|"+run.carPath;
+  if (!force && PREFS.get(key)===sig) return "same";
+  if (!window.se || !window.se.teamWrite || !TEAM.dir) return "nofolder";
+  try { await window.se.teamWrite(`testresults/${T.tester}/${fileSafe(run.carPath)}.json.gz`, await gz(JSON.stringify(T))); PREFS.set(key, sig); PREFS.set("shareAt|"+run.carPath, Date.now()); return "ok"; } catch(e){ return "fail"; } }
+// or saved as a file to send by hand
+function trExport(run){ const T=trBuild(run); if (!T.programmes.length){ alert("No test programme results for this car yet."); return; }
+  const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([JSON.stringify(T,null,1)],{type:"application/json"})); a.download=`test-results ${fileSafe(run.carName)} ${T.made}.json`; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1000); }
+function trShareHTML(run){
+  const on=PREFS.get("shareTests",false), at=PREFS.get("shareAt|"+run.carPath,0), T=trBuild(run), n=T.programmes.reduce((a,p)=>a+p.steps.length,0);
+  return `<details class="sugg" style="margin:0 0 10px"${on?"":" open"}><summary><b>Share these test results with every Setup Engineer user</b> <span class="muted" style="font-size:12px">${on?`on${at?` · last shared ${new Date(at).toLocaleString([], {day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit"})}`:""}`:"off"} · ${n} tested step${n===1?"":"s"} for this car</span></summary>
+    <p style="margin:6px 0;font-size:13px">Your test programme results can go into the app's car knowledge, built into every update, so everyone's app knows what each setting does on the ${esc(run.carName)}.</p>
+    <p style="margin:4px 0;font-size:13px"><b>What's shared:</b> the car and track, each setting you tested with its value before and after, and what it did: lap time, balance (entry, mid, exit, slow, fast), ride height at speed, bump-rubber contact, downforce balance, tyre temperatures and slides, against the stints it was tested from. <b>Never shared:</b> your name, iRacing ID or account, your laps or telemetry, your other stints, or anything else in your database. You show up only as an anonymous tester number (${esc(trAnon())}).</p>
+    <label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="trshare" ${on?"checked":""}> Share my test results (anonymous) through the team folder${TEAM.dir?"":` <span class="warn" style="font-size:12px">(set the team folder first: Settings → Learning → Team folder)</span>`}</label>
+    <div class="row" style="gap:8px;margin-top:4px"><button class="ghost" id="trexport" style="padding:3px 12px">Export my test results as a file</button>${on&&TEAM.dir?`<button class="ghost" id="trnow" style="padding:3px 12px">Share now</button>`:""}<span id="trmsg" class="muted" style="font-size:12px;align-self:center"></span></div>
+    <p class="muted" style="font-size:12px;margin:6px 0 0">Switch it off any time: nothing more is sent, and the file already in the team folder can be deleted by you or the maintainer. Results only go into an update once the maintainer builds the car knowledge for a release.</p></details>`; }
+// what the test team found, shipped with the app (knowledge/<car>.json), shown on the Test programme tab
+const KNOW={};
+async function knowLoad(car){ if (KNOW[car]!==undefined) return KNOW[car]; KNOW[car]=null;
+  try { const r=await fetch(`knowledge/${encodeURIComponent(car)}.json`, {cache:"no-store"}); if (r.ok){ KNOW[car]=await r.json(); if (view==="programme") rerenderSoon(); } } catch(e){} return KNOW[car]; }
+let KNOW_T=0; function rerenderSoon(){ clearTimeout(KNOW_T); KNOW_T=setTimeout(()=>{ if (runs.length) render(); }, 50); }
+function knowHTML(run){
+  const K=KNOW[run.carPath]; if (K===undefined){ knowLoad(run.carPath); return ""; } if (!K || !K.steps) return "";
+  const lab={med:["lap",2,"s"], entry:["entry",1,"°"], mid:["mid-corner",1,"°"], exit:["exit",1,"°"], slow:["slow corners",1,"°"], fast:["fast corners",1,"°"], fA:["front RH at speed",1," mm"], rA:["rear RH at speed",1," mm"], onF:["front on bump rubbers",0,"%"], onR:["rear on bump rubbers",0,"%"], fpct:["front downforce share",1,"%"], tF:["front tyres",1,"°C"], tR:["rear tyres",1,"°C"], slides:["slides/lap",1,""]};
+  const thr={med:0.1, entry:0.2, mid:0.2, exit:0.2, slow:0.2, fast:0.2, fA:1, rA:1, onF:10, onR:10, fpct:0.3, tF:1.5, tR:1.5, slides:0.4};
+  const rows=Object.values(K.steps).sort((a,b)=>(a.order||0)-(b.order||0)).map(s=>{ const d=s.d||{}, items=Object.keys(lab).filter(k=>Number.isFinite(d[k]) && Math.abs(d[k])>=thr[k]).map(k=>{ const [n,dec,u]=lab[k]; return `${n} ${d[k]>0?"+":"−"}${Math.abs(d[k]).toFixed(dec)}${u}`; });
+    return `<tr><td><b>${esc(s.label)}</b></td><td>${s.n} tester${s.n===1?"":"s"}, ${s.laps} laps${Number.isFinite(s.agree)&&s.n>1?` <span class="muted">(${Math.round(s.agree*100)}% agree on lap time)</span>`:""}</td><td style="font-size:12px">${items.length?items.map(esc).join("; "):'<span class="muted">nothing beyond the noise</span>'}</td></tr>`; }).join("");
+  return `<details class="sugg" style="margin:0 0 10px"><summary><b>What the test team found on this car</b> <span class="muted" style="font-size:12px">built into this version: ${K.testers} tester${K.testers===1?"":"s"}, updated ${esc(K.updated||"")}</span></summary>
+    <div class="tablewrap" style="margin-top:6px"><table style="font-size:12px"><tr><th>Change</th><th>Measured by</th><th>What it did, against the setup it was tested from</th></tr>${rows}</table></div>
+    <p class="muted" style="font-size:12px;margin:4px 0 0">Averages of each tester's change against their own baseline (so different drivers and tracks compare). Balance is the understeer angle: + more understeer, − looser. Your own stints still decide your setup; this is the starting point.</p></details>`; }
 const tpStateOf = (P, steps) => !P ? "none" : P.state==="paused" ? "paused" : (P.state==="done" || (steps && steps.length && steps.every(s=>s.complete))) ? "done" : "running";
 function testProgHTML(run){
   const kind=tpKindFor(run), P=tpGet(run);
@@ -6569,7 +6631,7 @@ function testProgHTML(run){
     ${kind==="car"
       ? `<p style="margin:4px 0">Like an F1 test: drive it once, at one track. A baseline, then each spring, damper and anti-roll bar change on its own, with exactly what to set and how many clean laps; each step ticks itself off when a stint with only that change comes in. What it learns about the car is used at every track. Pick a track with every kind of corner (slow, medium and fast), a smooth surface and few kerbs you need to use: F1 tested at Barcelona for that reason.</p>`
       : `<p style="margin:4px 0">The short check at each new track: a baseline, then the wing at its lowest, a bit lower, a bit higher and its highest. The wing is the one trade-off that changes with the track (straights against fast corners). Springs, dampers and bars come from the car programme${CP?` (driven at ${esc(cTrack)})`:""}.</p>`}
-    ${away?"":`<button id="tpstart">Start the ${kind==="car"?"car programme":"track check"} for the ${esc(run.carName)} here at ${esc(trk)}, with this stint's setup as the baseline</button>`}</section>`;
+    ${away?"":`<button id="tpstart">Start the ${kind==="car"?"car programme":"track check"} for the ${esc(run.carName)} here at ${esc(trk)}, with this stint's setup as the baseline</button>`}${(()=>{ try { return knowHTML(run); } catch(e){ return ""; } })()}</section>`;
   if (kind==="car" && P.track && P.track!==hereT){ const st0=tpStatus(run,P), d0=st0.filter(s=>s.complete).length;
     return `<section><h2>Car programme <small>${esc(run.carName)} · at ${esc(cTrack)} · ${d0} of ${st0.length} done</small></h2>${kindBar}
       <div class="sugg p2" style="margin:0 0 10px"><h3>The car programme runs at ${esc(cTrack)}</h3><p style="margin:4px 0 0">Its baseline and every step are measured there, so stints here at ${esc(trk)} don't count for it (they still teach the models). Open or drive a stint at ${esc(cTrack)} to carry on. Here, use the Track check.</p></div>
@@ -6592,6 +6654,7 @@ function testProgHTML(run){
    ${away}${away?"":other}${away?"":nextNote}${listNote}
    ${(()=>{ try { return tpBaseHTML(run, P, steps); } catch(e){ console.error("tpbase",e); return ""; } })()}
    ${(()=>{ try { return tpInsightsHTML(run, steps); } catch(e){ console.error("tpins",e); return ""; } })()}
+   ${(()=>{ try { return knowHTML(run) + trShareHTML(run); } catch(e){ console.error("trshare",e); return ""; } })()}
    ${(()=>{ const st=tpStateOf(P,steps), left=steps.filter(s=>!s.complete).length, ctl=h=>"";
      if (st==="paused") return `<div class="sugg p2" style="margin:0 0 10px"><h3>Paused at step ${steps.indexOf(next)+1} of ${steps.length}${next?`: ${esc(next.label)}`:""}</h3><p style="margin:4px 0 0">${doneN} of ${steps.length} steps done. While it's paused Bono gives his normal in-car advice and the Test step overlay stands down. A stint that matches a step still counts when you continue.</p>${ctl(`<button id="tpresume" style="padding:3px 12px">Continue the programme</button> <button class="ghost" id="tpfinish" style="padding:3px 12px">Finish now: use the data so far</button>`)}</div>`;
      if (st==="done") return `<div class="sugg p3" style="margin:0 0 10px"><h3>${left?`Finished early: ${doneN} of ${steps.length} steps`:"Programme complete"}</h3><p style="margin:4px 0 0">${left?`You finished it${P.finished?` on ${dt(P.finished)}`:""}. "What the tests show" above uses only the stints captured. Every stint still teaches the models (Learning), programme or not.`:`Every step is done: the models now know each of these settings on this car. "What to test next" (Learning) shows anything still uncertain.`}</p>${left?ctl(`<button id="tpresume" style="padding:3px 12px">Continue the remaining ${left} step${left>1?"s":""}</button>`):""}</div>`;
