@@ -21,3 +21,7 @@ learning.json
 .idea/
 Thumbs.db
 desktop.ini
+
+# iRacing paint templates (iRacing's artwork: never in the public repo)
+*_template_*/
+*.psd
