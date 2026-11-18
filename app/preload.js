@@ -48,6 +48,9 @@ contextBridge.exposeInMainWorld('se', {
   teamList: (sub, ext) => ipcRenderer.invoke('team:list', sub, ext),
   teamRead: (rel) => ipcRenderer.invoke('team:read', rel),
   teamOpen: () => ipcRenderer.invoke('team:open'),
+  teamInfo: () => ipcRenderer.invoke('team:info'),
+  teamSaveInfo: (info) => ipcRenderer.invoke('team:saveInfo', info),
+  teamOpenLink: (url) => ipcRenderer.invoke('team:openLink', url),
   // team events (one folder per race inside the team folder)
   eventAll: () => ipcRenderer.invoke('event:all'),
   eventCreate: (ev) => ipcRenderer.invoke('event:create', ev),

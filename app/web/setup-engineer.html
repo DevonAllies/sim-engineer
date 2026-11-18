@@ -2483,7 +2483,7 @@ async function renderEvents(){
     <section><h3 style="margin:0 0 6px">First, the team folder (once)</h3><ol style="margin:4px 0 0 18px;font-size:13px">
       <li><b>One person</b> makes a folder in Google Drive, e.g. <i>Setup Engineer team</i>, then <b>Share</b> → add the teammates as <b>Editors</b> (or General access: anyone with the link, Editor) → <b>Copy link</b>, and posts the link on Discord.</li>
       <li><b>Everyone</b> opens the link, then on the folder: <b>Organize → Add shortcut → My Drive</b>. Google Drive for desktop syncs it to the PC.</li>
-      <li><b>Everyone</b> points Setup Engineer at it: <b>Settings → Learning → Team folder → Choose folder</b> (it's under your Google Drive, e.g. <code>G:\\My Drive\\Setup Engineer team</code>), and types their name there.</li></ol>
+      <li><b>Everyone</b> points Setup Engineer at it: <b>Settings → Learning → Team folder → Choose folder</b> (a teammate's link goes in <b>Join a team</b> there; once you're in, <b>Copy invite for Discord</b> writes the message for the next person) (it's under your Google Drive, e.g. <code>G:\\My Drive\\Setup Engineer team</code>), and types their name there.</li></ol>
       <p class="muted" style="font-size:12px;margin:6px 0 0">Only the people the folder is shared with can see it. After this, events are made and joined from this page.</p></section>`; return; }
   const run=runs[current], combos=(()=>{ const o={}; for (const r of Object.values(LEARN||{})) if (r.car && r.track) { const k=r.car+"|"+r.track; if (!o[k]) o[k]={car:r.car, carName:r.carName||r.car, track:r.track, trackName:r.trackName||r.track, n:0}; o[k].n++; }
     if (run && run.carPath){ const k=run.carPath+"|"+learnTrackOf(run); o[k]=o[k]||{car:run.carPath, carName:run.carName, track:learnTrackOf(run), trackName:((run.info.WeekendInfo||{}).TrackDisplayName)||"", n:0}; }
@@ -5154,7 +5154,12 @@ async function learnSettings(){
     :`<p style="margin:0 0 6px">Every stint is saved to <code>${esc(I.file)}</code> (${mb}, ${I.total} stints). <button class="ghost" id="learndir" style="padding:2px 10px">Change folder / drive</button></p>`}
     ${window.se.teamGet?await (async()=>{ await teamLoadCfg(); return `<p style="margin:8px 0 4px"><b>Team folder</b> <span class="muted" style="font-size:12px">share laps with teammates through a shared Google Drive folder (install Google Drive for desktop, share one folder with your teammate, pick it here on both PCs)</span></p>
       <p style="margin:0 0 6px">${TEAM.dir?`<code>${esc(TEAM.dir)}</code>`:'<span class="muted">not set</span>'} <button class="ghost" id="teamdir" style="padding:2px 10px">${TEAM.dir?"Change":"Choose"} folder</button> ${TEAM.dir?`<button class="ghost" id="teamopen" style="padding:2px 10px">Open</button>`:""}
-       · Your name <input id="teamname" value="${esc(TEAM.driver||"")}" placeholder="your iRacing name" style="width:150px;padding:2px 6px"> · <label><input type="checkbox" id="teamauto" ${TEAM.auto?"checked":""}> share my best lap after every stint</label></p>`; })():""}
+       · Your name <input id="teamname" value="${esc(TEAM.driver||"")}" placeholder="your iRacing name" style="width:150px;padding:2px 6px"> · <label><input type="checkbox" id="teamauto" ${TEAM.auto?"checked":""}> share my best lap after every stint</label></p>
+      ${TEAM.dir ? await (async()=>{ const I=(window.se.teamInfo && await window.se.teamInfo())||{}; return `<p style="margin:0 0 6px"><b>Team invite</b> <span class="muted" style="font-size:12px">the folder's Google Drive share link (Drive → right-click the folder → Share → General access: <i>Anyone with the link</i>, <i>Editor</i> → Copy link). Saved once, in the team folder, for everyone.</span><br>
+        <input id="teamlink" value="${esc(I.link||"")}" placeholder="https://drive.google.com/drive/folders/…" style="width:380px;padding:2px 6px"> <button class="ghost" id="teamlinksave" style="padding:2px 10px">Save</button> <button id="teaminvite" style="padding:2px 10px" ${I.link?"":"disabled"}>Copy invite for Discord</button> <span id="teamlinkmsg" class="muted" style="font-size:12px"></span></p>`; })()
+      : `<p style="margin:0 0 6px"><b>Join a team</b> <span class="muted" style="font-size:12px">paste the link a teammate sent you</span><br>
+        <input id="teamjoin" placeholder="https://drive.google.com/drive/folders/…" style="width:380px;padding:2px 6px"> <button class="ghost" id="teamjoingo" style="padding:2px 10px">Open the team folder</button>
+        <span class="muted" style="font-size:12px">then in the browser: <b>Organize → Add shortcut → My Drive</b>, wait a minute for Google Drive for desktop to sync it, and click <b>Choose folder</b> above to pick it (it's in your Google Drive, e.g. <code>G:\\My Drive</code>).</span></p>`}`; })():""}
     ${window.se.dataCsv?`<p style="margin:0 0 6px"><label><input type="checkbox" id="csvon" ${await window.se.dataCsv()?"checked":""}> Also keep a CSV copy per car and track (for Excel)</label> <span class="muted" style="font-size:12px">Everything is in the database either way; the CSV is only a copy.</span></p>`:""}
     ${(HH=>HH.length?`<p style="margin:8px 0 4px"><b>Historic</b> <span class="muted" style="font-size:12px">kept, never learned from (older iRacing builds)</span></p>
       <div class="tablewrap"><table style="font-size:12px"><tr><th>Car</th><th>Track</th><th>Stints</th><th>Moved</th><th></th></tr>${HH.map(x=>`<tr><td>${esc(x.carName||x.car)}</td><td>${esc(x.trackName||x.track)}</td><td>${x.n}</td><td>${x.moved?new Date(x.moved).toLocaleDateString():""}</td><td><button class="ghost histback" data-car="${esc(x.car)}" data-track="${esc(String(x.track))}" style="padding:1px 8px">Restore</button></td></tr>`).join("")}</table></div>`:"")(window.se.learnHistInfo?await window.se.learnHistInfo():[])}
@@ -5176,6 +5181,22 @@ async function learnSettings(){
   const cv=$("#csvon"); if (cv) cv.onchange=async()=>{ await window.se.dataCsv(cv.checked); };
   const td=$("#teamdir"); if (td) td.onclick=async()=>{ const d=await window.se.teamChoose(); if (d){ TEAMREF={}; await teamLoadCfg(); await learnSettings(); } };
   const to=$("#teamopen"); if (to) to.onclick=()=>window.se.teamOpen();
+  { const tl=$("#teamlink"), ts=$("#teamlinksave"), ti=$("#teaminvite"), msg=t=>{ const m=$("#teamlinkmsg"); if (m) m.textContent=t; };
+    if (ts) ts.onclick=async()=>{ const v=tl.value.trim(); if (v && !/^https:\/\/drive\.google\.com\//.test(v)){ msg("That isn't a Google Drive link."); return; } const ok=await window.se.teamSaveInfo({link:v}); msg(ok?"Saved in the team folder.":"Couldn't save it."); if (ti) ti.disabled=!v; };
+    if (ti) ti.onclick=async()=>{ const I=(await window.se.teamInfo())||{}; if (!I.link) return;
+      const txt=`Join my Setup Engineer team 🏁
+
+1. Install Setup Engineer: https://github.com/DevonAllies/sim-engineer/releases/latest
+   (download the Setup-Engineer-Setup .exe; if Windows says "protected your PC", click More info → Run anyway)
+2. Install Google Drive for desktop and sign in: https://www.google.com/drive/download/
+3. Open our team folder and add it to your Drive (Organize → Add shortcut → My Drive):
+   ${I.link}
+4. In Setup Engineer: Settings → Learning → Team folder → Choose folder, and pick it (it's in your Google Drive). Type your name there too.
+
+Then open Team events (left menu): our races are listed there, click Join on the ones you're in.
+Your own data stays on your PC; only what you share goes into the team folder.`;
+      try { await navigator.clipboard.writeText(txt); msg("Invite copied: paste it in Discord."); } catch(e){ msg("Couldn't copy."); } };
+    const tj=$("#teamjoingo"); if (tj) tj.onclick=async()=>{ const v=$("#teamjoin").value.trim(); if (!(await window.se.teamOpenLink(v))) alert("Paste the Google Drive link your teammate sent (it starts with https://drive.google.com/)."); }; }
   const tn=$("#teamname"); if (tn) tn.onchange=async()=>{ await window.se.teamSet({teamDriver:tn.value.trim()}); await teamLoadCfg(); TEAMREF={}; };
   const ta=$("#teamauto"); if (ta) ta.onchange=async()=>{ await window.se.teamSet({teamAuto:ta.checked}); await teamLoadCfg(); };
   box.querySelectorAll(".histback").forEach(b=>b.onclick=async()=>{ await window.se.learnHistoric(b.dataset.car, b.dataset.track, true); LEARN=await learnStore.load(); LEARN_VER++;

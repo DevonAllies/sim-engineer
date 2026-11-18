@@ -360,6 +360,10 @@ ipcMain.handle('event:remove', (_e, id, what) => { const d = evDirOf(id); if (!d
     const walk = (p) => { let ents = []; try { ents = fs.readdirSync(p, { withFileTypes: true }); } catch (e) { return; } for (const e of ents) { const q = path.join(p, e.name); if (e.isDirectory()) walk(q); else if (e.name.startsWith(who + ' ')) rm(q); } }; walk(path.join(d, 'laps')); }
   return true; });
 ipcMain.handle('event:open', (_e, id) => { const d = evDirOf(id); if (d && fs.existsSync(d)) shell.openPath(d); return d; });
+ipcMain.handle('team:info', () => { const d = teamDir(); if (!d) return null; try { return JSON.parse(fs.readFileSync(path.join(d, 'team.json'), 'utf8')); } catch (e) { return {}; } });
+ipcMain.handle('team:saveInfo', (_e, info) => { const d = teamDir(); if (!d) return false; const o = { name: String((info && info.name) || ''), link: String((info && info.link) || '') };
+  if (o.link && !/^https:\/\/drive\.google\.com\//.test(o.link)) return false; fs.writeFileSync(path.join(d, 'team.json'), JSON.stringify(o, null, 1)); return true; });
+ipcMain.handle('team:openLink', (_e, url) => { const u = String(url || ''); if (/^https:\/\/drive\.google\.com\//.test(u)) { shell.openExternal(u); return true; } return false; });
 ipcMain.handle('team:open', () => { if (teamDir()) shell.openPath(teamDir()); return teamDir(); });
 // export for your own analysis: a folder with a copy of the database, flat CSVs (stints, laps, setups) and a README with the columns
 ipcMain.handle('data:export', async () => {
