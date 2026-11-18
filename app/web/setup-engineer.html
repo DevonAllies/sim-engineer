@@ -2443,7 +2443,7 @@ async function evData(e){ if (!e) return {stints:[], laps:[]};
 async function evShareStint(run, A, rec){
   if (!EVS.loaded){ await evLoad(); EVS.loaded=true; } if (!TEAM.loaded) await teamLoadCfg();
   const e=evActive(); if (!e || !window.se || !window.se.eventWrite || run.team || !A || A.error || !A.best) return;
-  if (run.carPath!==e.car || learnTrackOf(run)!==e.track) return;
+  if (!evMatches(run, e)) return;
   const who=myName(run), fm=String(run.name||"").match(/(\d{4}-\d\d-\d\d) (\d\d)-(\d\d)/), when=fm?`${fm[1]} ${fm[2]}.${fm[3]}`:new Date().toISOString().slice(0,16).replace("T"," ").replace(":",".");
   // the best lap and up to four typical ones (enough to compare braking, coasting and lines)
   const typ=[...A.rep].filter(l=>l!==A.best).sort((a,b)=>Math.abs(a.time-A.lapMed)-Math.abs(b.time-A.lapMed)).slice(0,4);
@@ -2460,8 +2460,9 @@ function evPlan(e, D, opts){
     zones:(()=>{ const Z=L.filter(r=>r.lc&&Array.isArray(r.lc.zones)).sort((a,b)=>(b.laps||0)-(a.laps||0)); return Z.length?Z[0].lc.zones:[]; })(), wearF:W(L,r=>r.wearF), wearR:W(L,r=>r.wearR), tank:Math.max(0,...L.map(r=>+r.tankL||0))})).sort((a,b)=>a.med-b.med);
   const tank=+opts.tank || Math.max(0,...drivers.map(d=>d.tank)) || NaN, fuel=Math.max(...drivers.map(d=>d.fuel).filter(Number.isFinite)), lap=median(drivers.map(d=>d.med).filter(Number.isFinite));
   const margin=+opts.margin||1, hrs=+opts.hours||+e.hours||0, pit=+opts.pit||60, order=(opts.order&&opts.order.length?opts.order:opts.inDrivers&&opts.inDrivers.length?opts.inDrivers:drivers.map(d=>d.driver)).filter(Boolean), AV=opts.avail||{};
-  if (!(tank>0) || !(fuel>0) || !(lap>0) || !(hrs>0)) return {drivers, tank, fuel, lap, stints:[], why:!(hrs>0)?"Set the race length.":!(tank>0)?"Set the tank size.":"Drive a stint in the event first: fuel per lap and lap time come from your stints."};
-  const perTank=Math.floor(tank/fuel - margin), raceLaps=Math.ceil(hrs*3600/lap)+1, nSt=Math.ceil(raceLaps/Math.max(1,perTank)), stints=[]; let left=raceLaps, at=1;
+  const lapsRace=+opts.laps||+e.laps||0;
+  if (!(tank>0) || !(fuel>0) || !(lap>0) || !(hrs>0 || lapsRace>0)) return {drivers, tank, fuel, lap, stints:[], why:!(hrs>0||lapsRace>0)?"Set the race length.":!(tank>0)?"Set the tank size.":"Drive a stint in the event first: fuel per lap and lap time come from your stints."};
+  const perTank=Math.floor(tank/fuel - margin), raceLaps=lapsRace>0 ? lapsRace : Math.ceil(hrs*3600/lap)+1, nSt=Math.ceil(raceLaps/Math.max(1,perTank)), stints=[]; let left=raceLaps, at=1;
   const cnt={}, can=(n,k)=>{ const a=AV[n]; return !a || ((!a.set || a.set.has(k)) && (!a.max || (cnt[n]||0)<a.max)); }; let last=-1;
   for (let i=0;i<nSt;i++){ const L=Math.min(perTank, left), need=Math.min(tank, Math.ceil((L+margin)*fuel*10)/10);
     // whoever can drive this stint, fewest stints so far first, then the next in the order
@@ -2489,7 +2490,7 @@ async function evWriteFiles(){
       const D=await evData(e), RR=window.se.eventReplies ? await window.se.eventReplies(e.id) : [];
       const avail=Object.fromEntries(RR.filter(r=>r.avail).map(r=>[r.name, {set:parseSet(r.avail.stints), max:+r.avail.max||0}])), inDrivers=RR.filter(r=>r.reply==="in").map(r=>r.name);
       const P=evPlan(e, D, Object.assign({hours:e.hours, avail, inDrivers}, e.id===EVS.active?EV_OPT:{}));
-      const doc={v:EV_FILES_V, updated:new Date().toISOString(), event:{id:e.id, name:e.name, car:e.car, carName:e.carName, track:e.track, trackName:e.trackName, date:e.date, hours:e.hours, startedBy:e.by||null},
+      const doc={v:EV_FILES_V, updated:new Date().toISOString(), event:{id:e.id, name:e.name, car:e.car||null, carName:e.carName, track:e.track||null, trackName:e.trackName, date:e.date, hours:e.hours||null, laps:e.laps||null, series:e.series||null, startedBy:e.by||null},
         replies:RR.map(r=>({name:r.name, reply:r.reply||null, stints:r.avail?r.avail.stints||null:null, maxStints:r.avail?r.avail.max||null:null})),
         drivers:P.drivers.map(d=>({driver:d.driver, laps:d.laps, bestLap:n(d.best), typicalLap:n(d.med), lapSpread:n(d.sd), fuelPerLap:n(d.fuel), coastingPerLap:n(d.coast), fuelSavedPerSecondCoasting:n(d.perS), frontTreadPerLap:n(d.wearF), rearTreadPerLap:n(d.wearR)})),
         plan: P.stints.length ? {tank:n(P.tank), fuelPerLap:n(P.fuel), typicalLap:n(P.lap), lapsPerTank:P.perTank, raceLaps:P.raceLaps, stops:P.stops, pitLossTotal:n(P.pitTime),
@@ -2501,8 +2502,26 @@ async function evWriteFiles(){
     const ib=JSON.stringify(index); if (EVS.indexSig!==ib){ EVS.indexSig=ib; await window.se.teamWriteIndex(new TextEncoder().encode(JSON.stringify({v:EV_FILES_V, updated:new Date().toISOString(), events:index}, null, 1))); }
   } catch(x){ console.error("event files", x); } }
 setTimeout(()=>{ evWriteFiles(); setInterval(evWriteFiles, 5*60000); }, 20000);
+// does this stint belong to the event? Same car and track ids, or (events from the schedule or typed in) the same names
+const evNorm = s => String(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g," ").trim();
+function evNameMatch(a, b){ const A=evNorm(a).split(" ").filter(w=>w.length>1), B=new Set(evNorm(b).split(" ")); if (!A.length) return false; const hit=A.filter(w=>B.has(w)).length; return hit>=Math.min(2, A.length) || (A.length>=1 && hit/A.length>=0.6); }
+function evMatches(run, e){
+  const carOk = e.car ? run.carPath===e.car : (evNameMatch(e.carName, run.carName) || evNameMatch(run.carName, e.carName));
+  const wi=run.info.WeekendInfo||{}, tn=[wi.TrackDisplayName, wi.TrackConfigName, wi.TrackName].filter(Boolean).join(" ");
+  const trackOk = e.track ? learnTrackOf(run)===e.track : (evNameMatch(String(e.trackName).split(/ - | \(/)[0], tn));
+  return carOk && trackOk; }
+// the schedule's car names against the cars the app knows (from your stints), so an event from the schedule gets the right car id
+function evCarId(name){ const known={}; for (const r of Object.values(LEARN||{})) if (r.car && r.carName) known[r.car]=r.carName; for (const r of runs) if (r.carPath) known[r.carPath]=r.carName;
+  let best=null; for (const [id,nm] of Object.entries(known)) if (evNameMatch(name, nm) && evNameMatch(nm, name)) best=id; return best; }
+function evTrackId(name){ const base=String(name).split(/ - | \(/)[0]; let best=null; for (const r of Object.values(LEARN||{})) if (r.track && r.trackName && evNameMatch(base, r.trackName)) { best=r.track; if (evNameMatch(name, r.trackName)) break; } return best; }
+// a schedule week's length: hours, minutes or laps
+function evSchedList(){ if (!SCHED){ schedLoad(); return []; } const out=[], from=Date.now()-7*864e5, to=Date.now()+56*864e5;
+  for (const s of schedMine()) for (const w of s.weeks||[]){ const t0=Date.parse(w.start+"T00:00:00Z"); if (!(t0>=from && t0<=to)) continue;
+    out.push({series:s.name, cars:String(s.cars||"").split(/,\s*/).filter(Boolean), week:w.week, date:w.start, track:w.track, length:w.length||""}); }
+  return out.sort((a,b)=>a.date.localeCompare(b.date) || a.series.localeCompare(b.series)).slice(0,300); }
+function evLen(s){ s=String(s||""); const h=s.match(/([\d.]+)\s*(h|hour)/i), m=s.match(/(\d+)\s*min/i), l=s.match(/(\d+)\s*lap/i); return {hours: h?+h[1]:m?+m[1]/60:0, laps: l&&!h&&!m?+l[1]:0}; }
 // the page
-let EV_FORM={}, EV_OPT={};
+let EV_FORM={}, EV_OPT={}, EV_SRC="schedule";
 async function renderEvents(){
   const box=$("#eventsbox"); if (!box) return;
   if (!window.se || !window.se.eventAll){ box.innerHTML=`<h2>Team events</h2><p class="muted">Team events work in the installed app.</p>`; return; }
@@ -2559,17 +2578,32 @@ async function renderEvents(){
     <section><h3 style="margin:0 0 6px">Events in the team folder</h3>${upcoming.length?`<div class="tablewrap"><table style="font-size:13px"><tr><th>Event</th><th>Car</th><th>Track</th><th>Date</th><th></th></tr>${upcoming.map(evRow).join("")}</table></div>`:'<p class="muted" style="font-size:13px">No events yet. Start one below; it shows up here for everyone in the team folder.</p>'}</section>
     ${detail}
     <section><h3 style="margin:0 0 6px">Start a new event</h3>
-      <div class="row" style="gap:10px;flex-wrap:wrap;align-items:center;font-size:13px">Name <input id="evname" value="${esc(EV_FORM.name||"")}" placeholder="e.g. Spa 6h" style="width:160px">
-        Car and track <select id="evcombo">${combos.map((c,i)=>`<option value="${i}"${EV_FORM.combo==i?" selected":""}>${esc(c.carName)} · ${esc(c.trackName)}</option>`).join("")}</select>
-        Date <input id="evdate" type="date" value="${esc(EV_FORM.date||"")}"> Race length <input id="evhrs" type="number" step="0.5" min="0" value="${esc(EV_FORM.hours||"")}" style="width:60px"> h
+      <div class="row" style="gap:6px;margin:0 0 8px">${[["schedule","From the iRacing schedule"],["manual","Enter it yourself (leagues and others)"]].map(([k,l])=>`<button class="${EV_SRC===k?"":"ghost "}evsrc" data-k="${k}" style="padding:3px 12px">${l}</button>`).join("")}</div>
+      ${EV_SRC==="schedule" ? (()=>{ const list=evSchedList(); return list.length ? `<div class="row" style="gap:10px;flex-wrap:wrap;align-items:center;font-size:13px">Race <select id="evsched" style="max-width:560px">${list.map((x,i)=>`<option value="${i}"${EV_FORM.sched==i?" selected":""}>${esc(x.date)} · ${esc(x.track)} · ${esc(x.series)}${x.length?` · ${esc(x.length)}`:""}</option>`).join("")}</select>
+          Car <select id="evschedcar">${(list[+EV_FORM.sched||0]||list[0]).cars.map(c=>`<option${EV_FORM.car===c?" selected":""}>${esc(c)}</option>`).join("")}</select>
+          <button id="evcreate" style="padding:3px 12px">Start the event</button></div>
+        <p class="muted" style="font-size:12px;margin:6px 0 0">The races of the next 8 weeks in the series you follow (Schedule page)${PREFS.get("schedSeries")?"":" (all series: pick yours on the Schedule page to shorten this)"}. The name, date, track and length come from the schedule.</p>`
+        : `<p class="muted" style="font-size:13px">No schedule loaded yet. Open the Schedule page once, or enter the race yourself.</p>`; })()
+      : `<div class="row" style="gap:10px;flex-wrap:wrap;align-items:center;font-size:13px">Name <input id="evname" value="${esc(EV_FORM.name||"")}" placeholder="e.g. League round 3" style="width:170px">
+        Car and track <select id="evcombo">${combos.map((c,i)=>`<option value="${i}"${EV_FORM.combo==i?" selected":""}>${esc(c.carName)} · ${esc(c.trackName)}</option>`).join("")}<option value="type"${EV_FORM.combo==="type"?" selected":""}>Type the car and track…</option></select>
+        ${EV_FORM.combo==="type"?`Car <input id="evcarname" value="${esc(EV_FORM.carName||"")}" placeholder="e.g. Acura NSX GT3 EVO 22" style="width:180px"> Track <input id="evtrackname" value="${esc(EV_FORM.trackName||"")}" placeholder="e.g. Spa" style="width:150px">`:""}
+        Date <input id="evdate" type="date" value="${esc(EV_FORM.date||"")}"> Length <input id="evhrs" type="number" step="0.5" min="0" value="${esc(EV_FORM.hours||"")}" style="width:55px"> h or <input id="evlaps" type="number" min="0" value="${esc(EV_FORM.laps||"")}" style="width:55px"> laps
         <button id="evcreate" style="padding:3px 12px">Start the event</button></div>
-      <p class="muted" style="font-size:12px;margin:6px 0 0">Car and track come from what you've driven (drive a lap there first if it's missing). Everyone in the team folder sees the event within a minute or two and chooses to join or not. Starting it as ${esc(me||"you")} (your name is set in Settings → Learning → Team folder).</p></section>`;
+      <p class="muted" style="font-size:12px;margin:6px 0 0">Pick a car and track you've driven, or type them: stints are matched to the event by name. Everyone in the team folder sees the event within a minute or two and chooses to join or not. Starting it as ${esc(me||"you")} (your name is set in Settings → Learning → Team folder).</p>`}</section>`;
   document.querySelectorAll(".evresp").forEach(b=>b.onclick=async()=>{ await window.se.eventRespond(b.dataset.id, b.dataset.how); if (me && window.se.eventReply && /^(join|decline|leave|active)$/.test(b.dataset.how)) await window.se.eventReply(b.dataset.id, me, b.dataset.how==="decline"?"no":b.dataset.how==="leave"?"paused":"in"); await teamLoadCfg(); TEAMREF={}; renderEvents(); });
   evWriteFiles();
-  const cr=$("#evcreate"); if (cr) cr.onclick=async()=>{ const c=combos[+$("#evcombo").value], name=$("#evname").value.trim(), date=$("#evdate").value, hours=+$("#evhrs").value||0;
-    EV_FORM={name, combo:$("#evcombo").value, date, hours};
-    if (!c || !name || !date){ alert("Give the event a name, a car and track, and a date."); return; }
-    const id=evId(); await window.se.eventCreate({v:1, id, name, car:c.car, carName:c.carName, track:c.track, trackName:c.trackName, date, hours, by:me||"someone", created:Date.now()});
+  document.querySelectorAll(".evsrc").forEach(b=>b.onclick=()=>{ EV_SRC=b.dataset.k; renderEvents(); });
+  { const s=$("#evsched"); if (s) s.onchange=()=>{ EV_FORM.sched=s.value; EV_FORM.car=""; renderEvents(); }; const sc=$("#evschedcar"); if (sc) sc.onchange=()=>{ EV_FORM.car=sc.value; };
+    const cb=$("#evcombo"); if (cb) cb.onchange=()=>{ EV_FORM={...EV_FORM, combo:cb.value, name:$("#evname").value, date:$("#evdate").value, hours:$("#evhrs").value, laps:$("#evlaps").value}; if (cb.value==="type") renderEvents(); }; }
+  const cr=$("#evcreate"); if (cr) cr.onclick=async()=>{ let ev;
+    if (EV_SRC==="schedule"){ const x=evSchedList()[+($("#evsched").value)], carName=$("#evschedcar").value; if (!x) return; const L=evLen(x.length);
+      ev={name:`${x.series.replace(/ - 20\d\d Season.*$/,"")} · ${x.track.split(" - ")[0]}`, car:evCarId(carName)||"", carName, track:evTrackId(x.track)||"", trackName:x.track, date:x.date, hours:L.hours, laps:L.laps, series:x.series, week:x.week}; }
+    else { const v=$("#evcombo").value, typed=v==="type", c=typed?null:combos[+v], name=$("#evname").value.trim(), date=$("#evdate").value, hours=+$("#evhrs").value||0, laps=+$("#evlaps").value||0;
+      const carName=typed?($("#evcarname")||{}).value||"":c&&c.carName, trackName=typed?($("#evtrackname")||{}).value||"":c&&c.trackName;
+      EV_FORM={...EV_FORM, name, combo:v, date, hours, laps, carName, trackName};
+      if (!name || !date || !carName || !trackName){ alert("Give the event a name, a car and track, and a date."); return; }
+      ev={name, car:typed?(evCarId(carName)||""):c.car, carName, track:typed?(evTrackId(trackName)||""):c.track, trackName, date, hours, laps}; }
+    const id=evId(); await window.se.eventCreate(Object.assign({v:1, id, by:me||"someone", created:Date.now()}, ev));
     await window.se.eventRespond(id, "join"); if (window.se.eventReply) await window.se.eventReply(id, me||"someone", "in"); EV_FORM={}; await teamLoadCfg(); TEAMREF={}; renderEvents(); };
   const opt=()=>{ EV_OPT={hours:+$("#evhours").value||0, tank:+$("#evtank").value||0, margin:+$("#evmargin").value||1, pit:+$("#evpit").value||60, order:$("#evorder").value.split(",").map(s=>s.trim()).filter(Boolean)}; renderEvents(); };
   for (const id of ["evhours","evtank","evmargin","evpit","evorder"]){ const el=$("#"+id); if (el) el.onchange=opt; }
