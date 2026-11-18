@@ -57,8 +57,8 @@ function draw(){
   $("info").textContent = `step ${P.n} of ${P.total} · ${P.doneN} done`;
   const change = P.change.length
     ? P.change.map(c=>{ const i=c.indexOf(": "); return `<div class="it">${esc(short(c.slice(0,i)))}: <span class="to">${esc(c.slice(i+2))}</span></div>`; }).join("")
-    : `<div class="it">Change nothing: drive the baseline as it is.</div>`;
-  const check = !P.live ? `<div class="box"><div class="k">Garage check</div><div class="it muted">Starts when you're in the car at this track.</div></div>`
+    : `<div class="it">${P.nothing?esc(P.nothing):"Change nothing: drive the baseline as it is."}</div>`;
+  const check = P.nothing ? "" : !P.live ? `<div class="box"><div class="k">Garage check</div><div class="it muted">Starts when you're in the car at this track.</div></div>`
     : P.off.length ? `<div class="box off"><div class="k">Garage now: not set up yet</div>${P.off.slice(0,8).map(o=>`<div class="it warnt">${esc(short(o))}</div>`).join("")}${P.off.length>8?`<div class="it muted">and ${P.off.length-8} more</div>`:""}</div>`
     : `<div class="box ok"><div class="k">Garage now</div><div class="it okt">Matches this step. Drive ${P.laps} clean laps.</div></div>`;
   const rh = P.live && P.offRH.length ? `<div class="it muted">Ride heights more than 2 mm out (fine for counting): ${esc(P.offRH.map(short).join(", "))}</div>` : "";
