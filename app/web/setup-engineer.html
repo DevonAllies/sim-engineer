@@ -6592,6 +6592,7 @@ function tpAppSpring(run){ const out=new Map(); if (!run || !run.sug) return out
   return out; }
 const TP_SCORE_PARTS = {lap:"lap time", cons:"consistency", bal:"balance nearer a touch of understeer", slides:"fewer slides", rubber:"less time on the bump rubbers", tyres:"tyres nearer their window"};
 function tpScore(L, run){
+  L=(L||[]).filter(Boolean);
   const W=(f)=>{ let s=0,n=0; for (const r of L){ const v=f(r), w=r.laps||1; if (Number.isFinite(v)){ s+=v*w; n+=w; } } return n?s/n:NaN; };
   const tw=run && run.A && run.A.tw, out={};
   out.lap = W(r=>r.med);
@@ -6611,7 +6612,7 @@ function tpScoreWhy(win, lose){
 function tpCombo(run, steps, P, what){
   const W=(L,f)=>{ let s=0,n=0; for (const r of L){ const v=f(r), w=r.laps||1; if (Number.isFinite(v)){ s+=v*w; n+=w; } } return n?s/n:NaN; };
   const hrsApart=(A,B)=>Math.abs(W(A,r=>r.date)-W(B,r=>r.date))/3.6e6, out={any:false, done:0, items:[]};
-  const baseStints=steps.filter(x=>x.kind==="base").flatMap(x=>x.stints);
+  const baseStints=steps.filter(x=>x.kind==="base").flatMap(x=>x.stints||[]);
   for (const ax of ["Front","Rear"]){
     if (what==="rh"){ if (ax!=="Rear") continue;
       const lo=steps.find(x=>x.id==="rhRearLow"), hi=steps.find(x=>x.id==="rhRearHigh"), sb=((lo||hi)||{}).base||P.base;
@@ -6761,9 +6762,9 @@ const TP_MEAS = [
 const TP_MEANS = {Springs:"how the car uses its mechanical grip and how stable the aero platform is", Dampers:"how it rides bumps and kerbs and how quickly it settles",
   "Anti-roll bars":"the biggest lever on mid-corner balance", "Wing (this track)":"downforce in the fast corners against speed on the straights here"};
 function tpInsightsHTML(run, steps){
-  const baseL=steps.filter(s=>s.kind==="base").flatMap(s=>s.stints); if (!baseL.length) return "";
+  const baseL=steps.filter(s=>s.kind==="base").flatMap(s=>s.stints||[]); if (!baseL.length) return "";
   // sector times: the median of each stint's counted laps (loaded in the background, so they appear a moment later)
-  try { for (const x of lapRowsFor([...new Set(steps.flatMap(s=>s.stints))])){ const R=x.rows.filter(r=>r.used && Number.isFinite(r.s1)); if (R.length) x.r._sec=[median(R.map(r=>r.s1)), median(R.map(r=>r.s2)), median(R.map(r=>r.s3))]; } } catch(e){}
+  try { for (const x of lapRowsFor([...new Set(steps.flatMap(s=>s.stints||[]))])){ const R=x.rows.filter(r=>r.used && Number.isFinite(r.s1)); if (R.length) x.r._sec=[median(R.map(r=>r.s1)), median(R.map(r=>r.s2)), median(R.map(r=>r.s3))]; } } catch(e){}
   const W=(L,f)=>{ let s=0,n=0; for (const r of L){ const v=f(r), w=r.laps||1; if (Number.isFinite(v)){ s+=v*w; n+=w; } } return n?s/n:NaN; };
   const agg=L=>{ const o={laps:L.reduce((a,r)=>a+(r.laps||0),0), date:W(L,r=>r.date)}; for (const [k,,f] of TP_MEAS) o[k]=W(L,f); return o; };
   const B=agg(baseL), hrs=(a,b)=>Math.abs(a.date-b.date)/3.6e6, val=(m,v)=>Number.isFinite(v)?`${v.toFixed(m[4])}${m[3]?(m[3]==="s"?" s":m[3]==="°"||m[3]==="%"?m[3]:" "+m[3]):""}`:"–";
@@ -6810,7 +6811,7 @@ function tpInsightsHTML(run, steps){
       <details><summary class="muted" style="font-size:12px">Every measure</summary><div class="tablewrap"><table style="font-size:12px"><tr><th></th><th>${esc(run_s(lo)||"soft")}</th><th>${esc(run_s(hi)||"stiff")}</th><th>Change</th></tr>${rows}</table></div><p class="muted" style="font-size:11px;margin:4px 0">Bold: big enough to matter. Balance is the understeer angle (+ more understeer, − looser).</p></details></div>`; };
   // single steps, against the baseline
   const singles=steps.filter(s=>s.kind!=="base" && s.stints.length && !used.has(s));
-  const singleRow=s=>{ const X=agg(s.stints), BL = s.after ? steps.filter(q=>q.setsBase || (q.kind==="base" && q.after===s.after)).flatMap(q=>q.stints) : null, B0=B, B = BL && BL.length ? agg(BL) : B0, ch=TP_MEAS.map(m=>({m, d:X[m[0]]-B[m[0]]})).filter(x=>Number.isFinite(x.d)&&Math.abs(x.d)>=x.m[5]&&x.m[0]!=="med").slice(0,5);
+  const singleRow=s=>{ const X=agg(s.stints), BL = s.after ? steps.filter(q=>q.setsBase || (q.kind==="base" && q.after===s.after)).flatMap(q=>q.stints||[]) : null, B0=B, B = BL && BL.length ? agg(BL) : B0, ch=TP_MEAS.map(m=>({m, d:X[m[0]]-B[m[0]]})).filter(x=>Number.isFinite(x.d)&&Math.abs(x.d)>=x.m[5]&&x.m[0]!=="med").slice(0,5);
     const dl=X.med-B.med, h=hrs(X,B);
     return `<tr><td><b>${esc(s.label)}</b>${run_s(s)?` <span class="muted">(${esc(run_s(s))})</span>`:""}</td><td>${X.laps}</td><td>${Number.isFinite(dl)?`${Math.abs(dl)<0.1?"about the same":`${Math.abs(dl).toFixed(2)} s ${dl<0?"quicker":"slower"}`}${h>=1?` <span class="muted">(${h.toFixed(1)} h after the baseline)</span>`:""}`:"–"}</td>
       <td style="font-size:12px">${ch.length?ch.map(x=>`${x.m[1].toLowerCase()} ${x.d>0?"+":"−"}${val(x.m,Math.abs(x.d))}`).join("; "):"nothing moved beyond the noise"}</td></tr>`; };
@@ -6831,7 +6832,7 @@ function trAnon(){ let a=PREFS.get("testerId",""); if (!a){ a="t"+Math.random().
 function trMeasure(L){ const W=f=>{ let s=0,n=0; for (const r of L){ const v=f(r), w=r.laps||1; if (Number.isFinite(v)){ s+=v*w; n+=w; } } return n?s/n:NaN; }, o={};
   for (const m of TP_MEAS) if (TR_MEAS.includes(m[0])){ const v=W(m[2]); if (Number.isFinite(v)) o[m[0]]=Math.round(v*1000)/1000; } return o; }
 // the stints a step was measured against: its baseline as it was then (the combination that set it, and the baseline checks of that phase)
-function trRef(steps, s){ const L = s.after ? steps.filter(q=>(q.setsBase && q.stints.length && q.stints[q.stints.length-1].date<=s.after) || (q.kind==="base" && q.after===s.after)).flatMap(q=>q.stints) : steps.filter(q=>q.kind==="base" && !q.after).flatMap(q=>q.stints);
+function trRef(steps, s){ const L = s.after ? steps.filter(q=>(q.setsBase && q.stints.length && q.stints[q.stints.length-1].date<=s.after) || (q.kind==="base" && q.after===s.after)).flatMap(q=>q.stints||[]) : steps.filter(q=>q.kind==="base" && !q.after).flatMap(q=>q.stints||[]);
   return [...new Set(L)]; }
 function trBuild(run){
   const out={v:1, tester:trAnon(), car:run.carPath, carName:run.carName, made:new Date().toISOString().slice(0,10), programmes:[]};
