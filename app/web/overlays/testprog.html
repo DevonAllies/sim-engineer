@@ -66,7 +66,7 @@ function draw(){
     <div class="step">${esc(P.label)} <small>${esc(P.block)} · ${P.lapsDone} of ${P.laps} laps${P.complete?" · done":""}</small></div>
     <div class="box"><div class="k">Change from the baseline</div>${change}${P.spr?`<div class="it muted">Then put the ride heights back near the baseline (within 2 mm).</div>`:""}</div>
     ${check}${rh}
-    <div><div class="k" style="margin-bottom:3px">Baseline${P.baseName?`: ${esc(P.baseName)}`:""} · everything else stays at this</div>
+    <div><div class="k" style="margin-bottom:3px">Baseline${P.moved?" now":""}${P.baseName?`: ${esc(P.baseName)}`:""}${P.moved?" + the combination steps you drove":""} · everything else stays at this</div>
       <div class="base">${P.base.map(b=>`<div><span class="muted">${esc(short(b.label))}</span><b>${esc(b.val)}</b></div>`).join("")}</div></div>`;
 }
 // where is the car? (garage / pit stall = show, driving = hide)
