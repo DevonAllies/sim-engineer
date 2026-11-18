@@ -197,6 +197,7 @@ tr.chg td{color:var(--ink)}
     <section id="p-tracks" class="panel hidden"><div id="tracksbox"></div></section>
     <section id="p-tunnel" class="panel hidden"><div id="tunnelbox"></div></section>
     <section id="p-drills" class="panel hidden"><div id="drillsbox"></div></section>
+    <section id="p-events" class="panel hidden"><div id="eventsbox"></div></section>
     <section id="p-settings" class="panel hidden">
       <h2>Settings <small>targets and assumptions</small></h2>
       <div class="row" style="gap:8px;align-items:center;margin:0 0 12px;padding:8px 10px;border:1px solid var(--line);border-radius:8px"><b>Updates</b> <span id="updver" class="muted"></span><span id="updstate" style="font-size:13px"></span><span style="flex:1"></span><button class="ghost" id="updcheck" style="padding:3px 12px">Check for updates</button></div>
@@ -2053,7 +2054,7 @@ const TAB_GROUPS = [
 const AREAS = { tyres:["Tyres","Tyre wear"], aero:["Aero platform","Aero trim","Gearing"], balance:["Balance","Corner entry","Corner exit"], brakes:["Brakes"], dampers:["Dampers","Track"], fuel:["Fuel"] };
 const areaSug = (run,k) => run.sug.filter(s=>AREAS[k].includes(s.area));
 // ---------- sidebar: App panels (always) + Session windows (when a session is selected) ----------
-const PANELS = [["live","Live"],["drivers","Drivers"],["recordings","Recordings"],["schedule","Schedule"],["tracks","Tracks"],["tunnel","Wind tunnel"],["drills","Drills"],["overlays","Overlays"],["settings","Settings"]];
+const PANELS = [["live","Live"],["drivers","Drivers"],["recordings","Recordings"],["schedule","Schedule"],["tracks","Tracks"],["tunnel","Wind tunnel"],["drills","Drills"],["events","Team events"],["overlays","Overlays"],["settings","Settings"]];
 // ---------- the iRacing season schedule (parsed from iRacing's season schedule PDF into schedule.json: app/scripts/parse-schedule.js) ----------
 let SCHED=null, SCHED_LOAD=null;
 function schedLoad(){ if (SCHED || SCHED_LOAD) return SCHED_LOAD; SCHED_LOAD=fetch("schedule.json",{cache:"no-store"}).then(r=>r.ok?r.json():null).then(j=>{ SCHED=j||{series:[]}; if (view==="schedule") renderSchedule(); if (view==="learn" && runs.length) render(); return SCHED; }).catch(()=>{ SCHED={series:[]}; }); return SCHED_LOAD; }
@@ -2425,6 +2426,119 @@ function drFinish(){
     <div class="row" style="gap:8px;margin-top:8px"><button id="dragain" style="padding:3px 12px">Again</button></div>`;
   const ag=$("#dragain"); if (ag) ag.onclick=()=>drStart(d);
 }
+// ---------- Team events: one race, one car and track, a folder in the team (hub) folder ----------
+// Anyone starts an event; everyone else's app shows it with Join / Not this one. While you're in an event, your stints in that car at that
+// track share their laps (compact: speed, pedals, steering, gear, position) and a stint summary (fuel, tyres, pace) into the event folder.
+// Your .ibt files never leave your PC. The event page builds the fuel map and a start plan, saved as sheets in the folder.
+const EVS = {list:[], joined:[], declined:[], active:"", stints:{}, laps:{}, busy:false};
+const evId = () => new Date().toISOString().slice(0,10).replace(/-/g,"")+"-"+Math.random().toString(36).slice(2,7);
+async function evLoad(){ if (!window.se || !window.se.eventAll) return; try { Object.assign(EVS, await window.se.eventAll()); } catch(e){} }
+const evActive = () => EVS.list.find(e=>e.id===EVS.active) || null;
+// what the drivers in an event have shared (their stint summaries and laps)
+async function evData(e){ if (!e) return {stints:[], laps:[]};
+  const S=[]; for (const f of await window.se.eventList(e.id, "stints", ".json.gz")){ const k=e.id+"|"+f.rel+"|"+f.size; if (EVS.stints[k]===undefined){ try { EVS.stints[k]=JSON.parse(await gunzip(await window.se.eventRead(e.id, f.rel))); } catch(x){ EVS.stints[k]=null; } } if (EVS.stints[k]) S.push(EVS.stints[k]); }
+  const L=(await window.se.eventList(e.id, "laps", ".json.gz")).map(f=>{ const m=f.rel.replace(/\\/g,"/").split("/").pop().match(/^(.*) (\d{4}-\d\d-\d\d \d\d\.\d\d) (\d+\.\d+)\.json\.gz$/); return m?{rel:f.rel, driver:m[1], time:+m[3]}:null; }).filter(Boolean);
+  return {stints:S, laps:L}; }
+// after each of your stints: if it's the event's car and track, share its laps and summary there
+async function evShareStint(run, A, rec){
+  if (!EVS.loaded){ await evLoad(); EVS.loaded=true; }
+  const e=evActive(); if (!e || !window.se || !window.se.eventWrite || run.team || !A || A.error || !A.best) return;
+  if (run.carPath!==e.car || learnTrackOf(run)!==e.track) return;
+  const who=myName(run), fm=String(run.name||"").match(/(\d{4}-\d\d-\d\d) (\d\d)-(\d\d)/), when=fm?`${fm[1]} ${fm[2]}.${fm[3]}`:new Date().toISOString().slice(0,16).replace("T"," ").replace(":",".");
+  // the best lap and up to four typical ones (enough to compare braking, coasting and lines)
+  const typ=[...A.rep].filter(l=>l!==A.best).sort((a,b)=>Math.abs(a.time-A.lapMed)-Math.abs(b.time-A.lapMed)).slice(0,4);
+  for (const l of [A.best, ...typ]){ try { await window.se.eventWrite(e.id, `laps/${fileSafe(run.carPath)}/${fileSafe(learnTrackOf(run))}/${fileSafe(who)} ${when} ${l.time.toFixed(3)}.json.gz`, await gz(JSON.stringify(lapObj(run, A, l, who, when)))); } catch(x){} }
+  if (rec && rec.laps>=1){ const r={v:1, driver:who}; for (const k of TEAM_STINT_KEYS) if (rec[k]!==undefined) r[k]=rec[k];
+    try { await window.se.eventWrite(e.id, `stints/${fileSafe(who)}/${fileSafe(rec.id.replace(/\|/g," "))}.json.gz`, await gz(JSON.stringify(r)), true); } catch(x){} }
+  EVS.stints={}; }
+// the fuel map and the start plan, from everyone's stints in the event
+function evPlan(e, D, opts){
+  const by={}; for (const s of D.stints) (by[s.driver]=by[s.driver]||[]).push(s);
+  const W=(L,f)=>{ let s=0,n=0; for (const r of L){ const v=f(r), w=r.laps||1; if (Number.isFinite(v)){ s+=v*w; n+=w; } } return n?s/n:NaN; };
+  const drivers=Object.entries(by).map(([d,L])=>({driver:d, stints:L.length, laps:L.reduce((a,r)=>a+(r.laps||0),0), best:Math.min(...L.map(r=>r.best).filter(Number.isFinite)), med:W(L,r=>r.med), sd:W(L,r=>r.sd),
+    fuel:W(L,r=>r.fuel), coast:W(L,r=>r.lc&&Number.isFinite(r.lc.perLap)?r.lc.perLap:NaN), perS:W(L,r=>r.lc&&Number.isFinite(r.lc.fuelPerS)?r.lc.fuelPerS:NaN),
+    zones:(()=>{ const Z=L.filter(r=>r.lc&&Array.isArray(r.lc.zones)).sort((a,b)=>(b.laps||0)-(a.laps||0)); return Z.length?Z[0].lc.zones:[]; })(), wearF:W(L,r=>r.wearF), wearR:W(L,r=>r.wearR), tank:Math.max(0,...L.map(r=>+r.tankL||0))})).sort((a,b)=>a.med-b.med);
+  const tank=+opts.tank || Math.max(0,...drivers.map(d=>d.tank)) || NaN, fuel=Math.max(...drivers.map(d=>d.fuel).filter(Number.isFinite)), lap=median(drivers.map(d=>d.med).filter(Number.isFinite));
+  const margin=+opts.margin||1, hrs=+opts.hours||+e.hours||0, pit=+opts.pit||60, order=(opts.order||drivers.map(d=>d.driver)).filter(Boolean);
+  if (!(tank>0) || !(fuel>0) || !(lap>0) || !(hrs>0)) return {drivers, tank, fuel, lap, stints:[], why:!(hrs>0)?"Set the race length.":!(tank>0)?"Set the tank size.":"Drive a stint in the event first: fuel per lap and lap time come from your stints."};
+  const perTank=Math.floor(tank/fuel - margin), raceLaps=Math.ceil(hrs*3600/lap)+1, nSt=Math.ceil(raceLaps/Math.max(1,perTank)), stints=[]; let left=raceLaps, at=1;
+  for (let i=0;i<nSt;i++){ const L=Math.min(perTank, left), need=Math.min(tank, Math.ceil((L+margin)*fuel*10)/10);
+    stints.push({n:i+1, driver:order.length?order[i%order.length]:"", startLap:at, laps:L, fuel:need, add:i===0?null:Math.max(0, Math.round((need-margin*fuel)*10)/10)}); left-=L; at+=L; }
+  return {drivers, tank, fuel, lap, perTank, raceLaps, stops:nSt-1, pitTime:(nSt-1)*pit, stints}; }
+const evCsv = rows => rows.map(r=>r.map(v=>{ const s=v==null?"":String(v); return /[",\n]/.test(s)?`"${s.replace(/"/g,'""')}"`:s; }).join(",")).join("\r\n")+"\r\n";
+async function evSavePlan(e, P){
+  const fm=[["Driver","Stints","Laps","Best","Typical lap","Lap spread (s)","Fuel per lap (L)","Coasting (s/lap)","1 s more coasting saves (L)","Front tread per lap (%)","Rear tread per lap (%)"],
+    ...P.drivers.map(d=>[d.driver, d.stints, d.laps, Number.isFinite(d.best)?fmtTime(d.best):"", fmtTime(d.med), fmt(d.sd,2), fmt(d.fuel,2), fmt(d.coast,1), fmt(d.perS,3), fmt(d.wearF,2), fmt(d.wearR,2)])];
+  const pl=[["Event", e.name], ["Car", e.carName], ["Track", e.trackName], ["Date", e.date], ["Race length (h)", e.hours], ["Tank (L)", fmt(P.tank,1)], ["Fuel per lap used (L)", fmt(P.fuel,2)], ["Typical lap", fmtTime(P.lap)], ["Laps per tank", P.perTank], ["Race laps", P.raceLaps], ["Pit stops", P.stops], [],
+    ["Stint","Driver","From lap","Laps","Fuel at the start of the stint (L)","Fuel to add at the stop (L)"], ...P.stints.map(s=>[s.n, s.driver, s.startLap, s.laps, fmt(s.fuel,1), s.add==null?"start":fmt(s.add,1)])];
+  const enc=s=>new TextEncoder().encode(s);
+  await window.se.eventWrite(e.id, "fuel-map.csv", enc(evCsv(fm)), true); await window.se.eventWrite(e.id, "plan.csv", enc(evCsv(pl)), true); }
+// the page
+let EV_FORM={}, EV_OPT={};
+async function renderEvents(){
+  const box=$("#eventsbox"); if (!box) return;
+  if (!window.se || !window.se.eventAll){ box.innerHTML=`<h2>Team events</h2><p class="muted">Team events work in the installed app.</p>`; return; }
+  await teamLoadCfg(); await evLoad();
+  if (!TEAM.dir){ box.innerHTML=`<h2>Team events <small>one race, shared with your team</small></h2>
+    <section><h3 style="margin:0 0 6px">First, the team folder (once)</h3><ol style="margin:4px 0 0 18px;font-size:13px">
+      <li><b>One person</b> makes a folder in Google Drive, e.g. <i>Setup Engineer team</i>, then <b>Share</b> → add the teammates as <b>Editors</b> (or General access: anyone with the link, Editor) → <b>Copy link</b>, and posts the link on Discord.</li>
+      <li><b>Everyone</b> opens the link, then on the folder: <b>Organize → Add shortcut → My Drive</b>. Google Drive for desktop syncs it to the PC.</li>
+      <li><b>Everyone</b> points Setup Engineer at it: <b>Settings → Learning → Team folder → Choose folder</b> (it's under your Google Drive, e.g. <code>G:\\My Drive\\Setup Engineer team</code>), and types their name there.</li></ol>
+      <p class="muted" style="font-size:12px;margin:6px 0 0">Only the people the folder is shared with can see it. After this, events are made and joined from this page.</p></section>`; return; }
+  const run=runs[current], combos=(()=>{ const o={}; for (const r of Object.values(LEARN||{})) if (r.car && r.track) { const k=r.car+"|"+r.track; if (!o[k]) o[k]={car:r.car, carName:r.carName||r.car, track:r.track, trackName:r.trackName||r.track, n:0}; o[k].n++; }
+    if (run && run.carPath){ const k=run.carPath+"|"+learnTrackOf(run); o[k]=o[k]||{car:run.carPath, carName:run.carName, track:learnTrackOf(run), trackName:((run.info.WeekendInfo||{}).TrackDisplayName)||"", n:0}; }
+    return Object.values(o).sort((a,b)=>b.n-a.n); })();
+  const me=TEAM.driver||(run?myName(run):""), active=evActive(), J=new Set(EVS.joined), Dc=new Set(EVS.declined);
+  const upcoming=EVS.list.filter(e=>!e.closed).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  const evRow=e=>{ const st=e.id===EVS.active?"in":J.has(e.id)?"joined":Dc.has(e.id)?"no":"new";
+    return `<tr${e.id===EVS.active?' style="background:color-mix(in srgb,var(--accent) 10%,transparent)"':""}><td><b>${esc(e.name)}</b><div class="muted" style="font-size:11px">by ${esc(e.by||"?")}</div></td><td>${esc(e.carName)}</td><td>${esc(e.trackName)}</td><td>${esc(e.date)}${e.hours?` · ${e.hours} h`:""}</td>
+      <td style="white-space:nowrap">${st==="in"?'<span class="tag" style="background:var(--good);color:#fff">In it</span> <button class="ghost evresp" data-id="'+e.id+'" data-how="leave" style="padding:2px 8px">Pause sharing</button>'
+        : st==="joined"?'<button class="evresp" data-id="'+e.id+'" data-how="active" style="padding:2px 10px">Make it my current event</button>'
+        : `<button class="evresp" data-id="${e.id}" data-how="join" style="padding:2px 10px">Join</button> <button class="ghost evresp" data-id="${e.id}" data-how="decline" style="padding:2px 10px">${st==="no"?"Said no":"Not this one"}</button>`}</td></tr>`; };
+  let detail="";
+  if (active){ const D=await evData(active), P=evPlan(active, D, Object.assign({hours:active.hours}, EV_OPT)), dset=[...new Set([...D.stints.map(s=>s.driver), ...D.laps.map(l=>l.driver)])];
+    detail=`<section><h3 style="margin:0 0 6px">${esc(active.name)} <small class="muted" style="font-weight:400">${esc(active.carName)} · ${esc(active.trackName)} · ${esc(active.date)}${active.hours?` · ${active.hours} h`:""}</small></h3>
+      <p style="margin:4px 0;font-size:13px">While you're in this event, every stint you drive in the <b>${esc(active.carName)}</b> at <b>${esc(active.trackName)}</b> shares its laps (speed, pedals, steering, gear, line) and a stint summary (fuel, tyres, pace) here. Your .ibt files stay on your PC. Teammates' event laps show up in GP and Compare as references, so you can learn each other's braking and coasting points.</p>
+      <p style="margin:4px 0;font-size:13px"><b>Drivers with data:</b> ${dset.length?dset.map(esc).join(", "):'<span class="muted">none yet: drive a stint in this car at this track</span>'} · ${D.laps.length} laps, ${D.stints.length} stints.</p>
+      ${P.drivers.length?`<h3 style="font-size:14px;margin:10px 0 4px">Fuel map</h3><div class="tablewrap"><table style="font-size:12px"><tr><th>Driver</th><th>Laps</th><th>Best</th><th>Typical</th><th>Spread</th><th>Fuel / lap</th><th>Coasting</th><th>1 s more coasting saves</th><th>Tread / lap F · R</th></tr>
+        ${P.drivers.map(d=>`<tr><td><b>${esc(d.driver)}</b></td><td>${d.laps}</td><td>${Number.isFinite(d.best)?fmtTime(d.best):"–"}</td><td>${fmtTime(d.med)}</td><td>±${fmt(d.sd,2)} s</td><td>${fmt(d.fuel,2)} L</td><td>${Number.isFinite(d.coast)?fmt(d.coast,1)+" s/lap":"–"}</td><td>${Number.isFinite(d.perS)?fmt(d.perS,3)+" L":"–"}</td><td>${fmt(d.wearF,2)} · ${fmt(d.wearR,2)}%</td></tr>`).join("")}</table></div>
+        ${(()=>{ // where each driver lifts before braking, corner by corner (matched by where on the lap the braking zone is)
+          const D2=P.drivers.filter(d=>d.zones.length); if (!D2.length) return "";
+          const ref=D2.reduce((a,b)=>b.zones.length>a.zones.length?b:a), secs=(()=>{ try { const r=runs[current]; return r && r.A && learnTrackOf(r)===e.track ? cornerSections(r, r.A) : []; } catch(x){ return []; } })();
+          const tn=p=>{ const s=secs.findIndex(s=>Math.abs(s.b[0]-p)<0.012); return s>=0?"T"+(secs[s].n||s+1):`${Math.round(p*100)}% of the lap`; };
+          const rows=ref.zones.map(z=>`<tr><td><b>${tn(z.p)}</b></td>${D2.map(d=>{ const m=d.zones.find(q=>Math.abs(q.p-z.p)<0.012); return `<td>${m?(m.coast>=0.05?`lift ${m.liftM} m early, ${fmt(m.coast,1)} s coast`:"brakes straight off the throttle"):"–"}</td>`; }).join("")}</tr>`).join("");
+          return `<h3 style="font-size:14px;margin:10px 0 4px">Lift and coast, corner by corner</h3><div class="tablewrap"><table style="font-size:12px"><tr><th>Corner</th>${D2.map(d=>`<th>${esc(d.driver)}</th>`).join("")}</tr>${rows}</table></div>
+            <p class="muted" style="font-size:12px;margin:4px 0">Where each driver comes off the throttle before braking, and for how long. Copy the earlier lifts of whoever saves fuel without losing time; for braking points, load their lap in GP or Compare.</p>`; })()}`:""}
+      <h3 style="font-size:14px;margin:10px 0 4px">Start plan</h3>
+      <div class="row" style="gap:10px;flex-wrap:wrap;align-items:center;font-size:13px">Race <input id="evhours" type="number" step="0.5" min="0" value="${+EV_OPT.hours||active.hours||""}" style="width:60px"> h · Tank <input id="evtank" type="number" min="0" value="${+EV_OPT.tank||(Number.isFinite(P.tank)?Math.round(P.tank):"")}" style="width:60px"> L · Safety margin <input id="evmargin" type="number" step="0.5" min="0" value="${+EV_OPT.margin||1}" style="width:50px"> laps · Pit loss <input id="evpit" type="number" min="0" value="${+EV_OPT.pit||60}" style="width:55px"> s · Driver order <input id="evorder" value="${esc((EV_OPT.order||P.drivers.map(d=>d.driver)).join(", "))}" style="width:220px"></div>
+      ${P.stints.length?`<p style="margin:6px 0;font-size:13px">${P.raceLaps} laps at ${fmtTime(P.lap)} (the team's typical lap), ${fmt(P.fuel,2)} L a lap (the thirstiest driver, to be safe), so <b>${P.perTank} laps a tank</b>, <b>${P.stops} stop${P.stops===1?"":"s"}</b> (about ${Math.round(P.pitTime)} s in the pits).</p>
+        <div class="tablewrap"><table style="font-size:12px"><tr><th>Stint</th><th>Driver</th><th>From lap</th><th>Laps</th><th>Fuel at the start</th><th>Add at the stop</th></tr>${P.stints.map(s=>`<tr><td>${s.n}</td><td>${esc(s.driver)}</td><td>${s.startLap}</td><td>${s.laps}</td><td>${fmt(s.fuel,1)} L</td><td>${s.add==null?"start":fmt(s.add,1)+" L"}</td></tr>`).join("")}</table></div>
+        <div class="row" style="gap:8px;margin-top:6px"><button id="evsave" style="padding:3px 12px">Save the plan sheets to the event folder</button><span id="evmsg" class="muted" style="font-size:12px;align-self:center"></span></div>`:`<p class="muted" style="font-size:13px;margin:6px 0">${esc(P.why||"")}</p>`}
+      <h3 style="font-size:14px;margin:12px 0 4px">After the race</h3>
+      <div class="row" style="gap:8px;flex-wrap:wrap"><button class="ghost" id="evopen" style="padding:3px 10px">Open the event folder</button><button class="ghost" id="evkeep" style="padding:3px 10px">Close: keep the plan and summaries, delete the lap traces</button><button class="ghost" id="evmine" style="padding:3px 10px">Remove my data from this event</button>${active.by===me?`<button class="ghost" id="evdel" style="padding:3px 10px">Delete the whole event</button>`:""}</div></section>`; }
+  box.innerHTML=`<h2>Team events <small>one race, one car and track, shared only with your team</small></h2>
+    <section><h3 style="margin:0 0 6px">Events in the team folder</h3>${upcoming.length?`<div class="tablewrap"><table style="font-size:13px"><tr><th>Event</th><th>Car</th><th>Track</th><th>Date</th><th></th></tr>${upcoming.map(evRow).join("")}</table></div>`:'<p class="muted" style="font-size:13px">No events yet. Start one below; it shows up here for everyone in the team folder.</p>'}</section>
+    ${detail}
+    <section><h3 style="margin:0 0 6px">Start a new event</h3>
+      <div class="row" style="gap:10px;flex-wrap:wrap;align-items:center;font-size:13px">Name <input id="evname" value="${esc(EV_FORM.name||"")}" placeholder="e.g. Spa 6h" style="width:160px">
+        Car and track <select id="evcombo">${combos.map((c,i)=>`<option value="${i}"${EV_FORM.combo==i?" selected":""}>${esc(c.carName)} · ${esc(c.trackName)}</option>`).join("")}</select>
+        Date <input id="evdate" type="date" value="${esc(EV_FORM.date||"")}"> Race length <input id="evhrs" type="number" step="0.5" min="0" value="${esc(EV_FORM.hours||"")}" style="width:60px"> h
+        <button id="evcreate" style="padding:3px 12px">Start the event</button></div>
+      <p class="muted" style="font-size:12px;margin:6px 0 0">Car and track come from what you've driven (drive a lap there first if it's missing). Everyone in the team folder sees the event within a minute or two and chooses to join or not. Starting it as ${esc(me||"you")} (your name is set in Settings → Learning → Team folder).</p></section>`;
+  document.querySelectorAll(".evresp").forEach(b=>b.onclick=async()=>{ await window.se.eventRespond(b.dataset.id, b.dataset.how); await teamLoadCfg(); TEAMREF={}; renderEvents(); });
+  const cr=$("#evcreate"); if (cr) cr.onclick=async()=>{ const c=combos[+$("#evcombo").value], name=$("#evname").value.trim(), date=$("#evdate").value, hours=+$("#evhrs").value||0;
+    EV_FORM={name, combo:$("#evcombo").value, date, hours};
+    if (!c || !name || !date){ alert("Give the event a name, a car and track, and a date."); return; }
+    const id=evId(); await window.se.eventCreate({v:1, id, name, car:c.car, carName:c.carName, track:c.track, trackName:c.trackName, date, hours, by:me||"someone", created:Date.now()});
+    await window.se.eventRespond(id, "join"); EV_FORM={}; await teamLoadCfg(); TEAMREF={}; renderEvents(); };
+  const opt=()=>{ EV_OPT={hours:+$("#evhours").value||0, tank:+$("#evtank").value||0, margin:+$("#evmargin").value||1, pit:+$("#evpit").value||60, order:$("#evorder").value.split(",").map(s=>s.trim()).filter(Boolean)}; renderEvents(); };
+  for (const id of ["evhours","evtank","evmargin","evpit","evorder"]){ const el=$("#"+id); if (el) el.onchange=opt; }
+  const sv=$("#evsave"); if (sv && active) sv.onclick=async()=>{ const D=await evData(active); await evSavePlan(active, evPlan(active, D, Object.assign({hours:active.hours}, EV_OPT))); const m=$("#evmsg"); if (m) m.textContent="Saved: plan.csv and fuel-map.csv in the event folder (open them with Google Sheets)."; };
+  const op=$("#evopen"); if (op && active) op.onclick=()=>window.se.eventOpen(active.id);
+  const kp=$("#evkeep"); if (kp && active) kp.onclick=async()=>{ if (!confirm("Delete this event's lap traces for everyone? The plan sheets and stint summaries stay.")) return; await window.se.eventRemove(active.id, "laps"); renderEvents(); };
+  const mn=$("#evmine"); if (mn && active) mn.onclick=async()=>{ if (!confirm(`Remove everything you (${me}) shared in this event?`)) return; await window.se.eventRemove(active.id, "driver:"+fileSafe(me)); await window.se.eventRespond(active.id, "leave"); EVS.stints={}; renderEvents(); };
+  const dl=$("#evdel"); if (dl && active) dl.onclick=async()=>{ if (!confirm("Delete the whole event, everyone's data in it included? This can't be undone.")) return; await window.se.eventRemove(active.id, "all"); renderEvents(); };
+}
 // ---------- Wind tunnel: the car's aero, learned from your own stints ----------
 // Downforce: measured per stint from how far the suspension compresses at speed (× spring rates), as a coefficient C = N per (100 km/h)²,
 // modelled from the ride heights at speed and the wing. Balance: iRacing's own aero-calculator points (or the stints' measured split).
@@ -2732,6 +2846,7 @@ function showPanels(){
   { const p=$("#p-schedule"); if (p){ p.classList.toggle("hidden", view!=="schedule"); if (view==="schedule") renderSchedule(); } }
   { const p=$("#p-tracks"); if (p){ p.classList.toggle("hidden", view!=="tracks"); if (view==="tracks") renderTracks(); } }
   { const p=$("#p-tunnel"); if (p){ const was=!p.classList.contains("hidden"); p.classList.toggle("hidden", view!=="tunnel"); if (view==="tunnel" && !was) renderTunnel(); if (view!=="tunnel") TUN.anim=false; } }
+  { const p=$("#p-events"); if (p){ const was=!p.classList.contains("hidden"); p.classList.toggle("hidden", view!=="events"); if (view==="events" && !was) renderEvents(); } }
   { const p=$("#p-drills"); if (p){ const was=!p.classList.contains("hidden"); p.classList.toggle("hidden", view!=="drills"); if (view==="drills" && !was) renderDrills(); } }
   $("#sessbar").classList.toggle("hidden", !isA || runs.length<2);
 }
@@ -4769,6 +4884,7 @@ function learnRecord(run, A, opts){
   // push to the team folder: every clean lap (GP's driving comparison) and, for long runs, the stint summary (endurance: fuel, lift and coast, tyre wear)
   // stints from the last week only, so a rescan doesn't flood the folder
   if (TEAM.auto && TEAM.dir && !run.teamShared && !run.teamIbt && Date.now()-date < 7*864e5){ teamShare(run, A); if (rec.laps>=MIN_LAPS) teamPushStint(rec, myName(run)); }
+  if (!dry && !run.teamIbt && Date.now()-date < 7*864e5) evShareStint(run, A, rec).catch(()=>{});
 }
 // one row per lap: time, clean or not, used for the analysis, fuel, tyre temperature (garage-equivalent), sector times (iRacing's split points)
 function lapRowsOf(run, A){
@@ -5821,7 +5937,7 @@ async function teamLoadLap(rel){
   return r;
 }
 async function teamLaps(car, track){
-  if (!window.se || !window.se.teamList || !TEAM.dir) return [];
+  if (!window.se || !window.se.teamList || !(TEAM.dir || TEAM.eventDir)) return [];
   const L=await window.se.teamList(`${fileSafe(car)}/${fileSafe(track)}`);
   return L.map(f=>{ const m=f.rel.replace(/\\/g,"/").split("/").pop().match(/^(.*) (\d{4}-\d\d-\d\d \d\d\.\d\d) (\d+\.\d+)\.json\.gz$/); return m?{rel:f.rel, driver:m[1], date:m[2], time:+m[3]}:null; }).filter(Boolean);
 }

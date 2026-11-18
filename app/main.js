@@ -304,7 +304,7 @@ ipcMain.handle('learn:histInfo', () => { const H = learnLoad().hist, by = {};
 // <team folder>\laps\<car>\<track>\<driver> <date time> L<lap>.json.gz : one compressed lap each, written by whoever drove it
 const teamDir = () => cfg.settings.teamDir || '';
 const safeRel = (rel) => { const p = path.normalize(String(rel || '')).replace(/^([\\/])+/, ''); if (!p || p.includes('..') || path.isAbsolute(p)) throw new Error('bad path'); return p; };
-ipcMain.handle('team:get', () => ({ dir: teamDir(), driver: cfg.settings.teamDriver || '', auto: cfg.settings.teamAuto !== false }));
+ipcMain.handle('team:get', () => ({ dir: teamDir(), driver: cfg.settings.teamDriver || '', auto: cfg.settings.teamAuto !== false, eventDir: eventDir() }));
 ipcMain.handle('team:set', (_e, patch) => { for (const k of ['teamDriver', 'teamAuto']) if (patch && patch[k] !== undefined) cfg.settings[k] = patch[k]; saveCfg(); return true; });
 ipcMain.handle('team:choose', async () => {
   const { dialog } = require('electron');
@@ -316,12 +316,50 @@ ipcMain.handle('team:choose', async () => {
 ipcMain.handle('team:write', (_e, rel, bytes) => { const d = teamDir(); if (!d) return null; const f = path.join(d, safeRel(rel)); fs.mkdirSync(path.dirname(f), { recursive: true });
   if (fs.existsSync(f)) return f; fs.writeFileSync(f + '.tmp', Buffer.from(bytes)); fs.renameSync(f + '.tmp', f); return f; });
 // list files under the team folder: lap files (laps\<car>\<track>), stint summaries (stints\<driver>), or a teammate's raw .ibt recordings anywhere in it
-ipcMain.handle('team:list', (_e, sub, ext) => { const d = teamDir(); if (!d) return []; const e0 = ext || '.json.gz';
+ipcMain.handle('team:list', (_e, sub, ext) => { const d = teamDir(); if (!d && !(eventDir() && !ext)) return []; const e0 = ext || '.json.gz';
   const root = ext ? (sub ? path.join(d, safeRel(sub)) : d) : path.join(d, 'laps', sub ? safeRel(sub) : ''), out = [];
   const walk = (p, depth) => { let ents = []; try { ents = fs.readdirSync(p, { withFileTypes: true }); } catch (e) { return; }
     for (const e of ents) { const q = path.join(p, e.name); if (e.isDirectory() && depth < 4) walk(q, depth + 1); else if (e.isFile() && e.name.toLowerCase().endsWith(e0)) { let st = null; try { st = fs.statSync(q); } catch (x) {} out.push({ rel: path.relative(d, q), size: st ? st.size : 0, time: st ? st.mtimeMs : 0 }); } } };
+  if (d) walk(root, 0);
+  // the active team event's laps too (rel starts with @event/), so teammates' event laps work everywhere team laps do
+  const ed = eventDir(); if (ed && !ext){ const r2 = path.join(ed, 'laps', sub ? safeRel(sub) : '');
+    const walk2 = (p, depth) => { let ents = []; try { ents = fs.readdirSync(p, { withFileTypes: true }); } catch (e) { return; }
+      for (const e of ents) { const q = path.join(p, e.name); if (e.isDirectory() && depth < 4) walk2(q, depth + 1); else if (e.isFile() && e.name.toLowerCase().endsWith(e0)) { let st = null; try { st = fs.statSync(q); } catch (x) {} out.push({ rel: '@event/' + path.relative(ed, q), size: st ? st.size : 0, time: st ? st.mtimeMs : 0 }); } } };
+    walk2(r2, 0); }
+  return out; });
+ipcMain.handle('team:read', (_e, rel) => { if (String(rel).startsWith('@event/')) { const ed = eventDir(); if (!ed) return null; try { return fs.readFileSync(path.join(ed, safeRel(String(rel).slice(7)))); } catch (e) { return null; } }
+  const d = teamDir(); if (!d) return null; try { return fs.readFileSync(path.join(d, safeRel(rel))); } catch (e) { return null; } });
+// ---------- team events: one folder per race inside the team (hub) folder: anyone creates one, everyone else joins or not ----------
+// <team folder>\events\<id>\event.json, laps\<car>\<track>\<driver> <when> <time>.json.gz, stints\<driver>\<id>.json.gz, plan.csv, fuel-map.csv
+const safeId = (id) => String(id || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40);
+const evDirOf = (id) => { const d = teamDir(), s = safeId(id); return d && s ? path.join(d, 'events', s) : ''; };
+const eventDir = () => { const id = cfg.settings.eventActive; const d = evDirOf(id); return d && fs.existsSync(path.join(d, 'event.json')) ? d : ''; };
+// every event in the hub, with what you've said about each (joined / not this one) and which is active
+ipcMain.handle('event:all', () => { const d = teamDir(); const out = []; if (!d) return { list: out, active: '' };
+  let ents = []; try { ents = fs.readdirSync(path.join(d, 'events'), { withFileTypes: true }); } catch (e) {}
+  for (const e of ents) if (e.isDirectory()) { try { const ev = JSON.parse(fs.readFileSync(path.join(d, 'events', e.name, 'event.json'), 'utf8')); if (ev && ev.id === e.name) out.push(ev); } catch (x) {} }
+  return { list: out, joined: cfg.settings.eventJoined || [], declined: cfg.settings.eventDeclined || [], active: cfg.settings.eventActive || '' }; });
+ipcMain.handle('event:create', (_e, ev) => { const d = teamDir(); if (!d || !ev) return null; const id = safeId(ev.id); if (!id) return null; const dir = path.join(d, 'events', id);
+  fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'event.json'), JSON.stringify(Object.assign({}, ev, { id }), null, 1)); return id; });
+ipcMain.handle('event:respond', (_e, id, how) => { id = safeId(id); const J = new Set(cfg.settings.eventJoined || []), D = new Set(cfg.settings.eventDeclined || []);
+  J.delete(id); D.delete(id); if (how === 'join') { J.add(id); cfg.settings.eventActive = id; } else if (how === 'decline') { D.add(id); if (cfg.settings.eventActive === id) cfg.settings.eventActive = ''; }
+  else if (how === 'active') { J.add(id); cfg.settings.eventActive = id; } else if (how === 'leave') { if (cfg.settings.eventActive === id) cfg.settings.eventActive = ''; }
+  cfg.settings.eventJoined = [...J]; cfg.settings.eventDeclined = [...D]; saveCfg(); return true; });
+ipcMain.handle('event:write', (_e, id, rel, bytes, overwrite) => { const d = evDirOf(id); if (!d || !fs.existsSync(d)) return null; const f = path.join(d, safeRel(rel)); fs.mkdirSync(path.dirname(f), { recursive: true });
+  if (fs.existsSync(f) && !overwrite) return f; fs.writeFileSync(f + '.tmp', Buffer.from(bytes)); fs.renameSync(f + '.tmp', f); return f; });
+ipcMain.handle('event:list', (_e, id, sub, ext) => { const d = evDirOf(id); if (!d) return []; const root = path.join(d, sub ? safeRel(sub) : ''), out = [], e0 = ext || '.json.gz';
+  const walk = (p, depth) => { let ents = []; try { ents = fs.readdirSync(p, { withFileTypes: true }); } catch (e) { return; }
+    for (const e of ents) { const q = path.join(p, e.name); if (e.isDirectory() && depth < 4) walk(q, depth + 1); else if (e.isFile() && e.name.toLowerCase().endsWith(e0)) { let st = null; try { st = fs.statSync(q); } catch (x) {} out.push({ rel: path.relative(d, q), size: st ? st.size : 0, time: st ? st.mtimeMs : 0 }); } } };
   walk(root, 0); return out; });
-ipcMain.handle('team:read', (_e, rel) => { const d = teamDir(); if (!d) return null; try { return fs.readFileSync(path.join(d, safeRel(rel))); } catch (e) { return null; } });
+ipcMain.handle('event:read', (_e, id, rel) => { const d = evDirOf(id); if (!d) return null; try { return fs.readFileSync(path.join(d, safeRel(rel))); } catch (e) { return null; } });
+// close an event: remove its lap traces, one driver's files, or the whole event
+ipcMain.handle('event:remove', (_e, id, what) => { const d = evDirOf(id); if (!d) return false; const rm = p => { try { fs.rmSync(p, { recursive: true, force: true }); } catch (e) {} };
+  if (what === 'laps') rm(path.join(d, 'laps'));
+  else if (what === 'all') { rm(d); if (cfg.settings.eventActive === safeId(id)) { cfg.settings.eventActive = ''; saveCfg(); } }
+  else if (String(what).startsWith('driver:')) { const who = String(what).slice(7); if (!who || /[\\/]|\.\./.test(who)) return false; rm(path.join(d, 'stints', who));
+    const walk = (p) => { let ents = []; try { ents = fs.readdirSync(p, { withFileTypes: true }); } catch (e) { return; } for (const e of ents) { const q = path.join(p, e.name); if (e.isDirectory()) walk(q); else if (e.name.startsWith(who + ' ')) rm(q); } }; walk(path.join(d, 'laps')); }
+  return true; });
+ipcMain.handle('event:open', (_e, id) => { const d = evDirOf(id); if (d && fs.existsSync(d)) shell.openPath(d); return d; });
 ipcMain.handle('team:open', () => { if (teamDir()) shell.openPath(teamDir()); return teamDir(); });
 // export for your own analysis: a folder with a copy of the database, flat CSVs (stints, laps, setups) and a README with the columns
 ipcMain.handle('data:export', async () => {

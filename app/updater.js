@@ -6,9 +6,10 @@ const pkg = require('./package.json');
 
 let autoUpdater = null, status = { state: 'idle' }, send = () => {};
 
+// the installed app carries app-update.yml (the GitHub repo to update from); package.json loses its build section when packaged
 function configured() {
-  const pub = (pkg.build && pkg.build.publish && pkg.build.publish[0]) || {};
-  return app.isPackaged && pub.owner && !/YOUR-GITHUB-NAME/.test(pub.owner);
+  if (!app.isPackaged) return false;
+  try { const y = require("fs").readFileSync(require("path").join(process.resourcesPath, "app-update.yml"), "utf8"); return /provider:\s*github/.test(y) && /owner:\s*\S+/.test(y) && !/YOUR-GITHUB-NAME/.test(y); } catch (e) { return false; }
 }
 
 function set(s) { status = s; send(s); }
