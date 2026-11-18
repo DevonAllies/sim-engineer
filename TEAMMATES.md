@@ -16,7 +16,7 @@ Hi! This gets you into our shared team folder, so we can plan team races togethe
 ## 3. Join the team
 
 - In Setup Engineer: **Settings → Learning → Team folder**: type your name, paste the **team key** from Discord (it starts with `SE1-`) in **Join a team**, and click **Join**.
-- The first time, your browser opens the team folder: click **Add shortcut to Drive**. Google Drive syncs it, the app finds it by itself, and you're in.
+- The first time, your browser opens the team folder: click the **▾** next to the folder's name at the top → **Organise → Add shortcut → My Drive → Add**. Google Drive syncs it, the app finds it by itself, and you're in.
 
 ## 4. Team races
 

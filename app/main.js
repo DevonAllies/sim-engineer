@@ -366,9 +366,13 @@ ipcMain.handle('team:saveInfo', (_e, info) => { const d = teamDir(); if (!d) ret
   let prev = {}; try { prev = JSON.parse(fs.readFileSync(path.join(d, 'team.json'), 'utf8')); } catch (e) {}
   const m = o.link.match(/folders\/([A-Za-z0-9_-]{10,})/); fs.writeFileSync(path.join(d, 'team.json'), JSON.stringify(Object.assign(prev, o, m ? { key: 'SE1-' + m[1] } : {}), null, 1)); return true; });
 const safeName = (s) => String(s || '').replace(/[\\/:*?"<>|]/g, '-').replace(/\.\./g, '').trim().slice(0, 60);
-ipcMain.handle('team:hello', (_e, name, version) => { const d = teamDir(), n = safeName(name); if (!d || !n) return false; const dir = path.join(d, 'members'); fs.mkdirSync(dir, { recursive: true });
+ipcMain.handle('team:hello', (_e, name, version, extra) => { const d = teamDir(), n = safeName(name); if (!d || !n) return false; const dir = path.join(d, 'members'); fs.mkdirSync(dir, { recursive: true });
   const f = path.join(dir, n + '.json'); let o = {}; try { o = JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) {}
-  o = Object.assign(o, { name: n, version: String(version || ''), seen: Date.now(), since: o.since || Date.now() }); fs.writeFileSync(f, JSON.stringify(o, null, 1)); return true; });
+  o = Object.assign(o, { name: n, version: String(version || '') || o.version || '', seen: Date.now(), since: o.since || Date.now() });
+  if (extra && typeof extra === 'object') { const s = v => String(v == null ? '' : v).slice(0, 80);
+    if (extra.last) o.last = { car: s(extra.last.car), carName: s(extra.last.carName), track: s(extra.last.track), trackName: s(extra.last.trackName), at: +extra.last.at || Date.now(), laps: +extra.last.laps || 0, best: +extra.last.best || null };
+    if (extra.onTrack !== undefined) o.onTrack = extra.onTrack ? { carName: s(extra.onTrack.carName), trackName: s(extra.onTrack.trackName), at: Date.now() } : null; }
+  fs.writeFileSync(f, JSON.stringify(o, null, 1)); return true; });
 ipcMain.handle('team:members', () => { const d = teamDir(); if (!d) return []; const dir = path.join(d, 'members'); let L = []; try { L = fs.readdirSync(dir).filter(x => x.endsWith('.json')); } catch (e) {}
   return L.map(x => { try { return JSON.parse(fs.readFileSync(path.join(dir, x), 'utf8')); } catch (e) { return null; } }).filter(Boolean); });
 ipcMain.handle('event:reply', (_e, id, name, how, avail) => { const d = evDirOf(id), n = safeName(name); if (!d || !n || !fs.existsSync(d)) return false; const dir = path.join(d, 'replies'); fs.mkdirSync(dir, { recursive: true });

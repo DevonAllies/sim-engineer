@@ -2520,6 +2520,10 @@ function evSchedList(){ if (!SCHED){ schedLoad(); return []; } const out=[], fro
     out.push({series:s.name, cars:String(s.cars||"").split(/,\s*/).filter(Boolean), week:w.week, date:w.start, track:w.track, length:w.length||""}); }
   return out.sort((a,b)=>a.date.localeCompare(b.date) || a.series.localeCompare(b.series)).slice(0,300); }
 function evLen(s){ s=String(s||""); const h=s.match(/([\d.]+)\s*(h|hour)/i), m=s.match(/(\d+)\s*min/i), l=s.match(/(\d+)\s*lap/i); return {hours: h?+h[1]:m?+m[1]/60:0, laps: l&&!h&&!m?+l[1]:0}; }
+// your card in the team folder (members/<name>.json): seen, app version, what you last drove, on track now
+async function teamHi(extra){ try { if (!window.se || !window.se.teamHello) return; if (!TEAM.loaded) await teamLoadCfg(); if (!TEAM.dir) return;
+  const r=runs.find(x=>!x.team && x.info), name=TEAM.driver || (r ? myName(r) : ""); if (!name) return; await window.se.teamHello(name, APPVER, extra||null); } catch(e){} }
+setTimeout(()=>teamHi(), 8000); setInterval(()=>teamHi(), 10*60000);
 // the page
 let EV_FORM={}, EV_OPT={}, EV_SRC="schedule";
 async function renderEvents(){
@@ -2574,7 +2578,7 @@ async function renderEvents(){
       <div class="row" style="gap:8px;flex-wrap:wrap"><button class="ghost" id="evopen" style="padding:3px 10px">Open the event folder</button><button class="ghost" id="evkeep" style="padding:3px 10px">Close: keep the plan and summaries, delete the lap traces</button><button class="ghost" id="evmine" style="padding:3px 10px">Remove my data from this event</button>${active.by===me?`<button class="ghost" id="evdel" style="padding:3px 10px">Delete the whole event</button>`:""}</div></section>`; }
   box.innerHTML=`<h2>Team events <small>one race, one car and track, shared only with your team</small></h2>
     <section><h3 style="margin:0 0 6px">The team <small class="muted" style="font-weight:400">${members.length} member${members.length===1?"":"s"}: everyone whose app uses this team folder</small></h3>
-      ${members.length?`<div style="display:flex;flex-wrap:wrap;gap:8px">${members.map(m=>`<span class="tag" style="padding:4px 10px"${m.name===meName?' title="you"':""}><b>${esc(m.name)}</b>${m.name===meName?" (you)":""} <span class="muted" style="font-size:11px">· seen ${ago(m.seen)}${m.version?` · v${esc(m.version)}`:""}</span></span>`).join("")}</div>`:`<p class="muted" style="font-size:13px">Nobody yet. Set your name in Settings → Learning → Team folder.</p>`}</section>
+      ${members.length?`<div style="display:flex;flex-wrap:wrap;gap:8px">${members.map(m=>{ const on=m.onTrack && Date.now()-m.onTrack.at<20*60000 && (!m.last || m.last.at<m.onTrack.at); return `<div class="gcard" style="padding:6px 10px;min-width:220px"><b>${esc(m.name)}</b>${m.name===meName?" <span class='muted'>(you)</span>":""} ${on?'<span class="tag" style="background:var(--good);color:#fff">on track now</span>':""}<div class="muted" style="font-size:11px">seen ${ago(m.seen)}${m.version?` · v${esc(m.version)}`:""}</div><div style="font-size:12px;margin-top:2px">${on?`${esc(m.onTrack.carName)} at ${esc(m.onTrack.trackName)}`:m.last?`last drove ${esc(m.last.carName)} at ${esc(m.last.trackName)} · ${ago(m.last.at)}${m.last.laps?` · ${m.last.laps} clean laps`:""}${m.last.best?`, best ${fmtTime(m.last.best)}`:""}`:'<span class="muted">no stint since joining</span>'}</div></div>`; }).join("")}</div>`:`<p class="muted" style="font-size:13px">Nobody yet. Set your name in Settings → Learning → Team folder.</p>`}</section>
     <section><h3 style="margin:0 0 6px">Events in the team folder</h3>${upcoming.length?`<div class="tablewrap"><table style="font-size:13px"><tr><th>Event</th><th>Car</th><th>Track</th><th>Date</th><th></th></tr>${upcoming.map(evRow).join("")}</table></div>`:'<p class="muted" style="font-size:13px">No events yet. Start one below; it shows up here for everyone in the team folder.</p>'}</section>
     ${detail}
     <section><h3 style="margin:0 0 6px">Start a new event</h3>
@@ -4094,6 +4098,7 @@ function pushSample(run, s){
   run.n++;
 }
 function newStint(s){
+  try { const wi=(LIVE.meta&&LIVE.meta.info.WeekendInfo)||{}, di=(LIVE.meta&&LIVE.meta.info.DriverInfo)||{}, me=(di.Drivers||[]).find(d=>+d.CarIdx===+di.DriverCarIdx)||{}; teamHi({onTrack:{carName:me.CarScreenName||me.CarPath||"", trackName:wi.TrackDisplayName||""}}); } catch(e){}
   const M=LIVE.meta, wi=M.info.WeekendInfo||{}, d=new Date();
   const run = finishRun({name:"live", n:0, cap:0, tick:M.tick, ch:{}, units:M.units, info:M.info, live:true, lapsDone:0}, "");
   run.short = `Live ${wi.TrackDisplayShortName||""} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
@@ -5007,6 +5012,7 @@ function learnRecord(run, A, opts){
   // stints from the last week only, so a rescan doesn't flood the folder
   if (TEAM.auto && TEAM.dir && !run.teamShared && !run.teamIbt && Date.now()-date < 7*864e5){ teamShare(run, A); if (rec.laps>=MIN_LAPS) teamPushStint(rec, myName(run)); }
   if (!dry && !run.teamIbt && Date.now()-date < 7*864e5) evShareStint(run, A, rec).catch(()=>{});
+  if (!dry && !run.teamIbt && Date.now()-date < 2*864e5) teamHi({last:{car:run.carPath, carName:run.carName, track:learnTrackOf(run), trackName:((run.info.WeekendInfo||{}).TrackDisplayName)||"", at:date, laps:rec.laps, best:rec.best}, onTrack:null});
 }
 // one row per lap: time, clean or not, used for the analysis, fuel, tyre temperature (garage-equivalent), sector times (iRacing's split points)
 function lapRowsOf(run, A){
@@ -5282,7 +5288,7 @@ async function learnSettings(){
       : `<p style="margin:0 0 6px"><b>Start a team</b> <span class="muted" style="font-size:12px">you run it: the app makes the team folder in your Google Drive, then you get the key to send</span><br><button id="teamcreate" style="padding:2px 12px">Create the team folder</button> <span class="muted" style="font-size:12px">pick your Google Drive (e.g. <code>G:\\My Drive</code>); it makes <i>Setup Engineer team</i> in it</span></p>
         <p style="margin:0 0 6px"><b>Join a team</b> <span class="muted" style="font-size:12px">someone sent you a team key (a Google Drive link): paste it here</span><br>
         <input id="teamjoin" placeholder="SE1-… (the team key)" style="width:330px;padding:2px 6px"> <button id="teamjoingo" style="padding:2px 12px">Join</button> <span id="teamjoinmsg" style="font-size:13px"></span>
-        <br><span class="muted" style="font-size:12px">Needs Google Drive for desktop, signed in. The first time, your browser opens the team folder: click <b>Add shortcut to Drive</b> (or Organize → Add shortcut → My Drive). The app then finds the folder by itself once Google Drive has synced it, and you're in.</span></p>`}`; })():""}
+        <br><span class="muted" style="font-size:12px">Needs Google Drive for desktop, signed in. The first time, your browser opens the team folder: click the <b>▾</b> next to the folder's name at the top → <b>Organise → Add shortcut</b> → <b>My Drive</b> → <b>Add</b>. The app then finds the folder by itself once Google Drive has synced it, and you're in.</span></p>`}`; })():""}
     ${window.se.dataCsv?`<p style="margin:0 0 6px"><label><input type="checkbox" id="csvon" ${await window.se.dataCsv()?"checked":""}> Also keep a CSV copy per car and track (for Excel)</label> <span class="muted" style="font-size:12px">Everything is in the database either way; the CSV is only a copy.</span></p>`:""}
     ${(HH=>HH.length?`<p style="margin:8px 0 4px"><b>Historic</b> <span class="muted" style="font-size:12px">kept, never learned from (older iRacing builds)</span></p>
       <div class="tablewrap"><table style="font-size:12px"><tr><th>Car</th><th>Track</th><th>Stints</th><th>Moved</th><th></th></tr>${HH.map(x=>`<tr><td>${esc(x.carName||x.car)}</td><td>${esc(x.trackName||x.track)}</td><td>${x.n}</td><td>${x.moved?new Date(x.moved).toLocaleDateString():""}</td><td><button class="ghost histback" data-car="${esc(x.car)}" data-track="${esc(String(x.track))}" style="padding:1px 8px">Restore</button></td></tr>`).join("")}</table></div>`:"")(window.se.learnHistInfo?await window.se.learnHistInfo():[])}
@@ -5314,7 +5320,7 @@ async function learnSettings(){
 2. Install Google Drive for desktop and sign in: https://www.google.com/drive/download/
 3. In Setup Engineer: Settings → Learning → Team folder → type your name, paste this team key in Join a team and click Join:
    ${I.key||I.link}
-4. Your browser opens our team folder once: click Add shortcut to Drive. The app finds it and you're in.
+4. Your browser opens our team folder once: click the ▾ next to the folder's name at the top → Organise → Add shortcut → My Drive → Add. The app finds it and you're in.
 
 Then open Team events (left menu): our races are listed there, click Join on the ones you're in.
 Your own data stays on your PC; only what you share goes into the team folder.`;
@@ -5322,10 +5328,10 @@ Your own data stays on your PC; only what you share goes into the team folder.`;
     const tc=$("#teamcreate"); if (tc) tc.onclick=async()=>{ const nm=($("#teamname")||{}).value||""; const d=await window.se.teamCreate(nm.trim()); if (d){ TEAMREF={}; await teamLoadCfg(); await learnSettings(); } };
     const tj=$("#teamjoingo"); if (tj) tj.onclick=async()=>{ const v=$("#teamjoin").value.trim(), m=v.match(/^SE1-([A-Za-z0-9_-]{10,})$/) || v.match(/folders\/([A-Za-z0-9_-]{10,})/), say=t=>{ const e=$("#teamjoinmsg"); if (e) e.innerHTML=t; };
       if (!m){ say('<span class="warn">That isn\'t a team key. It looks like SE1- followed by letters and numbers.</span>'); return; }
-      const id=m[1], done=async d=>{ say('<span class="ok">You\'re in the team.</span>'); TEAMREF={}; await teamLoadCfg(); setTimeout(()=>learnSettings(), 800); };
+      const id=m[1], done=async d=>{ say('<span class="ok">You\'re in the team.</span>'); TEAMREF={}; await teamLoadCfg(); teamHi(); setTimeout(()=>learnSettings(), 800); };
       let d=await window.se.teamFind(id); if (d) return done(d);
       await window.se.teamOpenLink("https://drive.google.com/drive/folders/"+id);
-      say("Your browser opened the team folder: click <b>Add shortcut to Drive</b>. Waiting for Google Drive to sync it…");
+      say("Your browser opened the team folder: click the <b>▾</b> next to its name at the top → <b>Organise → Add shortcut → My Drive → Add</b>. Waiting for Google Drive to sync it…");
       const t0=Date.now(); const poll=async()=>{ d=await window.se.teamFind(id); if (d) return done(d); if (Date.now()-t0<10*60000) setTimeout(poll, 5000); else say('<span class="warn">Not found yet. Check Google Drive for desktop is running and signed in, then click Join again.</span>'); }; setTimeout(poll, 5000); }; }
   const tn=$("#teamname"); if (tn) tn.onchange=async()=>{ await window.se.teamSet({teamDriver:tn.value.trim()}); await teamLoadCfg(); TEAMREF={}; };
   const ta=$("#teamauto"); if (ta) ta.onchange=async()=>{ await window.se.teamSet({teamAuto:ta.checked}); await teamLoadCfg(); };
