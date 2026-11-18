@@ -270,12 +270,12 @@ const PROFILES = {
     limits: [ {test:(p,k)=>k==="camber", min:-4.0, max:0}, {test:(p,k)=>k==="startingpressure", min:159, max:400} ] },
   dallarap217: { name:"Dallara P217 LMP2", manual:"Dallara P217 LMP2 user manual", proto:true,
     wb:3.010, track:1.60, frontRH:5, rearRH:50, rhTol:2.5, wingTarget:17, wingBal:{f:1, r:2},
-    springsKeepRH:false, minPress:152, minSplitter:0, noTrim:true,
+    springsKeepRH:false, minPress:152, minSplitter:0, minFrontStatic:25.0, noTrim:true,
     rhHow:"On this car the front ride height is set with the torsion bar turns and the rear with the spring perch offset; the heave (front) and third (rear) springs change how low it sits at speed without moving the static height.",
     enums: [ {test:(p,k)=>k==="arbbladeposition", values:["P1","P2","P3","P4","P5"]},
       {test:(p,k)=>k==="arbstiffness"||k==="heavespringrate"||k==="thirdspringrate", values:["Soft","Medium","Hard"]},
       {test:(p,k)=>k==="winggurney"||k==="deckgurney", values:["Off","On"]} ],
-    limits: [ {test:(p,k)=>k==="startingpressure", min:152, max:400}, {test:(p,k)=>k==="frontdiveplanes", min:0, max:2} ] },
+    limits: [ {test:(p,k)=>k==="startingpressure", min:152, max:400}, {test:(p,k)=>k==="frontdiveplanes", min:0, max:2}, {test:(p,k)=>k==="rideheight"&&/(left|right)front/.test(p), min:25.0, max:200} ] },
   // Porsche 911 Cup (992.2): no adjustable springs, dampers or bump rubbers; balance comes from the bars, wing, ride height (perch offsets), camber and toe.
   // Ranges here are from the setups you've run; the manual's text couldn't be read, so add exact limits under Targets if you know them.
   porsche9922cup: { name:"Porsche 911 Cup (992.2)", manual:"Porsche Cup 992.2 user manual", cup:true,
@@ -288,7 +288,7 @@ const profileOf = run => PROFILES[run.carPath] || PROFILES._default;
 const SETTINGS_DEF = [
   ["wb","Wheelbase (m)"],["track","Rear track (m)"],["frontRH","Front dynamic RH target (mm)"],
   ["rearRH","Rear dynamic RH target (mm)"],["rhTol","RH tolerance (± mm)"],
-  ["dblMin","Double stint: tread left after stint 1 (%)"],["minPress","Minimum starting pressure (kPa)"],["minSplitter","Minimum front splitter height (mm, tech)"],["hotMin","Hot pressure min (kPa)"],["hotMax","Hot pressure max (kPa)"],["tyreLo","Tyre working window low (°C, garage reading)"],["tyreHi","Tyre working window high (°C, garage reading)"],
+  ["dblMin","Double stint: tread left after stint 1 (%)"],["minPress","Minimum starting pressure (kPa)"],["minSplitter","Minimum front splitter height (mm, tech)"],["minFrontStatic","Minimum front static ride height (mm, tech)"],["hotMin","Hot pressure min (kPa)"],["hotMax","Hot pressure max (kPa)"],["tyreLo","Tyre working window low (°C, garage reading)"],["tyreHi","Tyre working window high (°C, garage reading)"],
   ["toeFMin","Front total toe: lowest the garage allows (mm, this car)"],["toeFMax","Front total toe: highest (mm, this car)"],["toeRMin","Rear toe-in: lowest (mm, this car)"],["toeRMax","Rear toe-in: highest (mm, this car)"],["ratio","Steering ratio (blank = auto)"],
 ];
 let userSettings = {hotMin:179, hotMax:190, ratio:"", dblMin:70, tyreLo:80, tyreHi:95};
@@ -6496,7 +6496,7 @@ function tpSteps(run, base, kind){
   for (const ax of ["Front","Rear"]){ const e=first(spring(ax)); if (!e) continue; const L=lim(e), tb=/TorsionBar/i.test(e.path), re=new RegExp(`${ax}[A-Za-z]*\\.(SpringRate|TorsionBarSize)$`,"i");
     // a spring change moves the static camber and toe with it (the car sits differently, like the ride heights): those don't count as another change
     for (const end of ["min","max"]) S.push({id:`spr${ax}${end}`, block:"Springs", label:tb?`${ax} torsion bars ${end==="min"?"thinnest (softest)":"thickest (stiffest)"}`:`${ax} springs ${end==="min"?"softest":"stiffest"}`, re, kind:end, allow:/Camber|Toe|PerchOffset|SpringPerch|TorsionBarTurns/i,
-      how:tb ? `Both front torsion bars to ${L?`<b>${L[end]}</b>`:`the ${end==="min"?"thinnest":"thickest"} size the garage allows`} (baseline ${esc(bv(e))}): the torsion bar is the front corner spring on this car. Then use the torsion bar turns to put the front ride heights back to the baseline (left click raises it). If the garage says Failed Tech: raising the front back to the baseline also brings the heave spring gap back above zero (it can't be negative), and put the camber back inside the range the garage allows (it turns red when it's outside). Camber, toe and torsion bar turns changed for that still count for this step. Nothing else.`
+      how:tb ? `Both front torsion bars to ${L?`<b>${L[end]}</b>`:`the ${end==="min"?"thinnest":"thickest"} size the garage allows`} (baseline ${esc(bv(e))}): the torsion bar is the front corner spring on this car. Then use the torsion bar turns to put the front ride heights back to the baseline (left click raises it)${(+settingsFor(run).minFrontStatic||0)?`, never below <b>${(+settingsFor(run).minFrontStatic).toFixed(1)} mm</b> (the lowest that passes tech)`:""}. If the garage says Failed Tech: raising the front back to the baseline also brings the heave spring gap back above zero (it can't be negative), and put the camber back inside the range the garage allows (it turns red when it's outside). Camber, toe and torsion bar turns changed for that still count for this step. Nothing else.`
         : `Both ${ax.toLowerCase()} springs to ${L?`<b>${L[end]}</b>`:`the ${end==="min"?"softest":"stiffest"} the garage allows`} (baseline ${esc(bv(e))}). Then use the spring perch offsets to put the static ride heights back to the baseline. Nothing else.`, lim:L?L[end]:null}); }
   if (S.some(s=>/^spr/.test(s.id))){
     S.push({id:"base2", block:"Springs", label:"Baseline check", how:"Back to the baseline setup: shows how much the track and you improved since the start, so it isn't blamed on the springs.", kind:"base"});
@@ -6735,7 +6735,9 @@ function tpSheetRows(run, P, steps){
     else if (isSpr && /Camber|Toe/i.test(key)){ note="moves with the spring: fine; if the garage shows it red (failed tech), bring it back inside the range"; }
     else if (TP_FREE.test(path)){ st="free"; note="your call each stint"; }
     const now=cur[path]!=null?String(cur[path]).trim():null;
-    const off = now!=null && st!=="free" && st!=="adjust" && !(isSpr && /Camber|Toe/i.test(key)) && (st==="set" ? (/RideHeight$/i.test(key) && Number.isFinite(learnNum(now)) && Number.isFinite(learnNum(to)) ? Math.abs(learnNum(now)-learnNum(to))>1 : /^-?\d/.test(to) ? now!==to : /min$/.test(s.kind) ? !(learnNum(now)<learnNum(raw)) : /max$/.test(s.kind) ? !(learnNum(now)>learnNum(raw)) : now===raw) : (/RideHeight$/i.test(key) && Number.isFinite(learnNum(now)) ? Math.abs(learnNum(now)-learnNum(raw))>2 : now!==raw));
+    const minF=+settingsFor(run).minFrontStatic||0, lowF=minF && /(Left|Right)Front\.RideHeight$/i.test(path) && now!=null && learnNum(now)<minF-0.05;
+    if (minF && /(Left|Right)Front\.RideHeight$/i.test(path)) note=(note?note+"; ":"")+`at least ${minF.toFixed(1)} mm or it fails tech${lowF?": raise it with fewer torsion bar turns (left click)":""}`;
+    const off = lowF || now!=null && st!=="free" && st!=="adjust" && !(isSpr && /Camber|Toe/i.test(key)) && (st==="set" ? (/RideHeight$/i.test(key) && Number.isFinite(learnNum(now)) && Number.isFinite(learnNum(to)) ? Math.abs(learnNum(now)-learnNum(to))>1 : /^-?\d/.test(to) ? now!==to : /min$/.test(s.kind) ? !(learnNum(now)<learnNum(raw)) : /max$/.test(s.kind) ? !(learnNum(now)>learnNum(raw)) : now===raw) : (/RideHeight$/i.test(key) && Number.isFinite(learnNum(now)) ? Math.abs(learnNum(now)-learnNum(raw))>2 : now!==raw));
     const sd=path.match(/(Left|Right)(Front|Rear)/), label=sd?`${sd[1][0]}${sd[2][0]} ${pretty(key).toLowerCase()}`:learnLabel(path);
     return {label, path, parts:path.split("."), key, raw, to, st, note, now, off}; });
   const set=rows.filter(r=>r.st==="set"), keepN=rows.filter(r=>r.st==="keep").length, off=rows.filter(r=>r.off && !/RideHeight$/i.test(r.key)), offRH=rows.filter(r=>r.off && /RideHeight$/i.test(r.key));
