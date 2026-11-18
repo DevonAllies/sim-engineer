@@ -6259,9 +6259,10 @@ function tpStatus(run, P){
         else if (s.kind==="max") ok=Number.isFinite(learnNum(s.lim)) ? ch.every(c=>Math.abs(c.to-learnNum(s.lim))<1e-6) : ch.every(c=>c.to>c.from);
         else if (/^w/.test(s.kind)){ const to=c.to, from=c.from, L=learnNum(s.lim), isMin=Number.isFinite(L)&&s.kind==="wmin"?Math.abs(to-L)<1e-6:Math.abs(to-wLo)<1e-6&&to<from, isMax=Number.isFinite(L)&&s.kind==="wmax"?Math.abs(to-L)<1e-6:Math.abs(to-wHi)<1e-6&&to>from;
           ok = s.kind==="wmin" ? isMin : s.kind==="wmax" ? isMax : s.kind==="wless" ? to<from && !isMin : to>from && !isMax; }
-        else if (s.kind==="between") ok = s.combo && s.combo.done ? s.combo.any && ch.every(c=>{ const a=/Front/.test(c.k)?"Front":/Rear/.test(c.k)?"Rear":null; if (!a) return false; if (/SpringRate$/i.test(c.k)){ const cc=s.combo[a]; return cc && Math.abs(c.to-cc.v)<1e-6; } const cc=s.combo[a+"Arb"]; return cc && cc.key===c.k && Math.abs(c.to-learnNum(cc.raw))<1e-6; })
-            && s.combo.items.every(cc=>(cc.v!==undefined ? cc.v===cc.base : cc.raw===cc.baseRaw) || ch.some(c=>cc.v!==undefined ? (/SpringRate$/i.test(c.k) && c.k.includes(cc.label.split(" ")[0])) : c.k===cc.key))
-          : !steps.filter(q=>q.kind==="min"||q.kind==="max").some(q=>q.stints&&q.stints.some(x=>x.id===r.id));
+        // the combination: any stint after the sweeps that changes only these settings (and isn't another step's); the values you ran become the baseline
+        else if (s.kind==="between"){ const grp=s.id==="arbApp"?/^arb(Front|Rear)/:/^spr(Front|Rear)/, lastSweep=Math.max(0, ...steps.filter(q=>grp.test(q.id)).map(q=>{ let n=0; for (const x of q.stints){ n+=x.laps||0; if (n>=q.laps) return x.date; } return q.stints.length?q.stints[q.stints.length-1].date:0; }));
+          // (a sweep step that already had its laps before this stint doesn't keep it from the combination, which may run the same value)
+          ok = r.date>lastSweep && !steps.some(q=>q!==s && q.kind!=="between" && q.stints && q.stints.some(x=>x.id===r.id) && !(/^(min|max|less|more)$/.test(q.kind) && q.stints.filter(x=>x.date<r.date).reduce((a,x)=>a+(x.laps||0),0)>=q.laps)); }
         else { const d=s.e0?dirFor(run,s.e0):1, need=Math.max(1,s.amount-1); ok=ch.every(c=>(c.to-c.from)*d*(s.kind==="less"?-1:1)>=need-1e-6); } }
       if (ok && !used.has(r.id+s.id)){ s.stints.push(r); used.add(r.id+s.id); } }
     s.done=s.stints.reduce((a,r)=>a+(r.laps||0),0);
@@ -6271,7 +6272,7 @@ function tpStatus(run, P){
     const m = mv===false && s.stints.some(r=>r.date>mAt) && s.stints.filter(r=>r.date>mAt).reduce((a,r)=>a+(r.laps||0),0)>=s.laps ? undefined : mv;
     s.complete = m===true || (m!==false && s.done>=s.laps); s.manual=m;
     // the springs and bars you ran on this step (and the ride heights, camber and toe that came with them) carry on as the baseline
-    if (s.kind==="between" && s.complete && s.stints.length){ const last=s.stints[s.stints.length-1], cs=last.setup||{}; curBase=Object.assign({}, P.base);
+    if (s.kind==="between" && s.complete && s.stints.length){ const last=s.stints[s.stints.length-1], cs=last.setup||{}; curBase=Object.assign({}, curBase);
       for (const [k,v] of Object.entries(cs)) if ((s.re && s.re.test(learnNorm(k))) || /RideHeight|PerchOffset|SpringPerch|Camber|Toe/i.test(k)) curBase[k]=v;
       after=last.date; s.setsBase=true; } }
   // near misses: a stint that made this step's change, but changed other things too (so it can't tell what the step did).
@@ -6299,6 +6300,24 @@ function tpAppSpring(run){ const out=new Map(); if (!run || !run.sug) return out
   run.sug.forEach((s,i)=>{ const o=s.opts[sel[i]!=null && sel[i]>=0 ? sel[i] : 0]; if (!o) return;
     for (const c of o.ch) if (/SpringRate$/i.test(c.e.path) && !out.has(c.e.path)) out.set(c.e.path.replace(/^CarSetup./,""), {c, title:s.title}); });
   return out; }
+const TP_SCORE_PARTS = {lap:"lap time", cons:"consistency", bal:"balance nearer a touch of understeer", slides:"fewer slides", rubber:"less time on the bump rubbers", tyres:"tyres nearer their window"};
+function tpScore(L, run){
+  const W=(f)=>{ let s=0,n=0; for (const r of L){ const v=f(r), w=r.laps||1; if (Number.isFinite(v)){ s+=v*w; n+=w; } } return n?s/n:NaN; };
+  const tw=run && run.A && run.A.tw, out={};
+  out.lap = W(r=>r.med);
+  out.cons = 0.5*(W(r=>r.sd)||0);
+  { const d=["entry","mid","exit"].map(k=>W(r=>r.bal&&r.bal[k])).filter(Number.isFinite).map(u=>Math.abs(u-0.3)); out.bal = d.length ? 0.15*d.reduce((a,b)=>a+b,0)/d.length : 0; }
+  out.slides = 0.05*((W(r=>r.slides)||0) + (W(r=>r.susp&&r.susp.kerbSlides)||0));
+  out.rubber = 0.003*(Math.max(0, (W(r=>r.aero&&r.aero.onF)||0)*100-50) + Math.max(0, (W(r=>r.aero&&r.aero.onR)||0)*100-50));
+  out.tyres = tw && Number.isFinite(tw.lo) && Number.isFinite(tw.hi) ? 0.01*["F","R"].map(a=>{ const v=W(r=>r.tyreT&&r.tyreT[a]); return Number.isFinite(v) ? Math.max(0, tw.lo-v, v-tw.hi) : 0; }).reduce((a,b)=>a+b,0) : 0;
+  out.total = Number.isFinite(out.lap) ? Object.entries(out).filter(([k])=>k!=="total").reduce((a,[,v])=>a+(Number.isFinite(v)?v:0),0) : NaN;
+  return out; }
+// why one choice beat another, in words: the parts that made the difference, for and against
+function tpScoreWhy(win, lose){
+  const d=Object.keys(TP_SCORE_PARTS).map(k=>({k, d:(lose[k]||0)-(win[k]||0)})).filter(x=>Math.abs(x.d)>=0.03).sort((a,b)=>Math.abs(b.d)-Math.abs(a.d));
+  const pro=d.filter(x=>x.d>0).map(x=>x.k==="lap"?`${x.d.toFixed(2)} s a lap quicker`:`${TP_SCORE_PARTS[x.k]} (worth ${x.d.toFixed(2)} s)`);
+  const con=d.filter(x=>x.d<0).map(x=>x.k==="lap"?`${(-x.d).toFixed(2)} s a lap slower`:`${TP_SCORE_PARTS[x.k].replace(/^fewer/,"more").replace(/^less/,"more").replace(/nearer/,"further from")} (costs ${(-x.d).toFixed(2)} s)`);
+  return `${pro.join(", ")||"marginally better overall"}${con.length?`; against it: ${con.join(", ")}`:""}`; }
 function tpCombo(run, steps, P, what){
   const W=(L,f)=>{ let s=0,n=0; for (const r of L){ const v=f(r), w=r.laps||1; if (Number.isFinite(v)){ s+=v*w; n+=w; } } return n?s/n:NaN; };
   const hrsApart=(A,B)=>Math.abs(W(A,r=>r.date)-W(B,r=>r.date))/3.6e6, out={any:false, done:0, items:[]};
@@ -6310,12 +6329,12 @@ function tpCombo(run, steps, P, what){
       if (bk){ const bv=learnNum(P.base[bk]), unit=String(P.base[bk]).replace(/^[-\d.\s]+/,"").trim(); let v=bv, why, done=false;
         if (!lo || !hi || !lo.stints.length || !hi.stints.length) why=`${ax.toLowerCase()} spring sweep not finished: baseline ${bv}`;
         else { done=true; const lv=median(lo.stints.map(r=>learnNum(r.setup&&r.setup[bk])).filter(Number.isFinite)), hv=median(hi.stints.map(r=>learnNum(r.setup&&r.setup[bk])).filter(Number.isFinite));
-          const dl=W(hi.stints,r=>r.med)-W(lo.stints,r=>r.med), gap=hrsApart(hi.stints,lo.stints);
-          if (!Number.isFinite(dl) || Math.abs(dl)<0.1) why=`${ax.toLowerCase()} springs ${lv} and ${hv} within 0.1 s: baseline ${bv}`;
+          const SL=tpScore(lo.stints,run), SH=tpScore(hi.stints,run), dl=SH.total-SL.total, gap=hrsApart(hi.stints,lo.stints);
+          if (!Number.isFinite(dl) || Math.abs(dl)<0.1) why=`${ax.toLowerCase()} springs ${lv} and ${hv} score within 0.1 s of each other (pace, balance, slides, platform and tyres together): baseline ${bv}`;
           else { const fast=dl<0?hv:lv, vals=[...new Set(Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.setup && r.setup[bk]).map(r=>learnNum(r.setup[bk])).filter(Number.isFinite))].sort((a,b)=>a-b);
             let st=Infinity; for (let i=1;i<vals.length;i++) st=Math.min(st, vals[i]-vals[i-1]); if (!Number.isFinite(st) || st<=0) st=10;
             v=bv+Math.round(((fast-bv)/2)/st)*st; if (v===bv) v=bv+Math.sign(fast-bv)*st;
-            why=`${ax.toLowerCase()} springs: ${dl<0?"stiff":"soft"} end (${fast}) ${Math.abs(dl).toFixed(2)} s quicker${gap>=1?` (${gap.toFixed(1)} h apart)`:""}, so halfway: ${v}`; } }
+            why=`${ax.toLowerCase()} springs: the ${dl<0?"stiff":"soft"} end (${fast}) scores better: ${tpScoreWhy(dl<0?SH:SL, dl<0?SL:SH)}${gap>=1?` (driven ${gap.toFixed(1)} h apart)`:""}; so halfway: ${v}`; } }
         out[ax]={v, base:bv, unit, why, done, label:`${ax} springs`}; out.items.push(out[ax]); if (done) out.done++; if (v!==bv) out.any=true; } }
     // bars
     if (what!=="springs"){ const so=steps.find(x=>x.id===`arb${ax}Soft`), st=steps.find(x=>x.id===`arb${ax}`), re=(st||so||{}).re;
@@ -6327,13 +6346,11 @@ function tpCombo(run, steps, P, what){
         const B={w:"baseline", raw:braw, med:W(baseStints2,r=>r.med), mid:W(baseStints2,r=>r.bal&&r.bal.mid), L:baseStints2};
         if (!ends.length) why=`${ax.toLowerCase()} bar not tested yet: baseline ${braw}`;
         else { done=true;
-          if (ends.length===2){ const [a,b]=ends, dl=b.med-a.med;
-            if (Number.isFinite(dl) && Math.abs(dl)>=0.1){ const q=dl<0?b:a; raw=q.raw; why=`${ax.toLowerCase()} bar: ${q.w} (${q.raw}) ${Math.abs(dl).toFixed(2)} s quicker than the other side${hrsApart(a.L,b.L)>=1?` (${hrsApart(a.L,b.L).toFixed(1)} h apart)`:""}`; }
-            else { const c=[B,...ends].filter(x=>Number.isFinite(x.mid)).sort((x,y)=>Math.abs(x.mid-0.3)-Math.abs(y.mid-0.3))[0];
-              if (c){ raw=c.raw; why=`${ax.toLowerCase()} bar: no lap time between the sides, ${c.w==="baseline"?"the baseline":c.w} (${c.raw}) gives the mid-corner balance nearest a touch of understeer (${c.mid>=0?"+":"−"}${Math.abs(c.mid).toFixed(1)}°)`; } else why=`${ax.toLowerCase()} bar: no lap time between the sides: baseline ${braw}`; } }
-          else { const e=ends[0], dl=e.med-B.med, gap=hrsApart(e.L,B.L);
-            if (Number.isFinite(dl) && dl<=-0.1 && gap<1){ raw=e.raw; why=`${ax.toLowerCase()} bar: ${e.w} (${e.raw}) ${Math.abs(dl).toFixed(2)} s quicker than the baseline`; }
-            else why=`${ax.toLowerCase()} bar: only the ${e.w} side driven${gap>=1?`, too long after the baseline to compare`:", not quicker"}: baseline ${braw}`; } }
+          const C=[B, ...ends].filter(x=>x.L && x.L.length).map(x=>Object.assign(x, {S:tpScore(x.L, run)})).filter(x=>Number.isFinite(x.S.total)).sort((x,y)=>x.S.total-y.S.total);
+          const best=C[0], base=C.find(x=>x.w==="baseline");
+          if (!best) why=`${ax.toLowerCase()} bar: not enough data: baseline ${braw}`;
+          else if (best.w==="baseline" || !base || base.S.total-best.S.total<0.1) why=`${ax.toLowerCase()} bar: ${best.w==="baseline"?"the baseline scores best":`${best.w} is within 0.1 s of the baseline overall`} (pace, balance, slides and tyres together): stays at ${braw}`;
+          else { raw=best.raw; const gap=hrsApart(best.L, base.L); why=`${ax.toLowerCase()} bar: ${best.w} (${best.raw}) scores best: ${tpScoreWhy(best.S, base.S)} against the baseline${gap>=1?` (driven ${gap.toFixed(1)} h apart)`:""}`; } }
         out[ax+"Arb"]={raw, baseRaw:braw, why, done, key:learnNorm(bk), label:`${ax} bar`}; out.items.push(out[ax+"Arb"]); if (done) out.done++; if (raw!==braw) out.any=true; } } }
   return out; }
 function tpTarget(run, s, path, baseRaw){
