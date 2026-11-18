@@ -2518,10 +2518,10 @@ function evCarId(name){ const known={}; for (const r of Object.values(LEARN||{})
 function evTrackId(name){ const base=String(name).split(/ - | \(/)[0]; let best=null; for (const r of Object.values(LEARN||{})) if (r.track && r.trackName && evNameMatch(base, r.trackName)) { best=r.track; if (evNameMatch(name, r.trackName)) break; } return best; }
 // a schedule week's length: hours, minutes or laps
 let EV_SCHED_ALL=false, EV_SCHED_Q="";
-function evSchedList(){ if (!SCHED){ schedLoad(); return []; } const out=[], from=Date.now()-7*864e5, to=Date.now()+56*864e5, mine=new Set(schedMine().map(s=>s.name)), q=evNorm(EV_SCHED_Q);
+function evSchedList(){ if (!SCHED){ schedLoad(); return []; } const q=evNorm(EV_SCHED_Q), wide=!!q || EV_SCHED_ALL, out=[], from=Date.now()-6*864e5, to=Date.now()+(wide?56:14)*864e5;
   for (const s of SCHED.series||[]) for (const w of s.weeks||[]){ const t0=Date.parse(w.start+"T00:00:00Z"); if (!(t0>=from && t0<=to)) continue;
     const long=(evLen(w.length).hours||0)>=1.5;
-    if (q){ if (!evNorm(s.name+" "+w.track+" "+s.cars).includes(q)) continue; } else if (!EV_SCHED_ALL && !mine.has(s.name) && !long) continue;
+    if (q){ if (!evNorm(s.name+" "+w.track+" "+s.cars).includes(q)) continue; } else if (!EV_SCHED_ALL && !long) continue;
     out.push({series:s.name, cars:String(s.cars||"").split(/,\s*/).filter(Boolean), week:w.week, date:w.start, track:w.track, length:w.length||""}); }
   return out.sort((a,b)=>a.date.localeCompare(b.date) || a.series.localeCompare(b.series)).slice(0,300); }
 function evLen(s){ s=String(s||""); const h=s.match(/([\d.]+)\s*(h|hour)/i), m=s.match(/(\d+)\s*min/i), l=s.match(/(\d+)\s*lap/i); return {hours: h?+h[1]:m?+m[1]/60:0, laps: l&&!h&&!m?+l[1]:0}; }
@@ -2592,7 +2592,7 @@ async function renderEvents(){
       ${EV_SRC==="schedule" ? (()=>{ const list=evSchedList(); return list.length ? `<div class="row" style="gap:10px;flex-wrap:wrap;align-items:center;font-size:13px">Race <select id="evsched" style="max-width:560px">${list.map((x,i)=>`<option value="${i}"${EV_FORM.sched==i?" selected":""}>${esc(x.date)} · ${esc(x.track)} · ${esc(x.series)}${x.length?` · ${esc(x.length)}`:""}</option>`).join("")}</select>
           Car <select id="evschedcar">${(list[+EV_FORM.sched||0]||list[0]).cars.map(c=>`<option${EV_FORM.car===c?" selected":""}>${esc(c)}</option>`).join("")}</select>
           <button id="evcreate" style="padding:3px 12px">Start the event</button></div>
-        <p class="muted" style="font-size:12px;margin:6px 0 0">The next 8 weeks: the series you follow (Schedule page) and every race of 1½ hours or more from any series${EV_SCHED_ALL?" (now: every series)":""}. Type to find any series, track or car. The name, date, track and length come from the schedule.</p>`
+        <p class="muted" style="font-size:12px;margin:6px 0 0">${EV_SCHED_Q||EV_SCHED_ALL?"The next 8 weeks, every series and length.":"Endurance races (1½ hours or more) in the next two weeks, from any series. Tick show every series, or type to find any series, track or car in the next 8 weeks."} The name, date, track and length come from the schedule.</p>`
         : `<p class="muted" style="font-size:13px">${EV_SCHED_Q?"Nothing in the next 8 weeks matches that.":"No schedule loaded yet. Open the Schedule page once, or enter the race yourself."}</p>`; })()
       : `<div class="row" style="gap:10px;flex-wrap:wrap;align-items:center;font-size:13px">Name <input id="evname" value="${esc(EV_FORM.name||"")}" placeholder="e.g. League round 3" style="width:170px">
         Car and track <select id="evcombo">${combos.map((c,i)=>`<option value="${i}"${EV_FORM.combo==i?" selected":""}>${esc(c.carName)} · ${esc(c.trackName)}</option>`).join("")}<option value="type"${EV_FORM.combo==="type"?" selected":""}>Type the car and track…</option></select>
