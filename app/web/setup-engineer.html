@@ -2979,7 +2979,7 @@ function render(){
   run.ratio=A.ratio; run.ysgn=A.ysgn;
   if (A.error){ run.sug=null; renderNav(); showPanels(); out.innerHTML=`<section><h2>${esc(run.short)}</h2><p>${run.live && !run.ended ? "Live stint started. The analysis appears after your first full lap (the out lap is only used to calibrate)." : A.error}</p></section>`;
     // the programme works from the car and its setup alone: start one, or see where it stands, before a full lap
-    if (view==="programme" && run.setupFlat && run.setupFlat.length){ try { out.innerHTML+=testProgHTML(run); wireProg(run); } catch(x){ console.error("programme", x); } }
+    if (view==="programme" && run.setupFlat && run.setupFlat.length){ try { PROG_RUN=progRun(run); out.innerHTML+=testProgHTML(PROG_RUN); wireProg(PROG_RUN); } catch(x){ console.error("programme", x); } }
     return; }
   syncInCar(run);
   if (!A.bottom) A.bottom = bottoming(run, A);          // where the car touches down
@@ -3031,7 +3031,7 @@ function render(){
       + hannaHTML(run, A) + wearModelHTML(run, A, S) + areaCards("fuel"),
     ffb: () => ffbHTML(run, A) + safe(()=>inputsHTML(run, A, S),"inputs"),
     guide: () => guideHTML(run),
-    programme: () => safe(()=>testProgHTML(run),"testProg"),
+    programme: () => safe(()=>{ PROG_RUN=progRun(run); return (PROG_RUN!==run?`<p class="muted" style="margin:0 0 8px;font-size:13px">Showing the car you're live in: <b>${esc(PROG_RUN.carName)}</b> at <b>${esc(((PROG_RUN.info.WeekendInfo||{}).TrackDisplayName)||"")}</b>, from its garage setup.</p>`:"") + testProgHTML(PROG_RUN); },"testProg"),
     learn: () => learnHTML(run) + safe(()=>setupModelHTML(run),"setupModel") + safe(()=>testNextHTML(run, A),"testNext"),
     dampers: () => (Object.keys(A.damp||{}).length?`<section><h2>Dampers <small>shock speed histograms, all laps used · right = compression (bump), left = extension (rebound)</small></h2>
    <div class="dampgrid">${["LF","RF","LR","RR"].filter(c=>A.damp[c]).map(c=>`<div><b>${c}</b><canvas id="dh${c}"></canvas></div>`).join("")}</div>
@@ -3059,7 +3059,7 @@ function render(){
   { const es=$("#endupit"); if (es) es.onchange=()=>{ RACE.pitLoss=+es.value||60; PREFS.set("race", RACE); rerender(); }; }
   document.querySelectorAll(".mrange").forEach(s=>s.onchange=()=>{ const R=modelRange(); R[s.dataset.k]=s.value; try { PREFS.set("modelRange", R); } catch(e){}
     runs.forEach(r=>{ if (r.A) r.A.tw=null; }); rerender(); });   // the measured tyre window follows the range too
-  wireProg(run);
+  wireProg(view==="programme" && PROG_RUN ? PROG_RUN : run);
   for (const [id,key] of [["lctarget","lcTarget"],["tyreloss","tyreLoss"],["racestart","startH"]]){ const el=$("#"+id); if (el) el.onchange=()=>{ RACE[key]=el.value===""?"":+el.value; PREFS.set("race", RACE); rerender(); }; }
   if (view==="aero" && A.rh) drawRH(run,A,S);
   if (view==="laps") drawTrace(run,A);
@@ -6686,7 +6686,7 @@ function tpBaseHTML(run, P, steps){
 // what the Test step overlay shows: the step, what to change, the live garage check, and the baseline
 function tpOverlayData(){
   const w=liveWhere(); let run=runs[current];
-  if (w && w.car){ const m=runs.filter(r=>liveMatches(r,w)); if (m.length){ if (!run || !m.includes(run)) run=m[m.length-1]; } else return {none:`No stint at ${w.trackDisplay||"this track"} in this car open yet: drive a lap or open one.`}; }
+  if (w && w.car){ const m=runs.filter(r=>liveMatches(r,w)); if (m.length){ if (!run || !m.includes(run)) run=m[m.length-1]; } else run=progRun(run); }
   if (!run || !run.setupFlat) return {none:"Open a stint in Setup Engineer."};
   tpMigrate(run); const CPo=PREFS.get(tpKeyOf(run,"car")), kindO = CPo && CPo.track===learnTrackOf(run) && !CPo.state && !tpStatus(run,CPo).every(s=>s.complete) ? "car" : "track", P=PREFS.get(tpKeyOf(run,kindO));
   if (!P) return {none:`No car programme or track check running for the ${run.carName} at ${((run.info.WeekendInfo||{}).TrackDisplayName)||"this track"}. Start one on the Test programme tab.`};
@@ -6904,7 +6904,7 @@ function testProgHTML(run){
     ${kind==="car"
       ? `<p style="margin:4px 0">Like an F1 test: drive it once, at one track. A baseline, then each spring, damper and anti-roll bar change on its own, with exactly what to set and how many clean laps; each step ticks itself off when a stint with only that change comes in. What it learns about the car is used at every track. Pick a track with every kind of corner (slow, medium and fast), a smooth surface and few kerbs you need to use: F1 tested at Barcelona for that reason.</p>`
       : `<p style="margin:4px 0">The short check at each new track: a baseline, then the wing at its lowest, a bit lower, a bit higher and its highest. The wing is the one trade-off that changes with the track (straights against fast corners). Springs, dampers and bars come from the car programme${CP?` (driven at ${esc(cTrack)})`:""}.</p>`}
-    ${away?"":`<button id="tpstart">Start the ${kind==="car"?"car programme":"track check"} for the ${esc(run.carName)} here at ${esc(trk)}, with this stint's setup as the baseline</button>`}${(()=>{ try { return knowHTML(run); } catch(e){ return ""; } })()}</section>`;
+    ${away?"":`<button id="tpstart">Start the ${kind==="car"?"car programme":"track check"} for the ${esc(run.carName)} here at ${esc(trk)}, with ${run.garageOnly?"the setup in your garage":"this stint's setup"} as the baseline</button>`}${(()=>{ try { return knowHTML(run); } catch(e){ return ""; } })()}</section>`;
   if (kind==="car" && P.track && P.track!==hereT){ const st0=tpStatus(run,P), d0=st0.filter(s=>s.complete).length;
     return `<section><h2>Car programme <small>${esc(run.carName)} · at ${esc(cTrack)} · ${d0} of ${st0.length} done</small></h2>${kindBar}
       <div class="sugg p2" style="margin:0 0 10px"><h3>The car programme runs at ${esc(cTrack)}</h3><p style="margin:4px 0 0">Its baseline and every step are measured there, so stints here at ${esc(trk)} don't count for it (they still teach the models). Open or drive a stint at ${esc(cTrack)} to carry on. Here, use the Track check.</p></div>
@@ -7866,7 +7866,7 @@ async function liveMeta(){
   if (R && !R.ended && R.gen===g && cs && String(cs.UpdateCount)!==String((R.info.CarSetup||{}).UpdateCount)){
     R.info=Object.assign({}, R.info, {CarSetup:cs}); R.setupFlat=flatten(cs, "CarSetup");
     R.startTyreSig=JSON.stringify(yamlTyres(R.setupFlat)); R.startWearSig=JSON.stringify(wearFromFlat(R.setupFlat)); R.A=null; scheduleRender(false); }
-  { const gs=JSON.stringify((meta.info.CarSetup||{})); if (gs!==LIVE.garageSig){ LIVE.garageSig=gs; if (view==="programme") scheduleRender(false); else publishProg(); } }
+  { const gs=JSON.stringify((meta.info.CarSetup||{})), w0=liveWhere(), cs=w0?w0.car+"|"+w0.track:""; if (gs!==LIVE.garageSig || cs!==LIVE.carSig){ LIVE.garageSig=gs; LIVE.carSig=cs; if (view==="programme") scheduleRender(false); else publishProg(); } }
   if (LIVE.run && LIVE.run.ended){ const ef=flatten(meta.info.CarSetup||{}, "CarSetup"), sig=JSON.stringify(ef.map(e=>e.path+"="+e.raw));
     if (sig!==LIVE.run.endSig){ LIVE.run.endSig=sig; LIVE.run.endFlat=ef; LIVE.run.A=null; scheduleRender(false); } }   // only when the garage reading actually changed
 }
@@ -7881,6 +7881,14 @@ function liveWhere(){
 // is this run in the car and at the track you're live in?
 const liveMatches = (run, w) => !!(run && w && run.carPath===w.car && learnTrackOf(run)===w.track);
 // the auto-opened recording is from another track (or car) than the one you're live at: say so in the track sections
+let PROG_RUN=null;
+function progRun(run){
+  const w=liveWhere(); if (!LIVE.connected || !w || !w.car || !LIVE.meta || !LIVE.meta.info || !LIVE.meta.info.CarSetup) return run;
+  if (run && liveMatches(run, w)) return run;
+  const m=runs.filter(r=>liveMatches(r, w)); if (m.length) return m[m.length-1];
+  const sig=w.car+"|"+w.track+"|"+(LIVE.garageSig||"");
+  if (!LIVE.progRun || LIVE.progRun._sig!==sig) LIVE.progRun={name:"live garage", _sig:sig, carPath:w.car, carName:w.carName, info:LIVE.meta.info, setupFlat:flatten(LIVE.meta.info.CarSetup, "CarSetup"), live:true, garageOnly:true, short:`Live ${w.trackDisplay} (garage)`, ch:{}, n:0, tick:60};
+  return LIVE.progRun; }
 function liveElsewhereHTML(run){
   const w=liveWhere(); if (!w || !w.car || !run || run.live || liveMatches(run, w)) return "";
   const here=((run.info.WeekendInfo||{}).TrackDisplayName)||"another track";
