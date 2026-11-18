@@ -6213,6 +6213,11 @@ function tpSteps(run, base, kind){
   if (S.some(s=>/^spr/.test(s.id))){
     S.push({id:"base2", block:"Springs", label:"Baseline check", how:"Back to the baseline setup: shows how much the track and you improved since the start, so it isn't blamed on the springs.", kind:"base"});
     S.push({id:"sprApp", block:"Springs", label:"Springs: the best of both sweeps", how:"Drive both spring sweeps first: this step then puts the best front and rear springs together.", kind:"between", re:/SpringRate$/i}); }
+  // then the ride height (rake) on those springs: the rear a few mm lower and higher, then the better one
+  if (ent(/(Left|Right)Rear\.RideHeight$|\.Rear[A-Za-z]*\.RideHeight$/i).length){ const re=/Rear[A-Za-z]*\.RideHeight$/i;
+    S.push({id:"rhRearLow", block:"Ride height", label:"Rear ride height 3 mm lower", re, kind:"rhlow", how:"Rear ride height about <b>3 mm lower</b> on both sides, from the baseline as it is now (the garage sheet below has the numbers), with the rear perch offsets or ride-height adjusters; within 1 mm is fine. The front stays where it is. Less rake: usually less front downforce and a steadier car at high speed. Nothing else."});
+    S.push({id:"rhRearHigh", block:"Ride height", label:"Rear ride height 3 mm higher", re, kind:"rhhigh", how:"Rear ride height about <b>3 mm higher</b> on both sides, from the baseline as it is now, within 1 mm. The front stays where it is. More rake: usually more front downforce and a sharper car in fast corners. Nothing else."});
+    S.push({id:"rhApp", block:"Ride height", label:"Ride height: the best rake", re, kind:"between", how:"Drive both ride-height steps first: this step then sets the rear to the better height, on the springs you're running."}); }
   // then the anti-roll bars, the main balance tool, on the new springs: one step softer and one step stiffer on each axle
   const ARB_RE=ax=>new RegExp(`${ax}[A-Za-z]*\\.(Arb|ArbBlades|ArbSetting|ArbSize|AntiRollBar)|${ax}Brakes[A-Za-z]*\\.Arb`,"i");
   for (const ax of ["Front","Rear"]){ const e=arbE(ax); if (!e) continue; const eb=Object.assign({}, e, {raw:bv(e)});
@@ -6245,15 +6250,21 @@ function tpStatus(run, P){
   const lows=[...new Set(wingOnly.filter(x=>x.ch[0].to<x.ch[0].from).map(x=>x.ch[0].to))], highs=[...new Set(wingOnly.filter(x=>x.ch[0].to>x.ch[0].from).map(x=>x.ch[0].to))];
   const wLo=lows.length>=2?Math.min(...lows):NaN, wHi=highs.length>=2?Math.max(...highs):NaN;
   let curBase=P.base, after=0;
+  const rhOf=(o,ax)=>{ const v=Object.entries(o||{}).filter(([k])=>new RegExp(`(Left|Right)${ax}\\.RideHeight$|\\.${ax}[A-Za-z]*\\.RideHeight$`).test(k)).map(([,v])=>learnNum(v)).filter(Number.isFinite); return v.length?mean(v):NaN; };
   for (const s of steps){ s.stints=[]; s.base=curBase; s.after=after;
-    if (s.kind==="between"){ s.combo=tpCombo(run, steps, P, s.id==="arbApp"?"bars":"springs"); const C=s.combo;
+    if (s.kind==="between"){ s.combo=tpCombo(run, steps, P, s.id==="arbApp"?"bars":s.id==="rhApp"?"rh":"springs"); const C=s.combo;
       if (C.done){
-        const val=c=>c.v!==undefined ? `${c.v} ${c.unit}` : c.raw, chg=C.items.filter(c=>c.v!==undefined ? c.v!==c.base : c.raw!==c.baseRaw);
+        const val=c=>c.v!==undefined ? `${c.unit==="mm"?fmt(c.v,1):c.v} ${c.unit}` : c.raw, chg=C.items.filter(c=>c.v!==undefined ? c.v!==c.base : c.raw!==c.baseRaw);
         s.how = C.any ? `${C.items.map(c=>`${c.label} <b>${esc(val(c))}</b>${(c.v!==undefined?c.v!==c.base:c.raw!==c.baseRaw)?"":" (baseline)"}`).join(", ")}, all together. Why: ${C.items.map(c=>esc(c.why)).join("; ")}. ${s.id==="sprApp"?" Ride heights back near the baseline with the perch offsets.":""} Nothing else. This checks they work together, not just each on its own; once driven, it's the baseline for the steps after it.`
           : `The sweeps say the baseline springs and bars are right (${C.items.map(c=>esc(c.why)).join("; ")}), so there's nothing to test: tick this step to skip it.`; } }
-    for (const r of recs){ if (s.after && r.date<=s.after) continue; const ch=tpChanged(s.base, r.setup).filter(c=>!(s.allow && s.allow.test(c.k)));
-      let ok=false;
-      if (s.kind==="base") ok=!ch.length && (s.id==="base" || (firstChange && r.date>firstChange.date));
+    for (const r of recs){ if (s.after && r.date<=s.after) continue;
+      // a combination step takes the stints it needs and no more: later stints on the same setup belong to the steps after it
+      if (s.kind==="between" && s.stints.reduce((x,q)=>x+(q.laps||0),0)>=s.laps) break; const ch=tpChanged(s.base, r.setup).filter(c=>!(s.allow && s.allow.test(c.k)));
+      let ok=false; const dF=rhOf(r.setup,"Front")-rhOf(s.base,"Front"), dR=rhOf(r.setup,"Rear")-rhOf(s.base,"Rear"), rhSame=!s.after || (!(Math.abs(dF)>=2) && !(Math.abs(dR)>=2));   // (after the ride-height step, a baseline check needs the heights too)
+      if (s.kind==="base") ok=!ch.length && rhSame && (s.id==="base" || (firstChange && r.date>firstChange.date));
+      else if (s.kind==="rhlow" || s.kind==="rhhigh") ok=!ch.length && Math.abs(dF)<=1 && (s.kind==="rhlow" ? dR<=-2 : dR>=2);
+      else if (s.id==="rhApp"){ const lastSweep=Math.max(0, ...steps.filter(q=>/^rhRear/.test(q.id)).map(q=>{ let n=0; for (const x of q.stints){ n+=x.laps||0; if (n>=q.laps) return x.date; } return q.stints.length?q.stints[q.stints.length-1].date:0; }));
+        const C=s.combo&&s.combo.RearRH; ok=!ch.length && r.date>lastSweep && Math.abs(dF)<=1 && !!C && Math.abs(rhOf(r.setup,"Rear")-C.v)<=1 && Math.abs(C.v-C.base)>=1; }
       else if (ch.length && ch.every(c=>s.re.test(c.k))){ const c=ch[0];
         if (s.kind==="min") ok=Number.isFinite(learnNum(s.lim)) ? ch.every(c=>Math.abs(c.to-learnNum(s.lim))<1e-6) : ch.every(c=>c.to<c.from);
         else if (s.kind==="max") ok=Number.isFinite(learnNum(s.lim)) ? ch.every(c=>Math.abs(c.to-learnNum(s.lim))<1e-6) : ch.every(c=>c.to>c.from);
@@ -6323,6 +6334,17 @@ function tpCombo(run, steps, P, what){
   const hrsApart=(A,B)=>Math.abs(W(A,r=>r.date)-W(B,r=>r.date))/3.6e6, out={any:false, done:0, items:[]};
   const baseStints=steps.filter(x=>x.kind==="base").flatMap(x=>x.stints);
   for (const ax of ["Front","Rear"]){
+    if (what==="rh"){ if (ax!=="Rear") continue;
+      const lo=steps.find(x=>x.id==="rhRearLow"), hi=steps.find(x=>x.id==="rhRearHigh"), sb=((lo||hi)||{}).base||P.base;
+      const rv=o=>{ const v=Object.entries(o||{}).filter(([k])=>/(Left|Right)Rear\.RideHeight$|\.Rear[A-Za-z]*\.RideHeight$/.test(k)).map(([,v])=>learnNum(v)).filter(Number.isFinite); return v.length?mean(v):NaN; };
+      const bR=rv(sb), setter=steps.filter(q=>q.setsBase && q.stints.length && q.stints[q.stints.length-1].date<=(((lo||hi)||{}).after||0)).slice(-1)[0];
+      const C=[{w:"the baseline", v:bR, L:setter?setter.stints:baseStints}, lo&&lo.stints.length&&{w:"lower", v:mean(lo.stints.map(r=>rv(r.setup))), L:lo.stints}, hi&&hi.stints.length&&{w:"higher", v:mean(hi.stints.map(r=>rv(r.setup))), L:hi.stints}]
+        .filter(Boolean).map(x=>Object.assign(x,{S:tpScore(x.L,run)})).filter(x=>Number.isFinite(x.S.total)).sort((a,b)=>a.S.total-b.S.total);
+      let v=bR, why, done=C.length>1; const best=C[0], base=C.find(x=>x.w==="the baseline");
+      if (!done) why="rear ride height: the lower and higher steps aren't driven yet";
+      else if (!base || best===base || base.S.total-best.S.total<0.1) why=`rear ride height: ${best===base?"the baseline scores best":`${best.w} is within 0.1 s of the baseline overall`}: stays at ${fmt(bR,1)} mm`;
+      else { v=Math.round(best.v*10)/10; why=`rear ride height: ${best.w} (${fmt(best.v,1)} mm) scores best: ${tpScoreWhy(best.S, base.S)} against the baseline`; }
+      out.RearRH={v, base:bR, unit:"mm", why, done, label:"Rear ride height (average)"}; out.items.push(out.RearRH); if (done) out.done++; if (Math.abs(v-bR)>=1) out.any=true; continue; }
     // springs
     if (what!=="bars"){ const lo=steps.find(x=>x.id===`spr${ax}min`), hi=steps.find(x=>x.id===`spr${ax}max`);
       const bk=Object.keys(P.base||{}).find(k=>new RegExp(`(Left|Right)${ax}\\.SpringRate$|\\.${ax}[A-Za-z]*\\.SpringRate$`).test(k));
@@ -6359,7 +6381,9 @@ function tpTarget(run, s, path, baseRaw){
   if (s.kind==="min"||s.kind==="max"||s.kind==="wmin"||s.kind==="wmax") return s.lim!=null ? withV(s.lim) : (s.kind==="min"||s.kind==="wmin" ? "garage minimum" : "garage maximum");
   if (s.kind==="more"||s.kind==="less"){ const r=resolve(run,{e, d:(s.kind==="less"?-1:1)*(s.amount||1)}); return r?r.raw:`${s.amount||1} step${(s.amount||1)>1?"s":""} ${s.kind==="less"?"softer":"stiffer"}`; }
   if (s.kind==="wless"||s.kind==="wmore"){ const r=resolve(run,{e, d:s.kind==="wless"?-2:2}); return r?r.raw:`2 steps ${s.kind==="wless"?"lower":"higher"}`; }
+  if (s.kind==="rhlow" || s.kind==="rhhigh") return baseRaw.replace(/-?\d+(\.\d+)?/, (learnNum(baseRaw)+(s.kind==="rhlow"?-3:3)).toFixed(1));
   if (s.kind==="between" && s.combo && s.combo.done){ const k=learnNorm(path), a=/Front/.test(k)?"Front":/Rear/.test(k)?"Rear":null; if (!a) return baseRaw;
+    if (/RideHeight$/i.test(k)){ const c=s.combo.RearRH; return a==="Rear" && c && Math.abs(c.v-c.base)>=1 ? baseRaw.replace(/-?\d+(\.\d+)?/, (learnNum(baseRaw)+(c.v-c.base)).toFixed(1)) : baseRaw; }
     if (/SpringRate$/i.test(k)){ const c=s.combo[a]; return c && c.v!==c.base ? baseRaw.replace(/-?\d+(\.\d+)?/, String(c.v)) : baseRaw; }
     const c=s.combo[a+"Arb"]; return c && c.key===k ? c.raw : baseRaw; }
   if (s.kind==="between"){ const x=tpAppSpring(run).get(path); if (!x) return baseRaw; const c=x.c, r=resolve(run, Object.assign({}, c, {e:Object.assign({}, c.e, {raw:baseRaw})})); return r ? r.raw : baseRaw; }
@@ -6411,7 +6435,7 @@ function tpSheetRows(run, P, steps){
     else if (isSpr && /Camber|Toe/i.test(key)){ note="moves a little with the spring: fine"; }
     else if (TP_FREE.test(path)){ st="free"; note="your call each stint"; }
     const now=cur[path]!=null?String(cur[path]).trim():null;
-    const off = now!=null && st!=="free" && st!=="adjust" && !(isSpr && /Camber|Toe/i.test(key)) && (st==="set" ? (/^-?\d/.test(to) ? now!==to : /min$/.test(s.kind) ? !(learnNum(now)<learnNum(raw)) : /max$/.test(s.kind) ? !(learnNum(now)>learnNum(raw)) : now===raw) : (/RideHeight$/i.test(key) && Number.isFinite(learnNum(now)) ? Math.abs(learnNum(now)-learnNum(raw))>2 : now!==raw));
+    const off = now!=null && st!=="free" && st!=="adjust" && !(isSpr && /Camber|Toe/i.test(key)) && (st==="set" ? (/RideHeight$/i.test(key) && Number.isFinite(learnNum(now)) && Number.isFinite(learnNum(to)) ? Math.abs(learnNum(now)-learnNum(to))>1 : /^-?\d/.test(to) ? now!==to : /min$/.test(s.kind) ? !(learnNum(now)<learnNum(raw)) : /max$/.test(s.kind) ? !(learnNum(now)>learnNum(raw)) : now===raw) : (/RideHeight$/i.test(key) && Number.isFinite(learnNum(now)) ? Math.abs(learnNum(now)-learnNum(raw))>2 : now!==raw));
     const sd=path.match(/(Left|Right)(Front|Rear)/), label=sd?`${sd[1][0]}${sd[2][0]} ${pretty(key).toLowerCase()}`:learnLabel(path);
     return {label, path, parts:path.split("."), key, raw, to, st, note, now, off}; });
   const set=rows.filter(r=>r.st==="set"), keepN=rows.filter(r=>r.st==="keep").length, off=rows.filter(r=>r.off && !/RideHeight$/i.test(r.key)), offRH=rows.filter(r=>r.off && /RideHeight$/i.test(r.key));
@@ -6466,10 +6490,10 @@ function tpInsightsHTML(run, steps){
   const B=agg(baseL), hrs=(a,b)=>Math.abs(a.date-b.date)/3.6e6, val=(m,v)=>Number.isFinite(v)?`${v.toFixed(m[4])}${m[3]?(m[3]==="s"?" s":m[3]==="°"||m[3]==="%"?m[3]:" "+m[3]):""}`:"–";
   const run_s=s=>s.ran&&s.ran.length?s.ran.join(", "):"";
   // the sweeps: both ends driven
-  const ends=[["min","max"],["wmin","wmax"]], used=new Set(), pairs=[];
+  const ends=[["min","max"],["wmin","wmax"],["rhlow","rhhigh"]], used=new Set(), pairs=[];
   for (const s of steps) for (const [lo,hi] of ends) if (s.kind===lo && s.stints.length){ const q=steps.find(x=>x.kind===hi && x.block===s.block && String(x.re)===String(s.re) && x.stints.length); if (q){ pairs.push([s,q]); used.add(s); used.add(q); } }
   // a measure's change from one end to the other, and what it means
-  const read=(lo,hi,X,Y,s)=>{ const out=[], d=k=>Y[k]-X[k], ax=/Front/.test(s.label)?"front":/Rear/.test(s.label)?"rear":"", Ax=ax?ax[0].toUpperCase()+ax.slice(1):"", stiff=/Wing/.test(s.block)?"more wing":"stiffer", soft=/Wing/.test(s.block)?"less wing":"softer";
+  const read=(lo,hi,X,Y,s)=>{ const out=[], d=k=>Y[k]-X[k], ax=/Front/.test(s.label)?"front":/Rear/.test(s.label)?"rear":"", Ax=ax?ax[0].toUpperCase()+ax.slice(1):"", isRH=/Ride height/.test(s.block), stiff=/Wing/.test(s.block)?"more wing":isRH?"higher rear":"stiffer", soft=/Wing/.test(s.block)?"less wing":isRH?"lower rear":"softer";
     const onK=ax==="front"?"onF":"onR", rhK=ax==="front"?"fA":"rA";
     if (ax && Number.isFinite(X[onK]) && Number.isFinite(Y[onK]) && Math.max(X[onK],Y[onK])>=40 && Math.abs(d(onK))>=20)
       out.push(`${X[onK]>Y[onK]?`At ${esc(run_s(lo))||"the soft end"} the ${ax} sits on the bump rubbers ${Math.round(X[onK])}% of the time on the straights`:`At ${esc(run_s(hi))||"the stiff end"} the ${ax} sits on the bump rubbers ${Math.round(Y[onK])}% of the time on the straights`} (${Math.round(Math.min(X[onK],Y[onK]))}% at the other end): there the rubber, not the spring, holds the car up at speed, so the spring only works in the slower corners.`);
@@ -6499,7 +6523,7 @@ function tpInsightsHTML(run, steps){
       else so=`no lap time in it. Choose on what else changes${tyreHot?`: ${tyreHot} runs the tyres warmer, useful when they're cold (early in a stint, a cool track)`:""}${ax && Number.isFinite(d(rhK)) && Math.abs(d(rhK))>=2?`; the ${stiff} end keeps the ${ax} higher at speed, safer over kerbs and bumps`:""}.`;
       out.push(`<b>So:</b> ${so}`); }
     return out; };
-  const pairHTML=([lo,hi])=>{ const X=agg(lo.stints), Y=agg(hi.stints), name=lo.label.replace(/ (softest|at its lowest)$/,"");
+  const pairHTML=([lo,hi])=>{ const X=agg(lo.stints), Y=agg(hi.stints), name=lo.label.replace(/ (softest|at its lowest|3 mm lower)$/,"");
     const rows=TP_MEAS.filter(m=>Number.isFinite(X[m[0]])&&Number.isFinite(Y[m[0]])).map(m=>{ const dd=Y[m[0]]-X[m[0]], big=Math.abs(dd)>=m[5];
       return `<tr${big?"":' class="muted"'}><td>${m[1]}</td><td>${val(m,X[m[0]])}</td><td>${val(m,Y[m[0]])}</td><td>${big?`<b>${dd>0?"+":"−"}${val(m,Math.abs(dd))}</b>`:`${dd>0?"+":"−"}${val(m,Math.abs(dd))}`}</td></tr>`; }).join("");
     return `<div class="gcard" style="margin:8px 0"><div class="gtitle">${esc(name)}: ${esc(run_s(lo)||"softest")} against ${esc(run_s(hi)||"stiffest")} <span class="muted" style="font-weight:400;font-size:12px">${X.laps} and ${Y.laps} clean laps, driven ${hrs(X,Y).toFixed(1)} h apart</span></div>
