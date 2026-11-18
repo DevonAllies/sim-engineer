@@ -6496,7 +6496,7 @@ function tpSteps(run, base, kind){
   for (const ax of ["Front","Rear"]){ const e=first(spring(ax)); if (!e) continue; const L=lim(e), tb=/TorsionBar/i.test(e.path), re=new RegExp(`${ax}[A-Za-z]*\\.(SpringRate|TorsionBarSize)$`,"i");
     // a spring change moves the static camber and toe with it (the car sits differently, like the ride heights): those don't count as another change
     for (const end of ["min","max"]) S.push({id:`spr${ax}${end}`, block:"Springs", label:tb?`${ax} torsion bars ${end==="min"?"thinnest (softest)":"thickest (stiffest)"}`:`${ax} springs ${end==="min"?"softest":"stiffest"}`, re, kind:end, allow:/Camber|Toe|PerchOffset|SpringPerch|TorsionBarTurns/i,
-      how:tb ? `Both front torsion bars to ${L?`<b>${L[end]}</b>`:`the ${end==="min"?"thinnest":"thickest"} size the garage allows`} (baseline ${esc(bv(e))}): the torsion bar is the front corner spring on this car. Then use the torsion bar turns to put the front ride heights back to the baseline (left click raises it). Nothing else.`
+      how:tb ? `Both front torsion bars to ${L?`<b>${L[end]}</b>`:`the ${end==="min"?"thinnest":"thickest"} size the garage allows`} (baseline ${esc(bv(e))}): the torsion bar is the front corner spring on this car. Then use the torsion bar turns to put the front ride heights back to the baseline (left click raises it). If the garage says Failed Tech: raising the front back to the baseline also brings the heave spring gap back above zero (it can't be negative), and put the camber back inside the range the garage allows (it turns red when it's outside). Camber, toe and torsion bar turns changed for that still count for this step. Nothing else.`
         : `Both ${ax.toLowerCase()} springs to ${L?`<b>${L[end]}</b>`:`the ${end==="min"?"softest":"stiffest"} the garage allows`} (baseline ${esc(bv(e))}). Then use the spring perch offsets to put the static ride heights back to the baseline. Nothing else.`, lim:L?L[end]:null}); }
   if (S.some(s=>/^spr/.test(s.id))){
     S.push({id:"base2", block:"Springs", label:"Baseline check", how:"Back to the baseline setup: shows how much the track and you improved since the start, so it isn't blamed on the springs.", kind:"base"});
@@ -6730,9 +6730,9 @@ function tpSheetRows(run, P, steps){
     let st="keep", to=raw, note="";
     if (s.kind!=="base" && s.re && s.re.test(k)){ const to0=tpTarget(run,s,path,raw); if (s.kind!=="between" || to0!==raw){ st="set"; to=to0; } }
     else if (isSpr && /RideHeight$/i.test(key)){ st="back"; note="back to the baseline, within 2 mm"; }
-    else if (isSpr && /PerchOffset|SpringPerch|TorsionBarTurns/i.test(key)){ st="adjust"; note="adjust to get the ride height back"; }
+    else if (isSpr && /PerchOffset|SpringPerch|TorsionBarTurns/i.test(key)){ st="adjust"; note=/TorsionBarTurns/i.test(key)?"adjust to get the ride height back (lower number = higher car); also keeps the heave gap above zero":"adjust to get the ride height back"; }
     else if (/TorsionBarTurns/i.test(key)){ st="free"; note="sets the front ride height"; }
-    else if (isSpr && /Camber|Toe/i.test(key)){ note="moves a little with the spring: fine"; }
+    else if (isSpr && /Camber|Toe/i.test(key)){ note="moves with the spring: fine; if the garage shows it red (failed tech), bring it back inside the range"; }
     else if (TP_FREE.test(path)){ st="free"; note="your call each stint"; }
     const now=cur[path]!=null?String(cur[path]).trim():null;
     const off = now!=null && st!=="free" && st!=="adjust" && !(isSpr && /Camber|Toe/i.test(key)) && (st==="set" ? (/RideHeight$/i.test(key) && Number.isFinite(learnNum(now)) && Number.isFinite(learnNum(to)) ? Math.abs(learnNum(now)-learnNum(to))>1 : /^-?\d/.test(to) ? now!==to : /min$/.test(s.kind) ? !(learnNum(now)<learnNum(raw)) : /max$/.test(s.kind) ? !(learnNum(now)>learnNum(raw)) : now===raw) : (/RideHeight$/i.test(key) && Number.isFinite(learnNum(now)) ? Math.abs(learnNum(now)-learnNum(raw))>2 : now!==raw));
