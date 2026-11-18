@@ -2732,12 +2732,12 @@ function tunUpdate(){
 // side profiles drawn from each car's published dimensions (metres): length, axles, the roofline as [x, height above the floor], the wing
 // (simplified outlines, not iRacing's 3D models)
 const CAR_SHAPES = {
-  acuransxevo22gt3: {L:4.61, ax:[1.03,3.66], top:[[0,0.14],[0.12,0.3],[0.85,0.5],[1.45,0.6],[1.95,1.0],[2.45,1.13],[3.0,1.06],[3.75,0.95],[4.4,0.86],[4.61,0.8]], wing:{x:4.35,h:1.2,c:0.34}, splitter:0.38},
+  // measured from side-on screenshots (wheelbase as the ruler): outline points [metres from the front, height above the ground]
+  acuransxevo22gt3: {L:4.33, ax:[0.80,3.43], top:[[0,0.17],[0.09,0.49],[0.39,0.65],[0.97,0.74],[1.29,0.82],[1.70,1.04],[1.99,1.11],[2.43,1.12],[2.87,0.98],[3.46,0.75],[3.95,0.69],[4.03,0.49]], wing:{x:4.16,h:1.10,c:0.36}, splitter:0.38},
   lamborghinievogt3: {L:4.55, ax:[1.0,3.645], top:[[0,0.12],[0.2,0.3],[1.6,0.62],[2.2,1.12],[2.55,1.15],[3.4,1.0],[4.2,0.9],[4.55,0.84]], wing:{x:4.3,h:1.22,c:0.34}, splitter:0.36},
   mercedesamgevogt3: {L:4.75, ax:[1.0,3.63], top:[[0,0.18],[0.15,0.36],[1.0,0.6],[2.0,0.74],[2.55,1.14],[3.05,1.24],[3.75,1.06],[4.5,0.92],[4.75,0.88]], wing:{x:4.5,h:1.28,c:0.36}, splitter:0.4},
   porsche992rgt3: {L:4.62, ax:[0.95,3.45], top:[[0,0.16],[0.15,0.36],[0.9,0.62],[1.65,0.72],[2.1,1.16],[2.7,1.22],[3.5,1.03],[4.3,0.9],[4.62,0.84]], wing:{x:4.35,h:1.32,c:0.36}, splitter:0.38},
-  dallarap217: {L:4.75, ax:[0.97,3.98],   // axles placed from the paint template (wheel arches), matching the published 3.005 m wheelbase
-                 top:[[0,0.1],[0.25,0.22],[0.8,0.55],[1.25,0.6],[1.7,0.52],[2.15,0.92],[2.6,1.02],[3.1,0.95],[3.7,0.6],[4.3,0.55],[4.75,0.5]], wing:{x:4.55,h:0.98,c:0.4}, splitter:0.45, fin:true},
+  dallarap217: {L:4.75, ax:[0.93,3.94], top:[[0,0.10],[0.28,0.60],[0.95,0.72],[1.37,0.75],[1.58,0.86],[1.82,1.02],[2.0,1.08],[2.59,1.09],[2.95,0.65],[3.40,0.74],[4.14,0.74],[4.62,0.60],[4.75,0.51]], wing:{x:4.56,h:1.04,c:0.32}, splitter:0.45, fin:true},
   _default: {L:4.6, ax:[1.0,3.65], top:[[0,0.16],[0.15,0.33],[0.9,0.52],[1.55,0.66],[2.0,1.08],[2.75,1.15],[3.6,0.95],[4.35,0.78],[4.6,0.72]], wing:{x:4.38,h:1.18,c:0.32}, splitter:0.35} };
 // the side view: car (ride heights exaggerated ×4), wing at its angle, flow lines, force arrows
 // one loop at a time; it stops when you pause, leave the tab or go on track, and a still frame is drawn for any slider change
