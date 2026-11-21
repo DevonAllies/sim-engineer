@@ -3015,7 +3015,7 @@ function render(){
     tyres: () => `<section><h2>Tyres <small>temperatures, pressures, camber and wear</small></h2><div class="two"><div>${tiresHTML(A,S,run)}</div><div>${wearHTML(A)}
         <div class="grid" style="margin-top:10px"><div class="stat"><div class="k">Rear wheelspin</div><div class="v">${fmt((A.spin||0)*100,0)}%</div><div class="s">of throttle &gt;60% samples</div></div>
         <div class="stat"><div class="k">Inside rear spin</div><div class="v">${fmt((A.inSpin||0)*100,0)}%</div><div class="s">while cornering on power</div></div></div></div></div></section>` + tyreModelHTML(run, A, S) + racePressureHTML(run, A, S) + safe(()=>modelRangeHTML(run, "Tyre models"),"range") + safe(()=>tyreThermalHTML(run, A, S),"thermal") + safe(()=>gripTempHTML(run, A, S),"griptemp") + safe(()=>tyreHeatHTML(run, A, S),"heat") + areaCards("tyres"),
-    aero: () => aeroHTML(run, A, S) + optimalRakeHTML(run, A, S) + rakeChartsHTML(run, A, S) + fastCornersHTML(run, A, S) + rhcHTML(run, A, S) + rakePhasesHTML(run, A, S) + aeroMapHTML(run, A) + aeroOptionsHTML(run, A, S) + bumpHTML(run, A) + bottomHTML(run, A) + downforceHTML(run, A) + areaCards("aero"),
+    aero: () => aeroHTML(run, A, S) + optimalRakeHTML(run, A, S) + rakeChartsHTML(run, A, S) + fastCornersHTML(run, A, S) + platSimHTML(run, A, S) + rhcHTML(run, A, S) + rakePhasesHTML(run, A, S) + aeroMapHTML(run, A) + aeroOptionsHTML(run, A, S) + bumpHTML(run, A) + bottomHTML(run, A) + downforceHTML(run, A) + areaCards("aero"),
     balance: () => safeBalanceFeel(run, A) + `<section><h2>Balance <small>understeer angle in degrees (front wheel): higher = more understeer</small></h2>
    ${balanceReady(run,A)?"":`<div class="sugg p2" style="margin:0 0 10px"><h3>First read only</h3><p style="margin:4px 0 0">${balanceWait(run,A)}</p></div>`}
    <div class="grid" style="margin-bottom:10px">
@@ -3068,7 +3068,7 @@ function render(){
     runs.forEach(r=>{ if (r.A) r.A.tw=null; }); rerender(); });   // the measured tyre window follows the range too
   wireProg(view==="programme" && PROG_RUN ? PROG_RUN : run);
   for (const [id,key] of [["lctarget","lcTarget"],["tyreloss","tyreLoss"],["racestart","startH"]]){ const el=$("#"+id); if (el) el.onchange=()=>{ RACE[key]=el.value===""?"":+el.value; PREFS.set("race", RACE); rerender(); }; }
-  if (view==="aero" && A.rh){ drawRH(run,A,S); try { drawRake(run,A,S); } catch(e){ console.error("rake",e); } try { wireRHC(run,A,S); } catch(e){ console.error("rhc",e); } }
+  if (view==="aero" && A.rh){ drawRH(run,A,S); try { drawRake(run,A,S); } catch(e){ console.error("rake",e); } try { wirePlat(run,A,S); } catch(e){ console.error("plat",e); } try { wireRHC(run,A,S); } catch(e){ console.error("rhc",e); } }
   if (view==="laps") drawTrace(run,A);
   if (view==="dampers") for (const c of Object.keys(A.damp||{})) drawHist($("#dh"+c), A.damp[c].hist);
   wireSugInputs(run); wireRace(run); wireFfb(); wireTabs(); if (view==="learn") wireLearn(run);
@@ -3448,6 +3448,111 @@ function frontFixHTML(run, A, S, FC){
     <div class="tablewrap"><table style="font-size:12.5px"><tr><th>Change</th><th>Front in fast corners</th><th>Rear</th><th>Rake</th><th>Trade-off</th></tr>
     ${opts.map(o=>`<tr><td><b>${esc(o.what)}</b></td><td class="${Number.isFinite(o.F)?(inF(o.F)?"ok":"warn"):""}">${Number.isFinite(o.F)?mm(o.F)+" mm":"–"}</td><td class="${Number.isFinite(o.R)?(inR(o.R)?"ok":"warn"):""}">${Number.isFinite(o.R)?mm(o.R)+" mm":"–"}</td><td>${Number.isFinite(o.F)?mm(o.R-o.F)+" mm":"–"}</td><td style="font-size:12px">${esc(o.note)}</td></tr>`).join("")}</table></div>
     <p class="muted" style="font-size:12px;margin:6px 0 0">Options can be combined (the calculator below adds up the static and wing ones). Once the static front is at the tech limit, its height at speed is set by the springs and bump rubbers; the test programme's spring and bump-rubber steps measure what each does to the lap.</p>`; }
+// ---------- the aero platform as a system: springs, bump rubbers, static heights and wing → ride heights and rake at every speed ----------
+// Calibrated on this stint: each axle's ride height against speed on the straights (height = a − c·v², the aero load growing with v²),
+// turned into load on the springs; a change of spring or bump-rubber gap then gives the new travel (the spring alone, then spring + rubber once the gap closes).
+let PLT=null;
+function platCal(run, A){
+  if (A._plat!==undefined) return A._plat; const ch=run.ch; if (!ch.LFrideHeight || !ch.LRrideHeight || !ch.LatAccel) return A._plat=null;
+  const v=[], F=[], R=[];
+  for (const j of A.idx){ const s=ch.Speed[j]*3.6; if (s<80 || ch.Brake[j]>0.05 || Math.abs(ch.LatAccel[j])>3) continue; v.push(s); F.push((ch.LFrideHeight[j]+ch.RFrideHeight[j])*500); R.push((ch.LRrideHeight[j]+ch.RRrideHeight[j])*500); }
+  if (v.length<200) return A._plat=null;
+  const fit=y=>{ const c=fitLS(v.map(x=>[x*x]), y); return c && c[1]<0 ? {a:c[0], c:-c[1]} : null; }, fF=fit(F), fR=fit(R); if (!fF || !fR) return A._plat=null;
+  const M=rhModel(run,A), num=e=>e?parseFloat(e.raw):NaN;
+  const ax=(m,k,g,f)=>Object.assign({k, g:Number.isFinite(g)?g:999, mr:(m&&m.mr)||1, rho:m&&Number.isFinite(m.rho)?m.rho:4}, f);
+  const FC=fastCorners(run,A);
+  return A._plat={F:ax(M&&M.F, num(SET.spring(run,"front")), num(SET.bump(run,"front")), fF), R:ax(M&&M.R, num(SET.spring(run,"rear")), num(SET.bump(run,"rear")), fR),
+    vFC:FC.length?median(FC.map(c=>c.v)):NaN, vFCr:FC.length?[Math.min(...FC.map(c=>c.vmin)), Math.max(...FC.map(c=>c.v))]:null, vmax:A.vmax||Math.max(...v),
+    brkF:A.rh&&A.rh.brkFront, brkR:A.rh&&A.rh.brkRear, splMin:A.rh&&A.rh.splMin}; }
+// spring + bump rubber: load ↔ travel (travel in shock mm; the rubber adds rho × the spring once the gap is closed)
+const platLoad=(t,k,g,rho)=> t<=0 ? k*t : t<=g ? k*t : k*g+(t-g)*k*(1+rho);
+const platTravel=(L,k,g,rho)=> L<=0 ? L/k : L/k<=g ? L/k : g+(L-k*g)/(k*(1+rho));
+// one axle's ride height at speed v with new springs / gap / static change / load scale (the wing for the rear)
+function platRH(X, v, k1, g1, dS, scale, extraL){
+  const x0=X.c*v*v, t0=x0/X.mr, ok=Number.isFinite(X.k) && X.k>0 && Number.isFinite(k1) && k1>0;
+  if (!ok) return X.a+dS-x0*scale;
+  const L=platLoad(t0, X.k, X.g, X.rho)*scale+(extraL||0); return X.a+dS-platTravel(L, k1, g1, X.rho)*X.mr; }
+function platState(run, A, S, p){
+  const C=platCal(run,A); if (!C) return null; const W=(PROFILES[run.carPath]||{}).aeroWin, RW=rakeWindow(run,S), kW=rhcWingK(run).k, sc=1+kW*(p.dW||0);
+  const fAt=v=>platRH(C.F, v, p.kF, p.gF, p.dF, 1, 0), rAt=v=>platRH(C.R, v, p.kR, p.gR, p.dR, sc, 0);
+  const sp=[]; for (let v=60; v<=Math.ceil(C.vmax/5)*5; v+=5) sp.push(v);
+  // braking from top speed: the extra load the dive puts on the front (and takes off the rear), measured on this stint, on the new springs
+  const vT=C.vmax, brk=(X, k1, g1, dS, scale, meas)=>{ if (!Number.isFinite(meas) || !Number.isFinite(X.k)) return NaN;
+    const now=X.a-X.c*vT*vT, tb=(X.a-meas)/X.mr, tA=(X.a-now)/X.mr, dL=platLoad(tb,X.k,X.g,X.rho)-platLoad(tA,X.k,X.g,X.rho);
+    return platRH(X, vT, k1, g1, dS, scale, dL); };
+  const contact=(X,k1,g1,scale)=>{ for (const v of sp){ const L=platLoad(X.c*v*v/X.mr, X.k, X.g, X.rho)*scale; if (Number.isFinite(X.k) && platTravel(L,k1,g1,X.rho)>=g1) return v; } return null; };
+  const R0=aeroRef(run,A,S), kF0=Math.abs(R0.bal(40-0.5,42)-R0.bal(40+0.5,42)), perDeg=Number.isFinite(kF0)&&kF0>0.01?1.5*kF0:0.3, bal=(f,r)=>{ const b=R0.bal(f,r); return Number.isFinite(b)?b-perDeg*(p.dW||0):NaN; };
+  const v1=Number.isFinite(C.vFC)?C.vFC:Math.min(200,C.vmax);
+  return {C, W, RW, sp, f:sp.map(fAt), r:sp.map(rAt), fAt, rAt, v1, vT,
+    fc:{v:v1, f:fAt(v1), r:rAt(v1)}, top:{v:vT, f:fAt(vT), r:rAt(vT)},
+    brk:{f:brk(C.F, p.kF, p.gF, p.dF, 1, C.brkF), r:brk(C.R, p.kR, p.gR, p.dR, sc, C.brkR)},
+    contactF:contact(C.F,p.kF,p.gF,1), contactR:contact(C.R,p.kR,p.gR,sc), bal:bal(fAt(v1), rAt(v1)), bal0:null}; }
+function platDefault(run, A){ const C=platCal(run,A); return C ? {kF:C.F.k, kR:C.R.k, gF:C.F.g<999?C.F.g:NaN, gR:C.R.g<999?C.R.g:NaN, dF:0, dR:0, dW:0} : null; }
+function platSimHTML(run, A, S){
+  const C=platCal(run,A); if (!C) return "";
+  const d=platDefault(run,A); if (!PLT || PLT._run!==run.name) PLT=Object.assign({_run:run.name}, d);
+  const plan=PREFS.get("platplan|"+run.carPath+"|"+learnTrackOf(run));
+  const inp=(id,label,v,step,unit)=>`<label style="display:flex;flex-direction:column;gap:2px;font-size:12px">${label}<span><input id="${id}" type="number" step="${step}" value="${Number.isFinite(v)?v:""}" style="width:76px"> <span class="muted">${unit}</span></span></label>`;
+  return `<section><h2>Aero platform as a system <small>springs, bump rubbers, ride heights and wing together → where the car runs at every speed</small></h2>
+    <p class="muted" style="margin:0 0 8px;font-size:12.5px">Change anything and see the whole platform move: dashed = your car now, solid = with your changes. Shaded bands are the downforce windows (front blue, rear orange); the grey column is your fast corners, where the window earns lap time; the line at the right is the end of your fastest straight, the car's lowest point, with the braking zone after it. Worked out from this stint's ride heights at speed.</p>
+    <div class="row" style="gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:8px">
+      ${inp("pltKF","Front springs",PLT.kF,10,"N/mm")}${inp("pltKR","Rear springs",PLT.kR,10,"N/mm")}${inp("pltGF","Front bump gap",PLT.gF,1,"mm")}${inp("pltGR","Rear bump gap",PLT.gR,1,"mm")}
+      ${inp("pltDF","Front static",PLT.dF,0.5,"mm ±")}${inp("pltDR","Rear static",PLT.dR,0.5,"mm ±")}${inp("pltDW","Wing",PLT.dW,1,"° ±")}
+      <button class="ghost" id="pltReset" style="padding:3px 10px">Back to now</button>
+      ${plan?plan.opts.map((o,i)=>`<button class="ghost" data-plt="${i}" style="padding:3px 10px">Platform ${i+1}</button>`).join(""):""}</div>
+    <canvas id="pltRH"></canvas>
+    <canvas id="pltRake" style="margin-top:8px"></canvas>
+    <div id="pltOut" style="margin-top:8px">${platOutHTML(run,A,S)}</div></section>`; }
+function platOutHTML(run, A, S){
+  const now=platState(run,A,S,platDefault(run,A)), P=platState(run,A,S,PLT); if (!now || !P) return "";
+  const W=P.W, RW=P.RW, mm=v=>Number.isFinite(v)?fmt(v,1)+" mm":"–", inF=v=>W&&v>=W.df.f[0]-0.25&&v<=W.df.f[1]+0.25, inR=v=>W&&v>=W.df.r[0]-0.25&&v<=W.df.r[1]+0.25, inK=v=>RW&&v>=RW.lo&&v<=RW.hi;
+  const cell=(a,b,ok)=>`<td>${mm(a)}</td><td><b class="${ok===undefined?"":ok?"ok":"warn"}">${mm(b)}</b></td>`;
+  const splNew=Number.isFinite(P.C.splMin)&&Number.isFinite(P.brk.f)&&Number.isFinite(now.brk.f) ? P.C.splMin+(P.brk.f-now.brk.f)*((A.splFit&&A.splFit.a)||1.3) : NaN;
+  const row=(k,cells,note)=>`<tr><td class="muted">${k}</td>${cells}<td class="muted" style="font-size:12px">${note||""}</td></tr>`;
+  const ct=v=>v?`from about ${v} km/h`:"not at these speeds";
+  return `<div class="tablewrap"><table style="font-size:12.5px"><tr><th></th><th>Now</th><th>With changes</th><th></th></tr>
+    ${row(`Fast corners (${fmt(P.v1,0)} km/h): front`, cell(now.fc.f,P.fc.f,inF(P.fc.f)), W?`window ${W.df.f[0]}–${W.df.f[1]}`:"")}
+    ${row("… rear", cell(now.fc.r,P.fc.r,inR(P.fc.r)), W?`window ${W.df.r[0]}–${W.df.r[1]}`:"")}
+    ${row("… rake", cell(now.fc.r-now.fc.f,P.fc.r-P.fc.f,inK(P.fc.r-P.fc.f)), RW?`window ${fmt(RW.lo,0)} to ${fmt(RW.hi,0)}`:"")}
+    ${Number.isFinite(P.bal)?row("… aero balance (front)", `<td>${fmt(now.bal,1)}%</td><td><b>${fmt(P.bal,1)}%</b></td>`, Math.abs(P.bal-now.bal)>=0.2?(P.bal>now.bal?"more front: pointier in fast corners":"more rear: more understeer in fast corners"):"about the same"):""}
+    ${row(`End of the straight (${fmt(P.vT,0)} km/h): front`, cell(now.top.f,P.top.f), "the lowest the car runs on the straight")}
+    ${row("… rear / rake", `<td>${mm(now.top.r)} / ${mm(now.top.r-now.top.f)}</td><td><b>${mm(P.top.r)} / ${mm(P.top.r-P.top.f)}</b></td>`, "less rake here = less drag")}
+    ${Number.isFinite(P.brk.f)?row("Braking from top speed: front / rear", `<td>${mm(now.brk.f)} / ${mm(now.brk.r)}</td><td><b>${mm(P.brk.f)} / ${mm(P.brk.r)}</b></td>`, `rake jumps to ${mm(P.brk.r-P.brk.f)} (now ${mm(now.brk.r-now.brk.f)}): the bigger the jump, the more the balance moves forward on turn-in`):""}
+    ${Number.isFinite(splNew)?row("Splitter's lowest point", `<td>${mm(P.C.splMin)}</td><td><b class="${splNew<1?"warn":"ok"}">${mm(splNew)}</b></td>`, splNew<1?"touches down: lost downforce and a nervous car on the brakes":"clear of the track"):""}
+    ${row("Front on its bump rubbers", `<td>${ct(now.contactF)}</td><td><b>${ct(P.contactF)}</b></td>`, "once on the rubbers the front stops sinking: that's what holds the height")}
+    ${row("Rear on its bump rubbers", `<td>${ct(now.contactR)}</td><td><b>${ct(P.contactR)}</b></td>`, "")}
+    </table></div>
+    <p class="muted" style="font-size:12px;margin:6px 0 0">Softer springs: the car sinks more as speed builds (lower in the fast corners and at the end of the straight, a bigger dive on the brakes). A smaller bump gap: the rubber catches the car sooner and holds it up from there. Static heights move the whole curve; more wing pushes the rear down at speed. An estimate from this stint: one stint on the new platform confirms it.</p>`; }
+function drawPlat(run, A, S){
+  const cv=$("#pltRH"), ck=$("#pltRake"); if (!cv || !ck) return; const now=platState(run,A,S,platDefault(run,A)), P=platState(run,A,S,PLT); if (!now || !P) return;
+  const W=P.W, sp=P.sp, all=[...now.f,...now.r,...P.f,...P.r, P.brk.f, P.brk.r, now.brk.f, now.brk.r].filter(Number.isFinite), lo=Math.floor((Math.min(...all, W?W.df.f[0]:99)-3)/5)*5, hi=Math.ceil((Math.max(...all, W?W.df.r[1]:0)+3)/5)*5;
+  const draw=(cvs, yr, series, bands, yl, marks)=>{ const [c,w,h]=canvasCtx(cvs, 250), m={l:44,r:12,t:14,b:28}, xr=[sp[0], sp[sp.length-1]];
+    const X=x=>m.l+(x-xr[0])/(xr[1]-xr[0])*(w-m.l-m.r), Y=y=>h-m.b-(y-yr[0])/(yr[1]-yr[0])*(h-m.t-m.b);
+    if (P.C.vFCr){ c.fillStyle=css("--ink")+"12"; c.fillRect(X(P.C.vFCr[0]), m.t, X(P.C.vFCr[1])-X(P.C.vFCr[0]), h-m.t-m.b); c.fillStyle=css("--muted"); c.font="11px system-ui"; c.fillText("fast corners", X(P.C.vFCr[0])+4, h-m.b-4); }
+    for (const b of bands){ c.fillStyle=b.c; c.fillRect(m.l, Y(b.hi), w-m.l-m.r, Y(b.lo)-Y(b.hi)); }
+    c.strokeStyle=css("--grid"); c.fillStyle=css("--muted"); c.font="11px system-ui"; c.lineWidth=1;
+    for (let i=0;i<=4;i++){ const y=yr[0]+(yr[1]-yr[0])*i/4; c.beginPath(); c.moveTo(m.l,Y(y)); c.lineTo(w-m.r,Y(y)); c.stroke(); c.fillText(y.toFixed(0),4,Y(y)+4); }
+    for (let i=0;i<=5;i++){ const x=xr[0]+(xr[1]-xr[0])*i/5; c.fillText(x.toFixed(0),X(x)-8,h-10); }
+    c.fillText(yl,m.l+4,m.t-3); c.textAlign="right"; c.fillText("km/h",w-m.r,h-10); c.textAlign="left";
+    // the end of the straight
+    c.strokeStyle=css("--bad")+"aa"; c.setLineDash([4,3]); c.beginPath(); c.moveTo(X(P.vT),m.t); c.lineTo(X(P.vT),h-m.b); c.stroke(); c.setLineDash([]); c.fillStyle=css("--bad"); c.textAlign="right"; c.fillText("end of straight", X(P.vT)-4, h-m.b-4); c.textAlign="left";
+    for (const s of series){ c.strokeStyle=s.c; c.lineWidth=s.dash?1.4:2.4; c.setLineDash(s.dash?[5,4]:[]); c.beginPath(); s.y.forEach((y,i)=>{ if (!Number.isFinite(y)) return; const px=X(sp[i]), py=Y(y); i?c.lineTo(px,py):c.moveTo(px,py); }); c.stroke(); c.setLineDash([]); }
+    for (const mk of marks||[]){ if (!Number.isFinite(mk.y)) continue; c.fillStyle=mk.c; c.beginPath(); c.arc(X(P.vT)-(mk.dx||0), Y(mk.y), mk.dash?3:5, 0, 7); mk.dash?c.stroke():c.fill(); c.fillText(mk.t, X(P.vT)-(mk.dx||0)-4-c.measureText(mk.t).width, Y(mk.y)+4); } };
+  const cU=css("--us"), cO=css("--os");
+  draw(cv, [lo,hi], [{y:now.f,c:cU,dash:true},{y:now.r,c:cO,dash:true},{y:P.f,c:cU},{y:P.r,c:cO}],
+    W?[{lo:W.df.f[0],hi:W.df.f[1],c:cU+"2a"},{lo:W.df.r[0],hi:W.df.r[1],c:cO+"2a"}]:[], "ride height mm (front blue, rear orange)",
+    [{y:P.brk.f, c:cU, t:"front on the brakes"},{y:P.brk.r, c:cO, t:"rear on the brakes"}]);
+  const rk=a=>a.r.map((r,i)=>r-a.f[i]), RW=P.RW, rkAll=[...rk(now),...rk(P), P.brk.r-P.brk.f].filter(Number.isFinite), rlo=Math.floor((Math.min(...rkAll, RW?RW.lo:0)-3)/5)*5, rhi=Math.ceil((Math.max(...rkAll, RW?RW.hi:0)+3)/5)*5;
+  draw(ck, [rlo,rhi], [{y:rk(now),c:css("--muted"),dash:true},{y:rk(P),c:css("--ink")}], RW?[{lo:RW.lo,hi:RW.hi,c:css("--good")+"30"}]:[], "rake mm (rear − front) · green: max-downforce window",
+    [{y:P.brk.r-P.brk.f, c:css("--bad"), t:"rake on the brakes"}]); }
+function wirePlat(run, A, S){
+  if (!$("#pltKF")) return; const ids={kF:"pltKF",kR:"pltKR",gF:"pltGF",gR:"pltGR",dF:"pltDF",dR:"pltDR",dW:"pltDW"};
+  const upd=()=>{ for (const [k,id] of Object.entries(ids)){ const v=parseFloat($("#"+id).value); PLT[k]=Number.isFinite(v)?v:(k[0]==="d"?0:PLT[k]); } const o=$("#pltOut"); if (o) o.innerHTML=platOutHTML(run,A,S); drawPlat(run,A,S); };
+  for (const id of Object.values(ids)) $("#"+id).oninput=upd;
+  const set=o=>{ for (const [k,id] of Object.entries(ids)) if (o[k]!==undefined) $("#"+id).value=Number.isFinite(o[k])?o[k]:""; upd(); };
+  $("#pltReset").onclick=()=>set(platDefault(run,A));
+  const plan=PREFS.get("platplan|"+run.carPath+"|"+learnTrackOf(run)); document.querySelectorAll("[data-plt]").forEach(b=>b.onclick=()=>{ const o=plan.opts[+b.dataset.plt]; set(Object.assign(platDefault(run,A), {kF:o.k2, gF:o.g2, dR:plan.dR})); });
+  drawPlat(run,A,S); }
 function rhcHTML(run, A, S){
   if (!A.rh || !Number.isFinite(A.rh.front)) return "";
   const W=(PROFILES[run.carPath]||{}).aeroWin;
