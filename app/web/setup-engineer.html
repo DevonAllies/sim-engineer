@@ -3866,7 +3866,7 @@ function aeroPoint(run, A){
       if (FC.length){ o.fcF=r2(median(FC.map(c=>c.F))); o.fcR=r2(median(FC.map(c=>c.R))); o.fcRake=r2(median(FC.map(c=>c.rake))); }
       if (RW){ const ch=run.ch, fr=[]; for (const j of A.idx){ if (ch.Speed[j]*3.6>=140 && Math.abs(ch.LatAccel[j])>7.85 && ch.Brake[j]<0.05){ const r=rakeAt(ch,j); if (Number.isFinite(r)) fr.push(r); } } if (fr.length>50) o.fcIn=r2(fr.filter(r=>r>=RW.lo&&r<=RW.hi).length/fr.length*100); }
       if (C){ o.topF=r2(C.F.a-C.F.c*C.vmax*C.vmax); o.topR=r2(C.R.a-C.R.c*C.vmax*C.vmax); o.brkF=r2(C.brkF); o.brkR=r2(C.brkR); o.splMin=r2(C.splMin); }
-      if (D) o.drag=D.idx; const RC=rakeCurves(run,A); if (RC) o.rk=RC; return o; } catch(e){ return {}; } })()};
+      if (D) o.drag=D.idx; const RC=rakeCurves(run,A); if (RC) o.rk=RC; try { const RL=rollCal(run,A); if (RL) o.roll={gF:r2(RL.gradF), gR:r2(RL.gradR), gMax:r2(RL.gMax), outF:RL.per.length?r2(Math.min(...RL.per.map(p=>p.outF))):null}; } catch(e){} return o; } catch(e){ return {}; } })()};
 }
 // ride height at speed from wing, springs and bump-rubber gaps, per axle, calibrated on this stint:
 // the aero load is worked out from how far the shocks compress at speed (spring until the rubber engages, then spring + rubber),
@@ -8156,7 +8156,51 @@ function pairRecs(run){
   const full=r=>(r.aero&&r.aero.fcF!=null?4:0)+(r.aero?2:0)+(r.susp?1:0);
   for (const r of all){ const d=out.find(x=>Math.abs(x.date-r.date)<5*60000 && x.laps===r.laps); if (!d) out.push(r); else if (full(r)>full(d)) out[out.indexOf(d)]=r; }
   return out; }
+// ---------- the two stints as pictures: rake against speed, front against rear in the window, and roll against cornering g ----------
+let PAIR_RUN=null;
+function pairVizHTML(a, b){
+  const has=r=>r&&r.aero, rk=r=>has(r)&&r.aero.rk&&r.aero.rk.V&&r.aero.rk.V.length, ro=r=>has(r)&&r.aero.roll, pt=r=>has(r)&&r.aero.fcF!=null;
+  const miss=(r,what)=>`<span class="muted">${what} isn't stored for ${r===a?"A":"B"} (stints from before 0.15.67)</span>`;
+  return `<h3 style="margin:10px 0 4px;font-size:14px">At a glance <small class="muted">A solid, B dashed</small></h3>
+    <div class="row" style="gap:12px;flex-wrap:wrap;align-items:flex-start">
+      <div style="flex:1 1 340px;min-width:280px"><div class="k" style="margin-bottom:2px">Rake against speed (green: max-downforce window)</div>${rk(a)&&rk(b)?`<canvas id="pairRake"></canvas>`:miss(rk(a)?b:a,"The rake curve")}</div>
+      <div style="flex:1 1 300px;min-width:260px"><div class="k" style="margin-bottom:2px">Front against rear: B → A (box: max downforce)</div>${pt(a)&&pt(b)?`<canvas id="pairWin"></canvas>`:miss(pt(a)?b:a,"The fast-corner heights")}</div>
+      <div style="flex:1 1 300px;min-width:260px"><div class="k" style="margin-bottom:2px">Roll against cornering g (blue front, orange rear)</div>${ro(a)&&ro(b)?`<canvas id="pairRoll"></canvas>`:miss(ro(a)?b:a,"Roll")}</div></div>`; }
+function drawPair(){
+  const run=PAIR_RUN; if (!run) return; const R=pairRecs(run), a=R.find(r=>r.id===PAIR.a), b=R.find(r=>r.id===PAIR.b); if (!a || !b) return;
+  const S=settingsFor(run), W=(PROFILES[run.carPath]||{}).aeroWin, RW=rakeWindow(run,S), cA=css("--ink"), cB=css("--muted");
+  const axes=(c,w,h,m,xr,yr,xl,yl,X,Y)=>{ c.font="11px system-ui"; c.strokeStyle=css("--grid"); c.fillStyle=css("--muted"); c.lineWidth=1;
+    for (let i=0;i<=4;i++){ const y=yr[0]+(yr[1]-yr[0])*i/4; c.beginPath(); c.moveTo(m.l,Y(y)); c.lineTo(w-m.r,Y(y)); c.stroke(); c.fillText(y.toFixed(y%1?1:0),2,Y(y)+4); }
+    for (let i=0;i<=4;i++){ const x=xr[0]+(xr[1]-xr[0])*i/4; c.fillText(x.toFixed(x%1?1:0),X(x)-8,h-10); } c.textAlign="right"; c.fillText(xl,w-m.r,h-10); c.textAlign="left"; c.fillText(yl,m.l+4,m.t-2); };
+  const line=(c,X,Y,xs,ys,col,dash,wd)=>{ c.strokeStyle=col; c.lineWidth=wd||2.2; c.setLineDash(dash?[6,4]:[]); c.beginPath(); xs.forEach((x,i)=>{ const px=X(x), py=Y(ys[i]); i?c.lineTo(px,py):c.moveTo(px,py); }); c.stroke(); c.setLineDash([]); };
+  // rake against speed
+  { const cv=$("#pairRake"); if (cv){ const A=a.aero.rk.V, B=b.aero.rk.V, xs=[...A,...B].map(p=>p[0]), ys=[...A,...B].map(p=>p[1]);
+      const xr=[Math.min(...xs)-5, Math.max(...xs)+5], yr=[Math.floor(Math.min(...ys, RW?RW.lo:99)-2), Math.ceil(Math.max(...ys, RW?RW.hi:-99)+2)];
+      const [c,w,h]=canvasCtx(cv,220), m={l:34,r:8,t:14,b:26}, X=x=>m.l+(x-xr[0])/(xr[1]-xr[0])*(w-m.l-m.r), Y=y=>h-m.b-(y-yr[0])/(yr[1]-yr[0])*(h-m.t-m.b);
+      if (RW){ c.fillStyle=css("--good")+"30"; c.fillRect(m.l, Y(RW.hi), w-m.l-m.r, Y(RW.lo)-Y(RW.hi)); }
+      axes(c,w,h,m,xr,yr,"km/h","rake mm",X,Y); line(c,X,Y,B.map(p=>p[0]),B.map(p=>p[1]),cB,true); line(c,X,Y,A.map(p=>p[0]),A.map(p=>p[1]),cA,false); } }
+  // front against rear: the fast corners, the straights and the end of the straight, B → A
+  { const cv=$("#pairWin"); if (cv){ const P=r=>[[r.aero.fcF,r.aero.fcR,"fast corners"],[r.aero.fA,r.aero.rA,"straights"],[r.aero.topF,r.aero.topR,"end of straight"]].filter(p=>Number.isFinite(p[0])&&Number.isFinite(p[1]));
+      const pa=P(a), pb=P(b), all=[...pa,...pb], fx=[...all.map(p=>p[0]), ...(W?W.df.f:[])], ry=[...all.map(p=>p[1]), ...(W?W.df.r:[])];
+      const xr=[Math.floor(Math.min(...fx)-3), Math.ceil(Math.max(...fx)+3)], yr=[Math.floor(Math.min(...ry)-3), Math.ceil(Math.max(...ry)+3)];
+      const [c,w,h]=canvasCtx(cv,220), m={l:34,r:8,t:14,b:26}, X=x=>m.l+(x-xr[0])/(xr[1]-xr[0])*(w-m.l-m.r), Y=y=>h-m.b-(y-yr[0])/(yr[1]-yr[0])*(h-m.t-m.b);
+      if (RW){ c.save(); c.beginPath(); c.rect(m.l,m.t,w-m.l-m.r,h-m.t-m.b); c.clip(); c.fillStyle=css("--good")+"18"; c.beginPath(); c.moveTo(X(xr[0]),Y(xr[0]+RW.lo)); c.lineTo(X(xr[1]),Y(xr[1]+RW.lo)); c.lineTo(X(xr[1]),Y(xr[1]+RW.hi)); c.lineTo(X(xr[0]),Y(xr[0]+RW.hi)); c.closePath(); c.fill(); c.restore(); }
+      if (W){ c.fillStyle=css("--good")+"40"; c.fillRect(X(W.df.f[0]), Y(W.df.r[1]), X(W.df.f[1])-X(W.df.f[0]), Y(W.df.r[0])-Y(W.df.r[1])); }
+      axes(c,w,h,m,xr,yr,"front mm","rear mm",X,Y);
+      pa.forEach((p,i)=>{ const q=pb.find(x=>x[2]===p[2]); if (q){ c.strokeStyle=cB; c.lineWidth=1.4; c.beginPath(); c.moveTo(X(q[0]),Y(q[1])); c.lineTo(X(p[0]),Y(p[1])); c.stroke();
+          const ang=Math.atan2(Y(p[1])-Y(q[1]), X(p[0])-X(q[0])); c.beginPath(); c.moveTo(X(p[0]),Y(p[1])); c.lineTo(X(p[0])-7*Math.cos(ang-0.4),Y(p[1])-7*Math.sin(ang-0.4)); c.lineTo(X(p[0])-7*Math.cos(ang+0.4),Y(p[1])-7*Math.sin(ang+0.4)); c.closePath(); c.fillStyle=cB; c.fill(); }
+        c.fillStyle=cA; c.beginPath(); c.arc(X(p[0]),Y(p[1]),4,0,7); c.fill(); c.fillStyle=css("--muted"); const near=X(p[0])>w-90; c.textAlign=near?"right":"left"; c.fillText(p[2], X(p[0])+(near?-6:6), Y(p[1])-5); c.textAlign="left"; });
+      pb.forEach(p=>{ c.strokeStyle=cB; c.lineWidth=1.4; c.beginPath(); c.arc(X(p[0]),Y(p[1]),4,0,7); c.stroke(); }); } }
+  // roll against cornering g: the fitted gradients, front and rear
+  { const cv=$("#pairRoll"); if (cv){ const ra=a.aero.roll, rb=b.aero.roll, gm=Math.max(ra.gMax||1.5, rb.gMax||1.5, 1)+0.2, ym=Math.ceil(Math.max(ra.gF,ra.gR,rb.gF,rb.gR)*gm*10)/10+0.1;
+      const xr=[0,gm], yr=[0,ym], [c,w,h]=canvasCtx(cv,220), m={l:34,r:8,t:14,b:26}, X=x=>m.l+(x-xr[0])/(xr[1]-xr[0])*(w-m.l-m.r), Y=y=>h-m.b-(y-yr[0])/(yr[1]-yr[0])*(h-m.t-m.b);
+      axes(c,w,h,m,xr,yr,"cornering g","roll °",X,Y);
+      for (const [r,dash] of [[rb,true],[ra,false]]){ line(c,X,Y,[0,gm],[0,r.gF*gm],css("--us"),dash); line(c,X,Y,[0,gm],[0,r.gR*gm],css("--os"),dash); }
+      c.fillStyle=css("--muted"); c.fillText(`A ${fmt(ra.gF,2)} / ${fmt(ra.gR,2)} °/g · B ${fmt(rb.gF,2)} / ${fmt(rb.gR,2)} °/g (front / rear)`, m.l+4, m.t+10);
+      if (ra.outF!=null && rb.outF!=null){ c.fillText(`outside front edge: A ${fmt(ra.outF,1)} mm · B ${fmt(rb.outF,1)} mm`, m.l+4, m.t+24); } } }
+}
 function stintPairHTML(run){
+  PAIR_RUN=run;
   const R=pairRecs(run); if (R.length<2) return "";
   const progBase=(()=>{ const P=PREFS.get(tpKeyOf(run,"car")); if (!P) return null; try { const b=tpStatus(run,P).find(s=>s.id==="base"); return b && b.stints[0] ? b.stints[0].id : null; } catch(e){ return null; } })();
   if (!PAIR.a || !R.some(r=>r.id===PAIR.a)) PAIR.a=(R.find(r=>r.laps>=3)||R[0]).id;
@@ -8180,13 +8224,15 @@ function stintPairHTML(run){
   return `<section><h2>Two stints side by side <small>pick any two: pace, setup, balance, aero, dampers and tyres, from what each stint stored</small></h2>
     <div class="row" style="gap:10px;flex-wrap:wrap;align-items:center;font-size:13px;margin-bottom:8px"><b>A</b> <select id="pairA">${opt(PAIR.a)}</select> <b>B</b> <select id="pairB">${opt(PAIR.b)}</select> <button class="ghost" id="pairSwap" style="padding:3px 10px">Swap</button></div>
     <p style="margin:0 0 8px;font-size:13px"><b>What changed from B to A:</b> ${ch.length?esc(ch.join("; ")):"nothing in the setup (bias, TC, ABS, pressures and fuel aside)"}${Number.isFinite(a.trackT)&&Number.isFinite(b.trackT)&&Math.abs(a.trackT-b.trackT)>TP_COND?` <span class="warn">· the track was ${fmt(Math.abs(a.trackT-b.trackT),0)} °C ${a.trackT>b.trackT?"warmer":"cooler"} for A: the lap time is corrected, but balance and tyres move with temperature too</span>`:""}</p>
+    ${pairVizHTML(a,b)}
     ${G.map(([h,rows])=>{ const body=rows.map(([k,fn,d,u,rule,kind,fn2])=>{ const x=fn(a), y=fn(b), x2=fn2?fn2(a):undefined, y2=fn2?fn2(b):undefined; if ((x==null||Number.isNaN(x))&&(y==null||Number.isNaN(y))) return "";
         const two=fn2!==undefined; return `<tr><td class="muted">${k}</td><td class="${better(x,y,rule)}"><b>${f(x,d,kind)}${two?" / "+f(x2,d):""}</b> ${u}</td><td>${f(y,d,kind)}${two?" / "+f(y2,d):""} ${u}</td><td>${[diff(x,y,d), two?diff(x2,y2,d):""].filter(Boolean).join(" / ")}</td></tr>`; }).join("");
       return body ? `<h3 style="margin:10px 0 4px;font-size:14px">${h}</h3><div class="tablewrap"><table style="font-size:12.5px"><tr><th></th><th>A · ${esc(dt(a.date))}</th><th>B · ${esc(dt(b.date))}</th><th>A − B</th></tr>${body}</table></div>` : ""; }).join("")}
     <p class="muted" style="font-size:12px;margin:6px 0 0">Green / orange on A: better / worse than B for that line (balance: nearer your preferred balance, set on the Balance page). "–": that stint didn't store it (older stints have fewer aero numbers; a live stint gets its ride heights from the full-data file iRacing saves when you get out of the car).</p></section>`; }
 function wirePair(){
   const a=$("#pairA"), b=$("#pairB"), s=$("#pairSwap"); if (!a) return;
-  a.onchange=()=>{ PAIR.a=a.value; render(); }; b.onchange=()=>{ PAIR.b=b.value; render(); }; if (s) s.onclick=()=>{ PAIR={a:PAIR.b, b:PAIR.a}; render(); }; }
+  a.onchange=()=>{ PAIR.a=a.value; render(); }; b.onchange=()=>{ PAIR.b=b.value; render(); }; if (s) s.onclick=()=>{ PAIR={a:PAIR.b, b:PAIR.a}; render(); };
+  try { drawPair(); } catch(e){ console.error("pair viz", e); } }
 function compareHTML(run){
   const R=compareRows(run); if (!R.length) return `<section><h2>Compare stints</h2><p class="muted">No stints remembered for this car and track yet. Every stint you drive (live or recorded) is added automatically.</p></section>`;
   const best=Math.min(...R.map(x=>x.r.med).filter(Number.isFinite)), w=d=>`${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
