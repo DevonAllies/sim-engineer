@@ -3015,7 +3015,7 @@ function render(){
     tyres: () => `<section><h2>Tyres <small>temperatures, pressures, camber and wear</small></h2><div class="two"><div>${tiresHTML(A,S,run)}</div><div>${wearHTML(A)}
         <div class="grid" style="margin-top:10px"><div class="stat"><div class="k">Rear wheelspin</div><div class="v">${fmt((A.spin||0)*100,0)}%</div><div class="s">of throttle &gt;60% samples</div></div>
         <div class="stat"><div class="k">Inside rear spin</div><div class="v">${fmt((A.inSpin||0)*100,0)}%</div><div class="s">while cornering on power</div></div></div></div></div></section>` + tyreModelHTML(run, A, S) + racePressureHTML(run, A, S) + safe(()=>modelRangeHTML(run, "Tyre models"),"range") + safe(()=>tyreThermalHTML(run, A, S),"thermal") + safe(()=>gripTempHTML(run, A, S),"griptemp") + safe(()=>tyreHeatHTML(run, A, S),"heat") + areaCards("tyres"),
-    aero: () => aeroHTML(run, A, S) + optimalRakeHTML(run, A, S) + rakePhasesHTML(run, A, S) + aeroMapHTML(run, A) + aeroOptionsHTML(run, A, S) + bumpHTML(run, A) + bottomHTML(run, A) + downforceHTML(run, A) + areaCards("aero"),
+    aero: () => aeroHTML(run, A, S) + optimalRakeHTML(run, A, S) + rhcHTML(run, A, S) + rakePhasesHTML(run, A, S) + aeroMapHTML(run, A) + aeroOptionsHTML(run, A, S) + bumpHTML(run, A) + bottomHTML(run, A) + downforceHTML(run, A) + areaCards("aero"),
     balance: () => safeBalanceFeel(run, A) + `<section><h2>Balance <small>understeer angle in degrees (front wheel): higher = more understeer</small></h2>
    ${balanceReady(run,A)?"":`<div class="sugg p2" style="margin:0 0 10px"><h3>First read only</h3><p style="margin:4px 0 0">${balanceWait(run,A)}</p></div>`}
    <div class="grid" style="margin-bottom:10px">
@@ -3068,7 +3068,7 @@ function render(){
     runs.forEach(r=>{ if (r.A) r.A.tw=null; }); rerender(); });   // the measured tyre window follows the range too
   wireProg(view==="programme" && PROG_RUN ? PROG_RUN : run);
   for (const [id,key] of [["lctarget","lcTarget"],["tyreloss","tyreLoss"],["racestart","startH"]]){ const el=$("#"+id); if (el) el.onchange=()=>{ RACE[key]=el.value===""?"":+el.value; PREFS.set("race", RACE); rerender(); }; }
-  if (view==="aero" && A.rh) drawRH(run,A,S);
+  if (view==="aero" && A.rh){ drawRH(run,A,S); try { wireRHC(run,A,S); } catch(e){ console.error("rhc",e); } }
   if (view==="laps") drawTrace(run,A);
   if (view==="dampers") for (const c of Object.keys(A.damp||{})) drawHist($("#dh"+c), A.damp[c].hist);
   wireSugInputs(run); wireRace(run); wireFfb(); wireTabs(); if (view==="learn") wireLearn(run);
@@ -3260,6 +3260,73 @@ function optimalRake(run, A, S){
     if (b){ let best=NaN, bv=Infinity; for (let x=Math.min(...rk); x<=Math.max(...rk); x+=0.25){ const v=b.f(x); if (v<bv){ bv=v; best=x; } } data={n:st.length, spread, model:b, best}; } }
   return {R, W, f0, r0, rake0, fT, rT, rakeT, rakeLo, rakeHi, inF, inR, bNow, bT, dB, wing, splNow, splAfter, splOK, splMin, dF, dR, altR, altSpl, st:st.length, spread, minRake:rk.length?Math.min(...rk):NaN, maxRake:rk.length?Math.max(...rk):NaN, data};
 }
+// ---------- ride height & wing calculator: change the static heights and the wing, see where the car runs at speed ----------
+// at speed = static + the change − the extra squash. The rear squashes more with more wing (more rear downforce): 2.5% more rear load per degree
+// until your own stints at different wings measure it. Uses the bump-rubber model when the car rests on its rubbers, so the squash is right there too.
+let RHC={dF:0, dR:0, dW:0};
+function rhcWingK(run){
+  const trk=learnTrackOf(run), pts=[];
+  for (const r of Object.values(LEARN||{})) if (r.car===run.carPath && r.track===trk && r.aero && Number.isFinite(r.aero.rA) && r.setup){
+    const w=Object.entries(r.setup).find(([k])=>/Wing/i.test(k) && !/Gurney/i.test(k)), rs=Object.entries(r.setup).filter(([k])=>/(Left|Right)Rear\.RideHeight$|\.Rear[A-Za-z]*\.RideHeight$/.test(k)).map(([,v])=>learnNum(v)).filter(Number.isFinite);
+    if (w && rs.length) pts.push({w:learnNum(w[1]), sq:mean(rs)-r.aero.rA}); }
+  const ws=pts.map(p=>p.w).filter(Number.isFinite); if (pts.length>=3 && ws.length && Math.max(...ws)-Math.min(...ws)>=2){
+    const M=fitModels(pts.map(p=>p.w), pts.map(p=>p.sq), ["linear"])[0], sq0=mean(pts.map(p=>p.sq)); if (M && sq0>1){ const k=M.params.b/sq0; if (k>0 && k<0.1) return {k, own:true, n:pts.length}; } }
+  return {k:0.025, own:false, n:pts.length}; }
+function rhcCalc(run, A, S, dF, dR, dW){
+  if (!A.rh || !Number.isFinite(A.rh.front) || !Number.isFinite(A.rh.rear)) return null;
+  const R=aeroRef(run,A,S), W=R.win, rhs=c=>run.setupFlat.filter(e=>new RegExp("(Left|Right)"+c+"\\.RideHeight$").test(e.path)).map(e=>learnNum(e.raw)).filter(Number.isFinite);
+  const sF0=mean(rhs("Front")), sR0=mean(rhs("Rear")), f0=A.rh.front, r0=A.rh.rear, we=SET.wing(run), w0=we?learnNum(we.raw):NaN;
+  const WK=rhcWingK(run), M=rhModel(run,A), scale=1+WK.k*dW;
+  // the extra rear squash from the wing: from the bump-rubber model when there is one, else in proportion to today's squash
+  const sqR = M && M.R ? M.R.squash(scale, M.R.k, M.R.g) - M.R.now : (Number.isFinite(sR0) ? (sR0-r0)*(scale-1) : 0);
+  const fA=f0+dF, rA=r0+dR-sqR, bal=v=>Number.isFinite(v)?v:NaN;
+  // aero balance: the map at the new heights, with the wing counted as iRacing's rule of thumb (1° ≈ the front 1.5 mm higher)
+  const kF=Math.abs(bal(R.bal(f0-0.5,r0))-bal(R.bal(f0+0.5,r0))), perDeg=Number.isFinite(kF) && kF>0.01 ? 1.5*kF : 0.3;
+  const b0=bal(R.bal(f0,r0)), b1=bal(R.bal(fA, rA)) - perDeg*dW;
+  const spl=findSet(run,(p,k)=>k==="centerfrontsplitterheight"), splNow=spl?parseFloat(spl.raw):NaN, fit=A.splFit||{a:1.32,b:-0.24}, splMin=+S.minSplitter||0, splAfter=Number.isFinite(splNow)?splNow+fit.a*dF+fit.b*dR:NaN;
+  const minFS=+S.minFrontStatic||0, sF1=sF0+dF, sR1=sR0+dR;
+  const inW=(v,a)=>W && v>=a[0]-0.25 && v<=a[1]+0.25;
+  return {W, sF0, sR0, sF1, sR1, f0, r0, fA, rA, rake0:r0-f0, rake1:rA-fA, w0, w1:w0+dW, b0, b1, sqR, WK, onRub:!!(M && M.R && M.R.on), splNow, splAfter, splMin, splOK:!splMin||!Number.isFinite(splAfter)||splAfter>=splMin-1e-6, minFS, fsOK:!minFS||!(sF1<minFS-0.05), inF:inW(fA,W?W.df.f:[0,0]), inR:inW(rA,W?W.df.r:[0,0])}; }
+// the static changes that put the car in the middle of the window at speed, with this wing (the front only as low as the splitter / tech allows)
+function rhcSolve(run, A, S, dW){
+  const c=rhcCalc(run,A,S,0,0,dW); if (!c || !c.W) return null; const mid=a=>(a[0]+a[1])/2;
+  let dF=Math.round((mid(c.W.df.f)-c.f0)*2)/2, dR=Math.round((mid(c.W.df.r)-(c.r0-c.sqR))*2)/2;
+  const fit=A.splFit||{a:1.32,b:-0.24};
+  if (c.splMin && Number.isFinite(c.splNow)){ const lim=(c.splMin-c.splNow-fit.b*dR)/fit.a; if (dF<lim) dF=Math.ceil(lim*2)/2; }
+  if (c.minFS && Number.isFinite(c.sF0) && c.sF0+dF<c.minFS) dF=Math.ceil((c.minFS-c.sF0)*2)/2;
+  return {dF, dR}; }
+function rhcOutHTML(run, A, S){
+  const c=rhcCalc(run,A,S,RHC.dF,RHC.dR,RHC.dW); if (!c) return '<p class="muted">Needs a stint with ride heights at speed.</p>';
+  const mm=v=>Number.isFinite(v)?fmt(v,1)+" mm":"–", sg=v=>(v>0?"+":"")+fmt(v,1), W=c.W;
+  const cell=(v,ok)=>W?`<b class="${ok?"ok":"warn"}">${mm(v)}</b>`:`<b>${mm(v)}</b>`;
+  const row=(k,a,b,extra)=>`<tr><td class="muted">${k}</td><td>${a}</td><td>${b}</td><td class="muted" style="font-size:12px">${extra||""}</td></tr>`;
+  return `<table style="font-size:13px;width:100%"><tr><th></th><th>Now</th><th>With these changes</th><th></th></tr>
+    ${row("Static ride height (garage) F / R", `${mm(c.sF0)} / ${mm(c.sR0)}`, `<b>${mm(c.sF1)}</b> / <b>${mm(c.sR1)}</b>`, c.fsOK?"":`<span class="warn">front under ${fmt(c.minFS,1)} mm: fails tech</span>`)}
+    ${Number.isFinite(c.w0)?row("Rear wing", fmt(c.w0,1)+"°", "<b>"+fmt(c.w1,1)+"°</b>", RHC.dW?`rear sinks ${fmt(c.sqR,1)} mm more at speed (${c.WK.own?"measured from your stints":"2.5% more rear load per degree, until your stints at other wings measure it"})`:""):""}
+    ${row("Front at speed", cell(c.f0, c.inF||!W?true:false).replace(/class="(ok|warn)"/, W?`class="${c.f0>=W.df.f[0]-0.25&&c.f0<=W.df.f[1]+0.25?"ok":"warn"}"`:""), cell(c.fA, c.inF), W?`window ${W.df.f[0]}–${W.df.f[1]} mm`:"")}
+    ${row("Rear at speed", cell(c.r0, W && c.r0>=W.df.r[0]-0.25 && c.r0<=W.df.r[1]+0.25), cell(c.rA, c.inR), W?`window ${W.df.r[0]}–${W.df.r[1]} mm${c.onRub?"; the rear rests on its bump rubbers at speed, so a static change moves it a little less than 1:1":""}`:"")}
+    ${row("Rake at speed", mm(c.rake0), "<b>"+mm(c.rake1)+"</b>", W?`max downforce ${fmt(W.df.r[0]-W.df.f[1],0)} to ${fmt(W.df.r[1]-W.df.f[0],0)} mm`:"")}
+    ${Number.isFinite(c.b0)&&Number.isFinite(c.b1)?row("Aero balance (front)", fmt(c.b0,1)+"%", "<b>"+fmt(c.b1,1)+"%</b>", Math.abs(c.b1-c.b0)>=0.2?(c.b1>c.b0?"more front: pointier in fast corners":"more rear: more understeer in fast corners"):"about the same"):""}
+    ${Number.isFinite(c.splNow)?row("Splitter (garage)", mm(c.splNow), `<b class="${c.splOK?"":"warn"}">${mm(c.splAfter)}</b>`, c.splMin?(c.splOK?`minimum ${c.splMin} mm`:`<span class="warn">under the ${c.splMin} mm minimum: fails tech</span>`):""):""}
+    </table>
+    ${W && c.fA>W.df.f[1]+0.25 && ((c.splMin && Number.isFinite(c.splAfter) && c.splAfter<c.splMin+1.5) || (c.minFS && c.sF1<c.minFS+1)) ? `<p style="font-size:13px;margin:6px 0 0"><b>The front can't reach the window by lowering it in the garage:</b> it's already near the tech minimum (${c.splMin?"splitter "+c.splMin+" mm":"front "+fmt(c.minFS,1)+" mm"}). At speed the front comes down with softer front springs, a softer heave or bump-rubber setup, or more front downforce: the static height can't do it.</p>` : ""}
+    <p class="muted" style="font-size:12px;margin:6px 0 0">Static changes: front ${sg(RHC.dF)} mm (${/torsion/i.test(JSON.stringify(run.setupFlat.map(e=>e.key)))?"torsion bar turns":"front perch offsets"}), rear ${sg(RHC.dR)} mm (rear perch offsets), both sides the same. At speed the car follows the static change about 1:1; the wing adds rear squash. An estimate from this stint's ride heights at speed: one stint of 5 laps on the new setting confirms it.</p>`; }
+function rhcHTML(run, A, S){
+  if (!A.rh || !Number.isFinite(A.rh.front)) return "";
+  const W=(PROFILES[run.carPath]||{}).aeroWin;
+  return `<section><h2>Ride height & wing calculator <small>change the static heights and the wing, see where the car runs at speed</small></h2>
+    <div class="row" style="gap:12px;flex-wrap:wrap;align-items:center;font-size:13px;margin-bottom:8px">
+      Front static <input id="rhcF" type="number" step="0.5" value="${RHC.dF}" style="width:70px"> mm
+      Rear static <input id="rhcR" type="number" step="0.5" value="${RHC.dR}" style="width:70px"> mm
+      Wing <input id="rhcW" type="number" step="1" value="${RHC.dW}" style="width:60px"> °
+      ${W?'<button id="rhcSolve" style="padding:3px 12px">Get me into the window</button>':""} <button class="ghost" id="rhcReset" style="padding:3px 10px">Reset</button></div>
+    <div id="rhcOut">${rhcOutHTML(run,A,S)}</div></section>`; }
+function wireRHC(run, A, S){
+  const f=$("#rhcF"), r=$("#rhcR"), w=$("#rhcW"); if (!f) return;
+  const upd=()=>{ RHC={dF:+f.value||0, dR:+r.value||0, dW:+w.value||0}; const o=$("#rhcOut"); if (o) o.innerHTML=rhcOutHTML(run,A,S); };
+  f.oninput=upd; r.oninput=upd; w.oninput=upd;
+  const s=$("#rhcSolve"); if (s) s.onclick=()=>{ const x=rhcSolve(run,A,S,+w.value||0); if (x){ f.value=x.dF; r.value=x.dR; upd(); } };
+  const z=$("#rhcReset"); if (z) z.onclick=()=>{ f.value=0; r.value=0; w.value=0; upd(); }; }
 function optimalRakeHTML(run, A, S){
   const O=optimalRake(run,A,S); if (!O) return "";
   const {R,W}=O, mm=v=>`${fmt(v,1)} mm`, sg=v=>(v>0?"+":"")+fmt(v,1);
@@ -6467,7 +6534,7 @@ function dampCrossHTML(run, A){
 const TP_LAPS=5, TP_COND=4;
 // the track temperature of some stints, weighted by their laps
 const tpTrackT = L => { let a=0, n=0; for (const r of L||[]) if (Number.isFinite(r && r.trackT)){ const w=r.laps||1; a+=r.trackT*w; n+=w; } return n ? a/n : NaN; };
-const tpCheckHow = "Only if the track has changed since the baseline was driven (more than " + TP_COND + " °C): <b>3–5 laps on the baseline as it is now</b>, nothing changed, so the steps above are compared with a baseline in the same conditions. It skips itself when the conditions match.";
+const tpCheckHow = "Only if the track has changed since the baseline was driven (more than " + TP_COND + " °C): <b>3 laps on the baseline as it is now</b>, nothing changed, so the steps above are compared with a baseline in the same conditions. It skips itself when the conditions match.";
 let TP_KIND=null;   // "car" | "track", picked on the Test programme tab (null: the car programme at its test track, else this track's check)
 const tpKeyOf = (run, kind) => kind==="car" ? `testprog|${run.carPath}|car` : `testprog|${run.carPath}|${learnTrackOf(run)}`;
 // programmes from before the split were per track and had every step: the latest one becomes the car programme at its track (and stays that track's check)
@@ -6591,7 +6658,7 @@ function tpStatus(run, P){
     s.complete = m===true || (m!==false && s.done>=s.laps); s.manual=m;
     if (s.cond && !s.complete){ const sw=steps.filter(q=>s.cond.test(q.id)), tS=tpTrackT(sw.flatMap(q=>q.stints||[])), tR=tpTrackT(lastRef), ok2=Number.isFinite(tS) && Number.isFinite(tR);
       if (sw.length && sw.every(q=>q.complete) && lastRef.length && ok2 && Math.abs(tS-tR)<=TP_COND && m!==false){ s.complete=true; s.auto=true; s.how=`Not needed: the steps above ran at ${fmt(tS,0)} °C track and the baseline at ${fmt(tR,0)} °C, close enough to compare.`; }
-      else if (ok2 && Math.abs(tS-tR)>TP_COND) s.how=`The track was ${fmt(Math.abs(tS-tR),0)} °C ${tS>tR?"warmer":"cooler"} for the steps above (${fmt(tS,0)} °C) than when the baseline was driven (${fmt(tR,0)} °C), so they can't be compared fairly. Drive <b>3–5 laps on the baseline as it is now</b> in conditions like the steps above, nothing changed: the app then compares like with like.`; }
+      else if (ok2 && Math.abs(tS-tR)>TP_COND) s.how=`The track was ${fmt(Math.abs(tS-tR),0)} °C ${tS>tR?"warmer":"cooler"} for the steps above (${fmt(tS,0)} °C) than when the baseline was driven (${fmt(tR,0)} °C), so they can't be compared fairly. Drive <b>3 laps on the baseline as it is now</b> in conditions like the steps above, nothing changed: the app then compares like with like.`; }
     // the springs and bars you ran on this step (and the ride heights, camber and toe that came with them) carry on as the baseline
     if (s.kind==="between" && s.complete && s.stints.length){ const last=s.stints[s.stints.length-1], cs=last.setup||{}; curBase=Object.assign({}, curBase);
       for (const [k,v] of Object.entries(cs)) if ((s.re && s.re.test(learnNorm(k))) || /RideHeight|PerchOffset|SpringPerch|TorsionBarTurns|Camber|Toe/i.test(k)) curBase[k]=v;
@@ -6672,7 +6739,7 @@ function tpCombo(run, steps, P, what){
       let v=bR, why, done=[lo,hi].filter(Boolean).every(x=>x.complete) && C.length>1; const best=C[0], base=C.find(x=>x.w==="the baseline");
       const spr=tSpread(C.map(x=>x.L));
       if (!done) why="rear ride height: drive both the lower and the higher step first";
-      else if (spr>TP_COND){ done=false; why=`rear ride height: the track temperature differs by ${fmt(spr,0)} °C between these stints: drive the baseline check (3–5 laps) in the same conditions first`; }
+      else if (spr>TP_COND){ done=false; why=`rear ride height: the track temperature differs by ${fmt(spr,0)} °C between these stints: drive the baseline check (3 laps) in the same conditions first`; }
       else if (!base || best===base || base.S.total-best.S.total<0.1) why=`rear ride height: ${best===base?"the baseline scores best":`${best.w} is within 0.1 s of the baseline overall`}: stays at ${fmt(bR,1)} mm`;
       else { v=Math.round(best.v*10)/10; why=`rear ride height: ${best.w} (${fmt(best.v,1)} mm) scores best: ${tpScoreWhy(best.S, base.S)} against the baseline`; }
       out.RearRH={v, base:bR, unit:"mm", why, done, label:"Rear ride height (average)"}; out.items.push(out.RearRH); if (done) out.done++; if (Math.abs(v-bR)>=1) out.any=true; continue; }
@@ -6702,7 +6769,7 @@ function tpCombo(run, steps, P, what){
         else { done=true;
           const C=[B, ...ends].filter(x=>x.L && x.L.length).map(x=>Object.assign(x, {S:tpScore(x.L, run)})).filter(x=>Number.isFinite(x.S.total)).sort((x,y)=>x.S.total-y.S.total);
           const best=C[0], base=C.find(x=>x.w==="baseline"), spr=tSpread(C.map(x=>x.L));
-          if (spr>TP_COND){ done=false; why=`${ax.toLowerCase()} ${nm}: the track temperature differs by ${fmt(spr,0)} °C between these stints: drive the baseline check (3–5 laps) in the same conditions first: baseline ${braw}`; }
+          if (spr>TP_COND){ done=false; why=`${ax.toLowerCase()} ${nm}: the track temperature differs by ${fmt(spr,0)} °C between these stints: drive the baseline check (3 laps) in the same conditions first: baseline ${braw}`; }
           else if (!best) why=`${ax.toLowerCase()} ${nm}: not enough data: baseline ${braw}`;
           else if (best.w==="baseline" || !base || base.S.total-best.S.total<0.1) why=`${ax.toLowerCase()} ${nm}: ${best.w==="baseline"?"the baseline scores best":`${best.w} is within 0.1 s of the baseline overall`} (pace, balance, slides and tyres together): stays at ${braw}`;
           else { raw=best.raw; let half="";
@@ -7002,7 +7069,7 @@ function testProgHTML(run){
    ${(()=>{ const st=tpStateOf(P,steps), left=steps.filter(s=>!s.complete).length, ctl=h=>"";
      if (st==="paused") return `<div class="sugg p2" style="margin:0 0 10px"><h3>Paused at step ${steps.indexOf(next)+1} of ${steps.length}${next?`: ${esc(next.label)}`:""}</h3><p style="margin:4px 0 0">${doneN} of ${steps.length} steps done. While it's paused Bono gives his normal in-car advice and the Test step overlay stands down. A stint that matches a step still counts when you continue.</p>${ctl(`<button id="tpresume" style="padding:3px 12px">Continue the programme</button> <button class="ghost" id="tpfinish" style="padding:3px 12px">Finish now: use the data so far</button>`)}</div>`;
      if (st==="done") return `<div class="sugg p3" style="margin:0 0 10px"><h3>${left?`Finished early: ${doneN} of ${steps.length} steps`:"Programme complete"}</h3><p style="margin:4px 0 0">${left?`You finished it${P.finished?` on ${dt(P.finished)}`:""}. "What the tests show" above uses only the stints captured. Every stint still teaches the models (Learning), programme or not.`:`Every step is done: the models now know each of these settings on this car. "What to test next" (Learning) shows anything still uncertain.`}</p>${left?ctl(`<button id="tpresume" style="padding:3px 12px">Continue the remaining ${left} step${left>1?"s":""}</button>`):""}</div>`;
-     return `<div class="sugg p3" style="margin:0 0 10px"><h3>Next: ${esc(next.label)} <small class="muted" style="font-weight:400">step ${steps.indexOf(next)+1} of ${steps.length}</small></h3><p style="margin:4px 0 0">${next.how} Drive <b>${next.laps} clean laps</b>${next.done?` (${next.done} so far)`:""}.</p>${(()=>{ const tNow=parseFloat(((run.info||{}).WeekendInfo||{}).TrackSurfaceTemp); return Number.isFinite(tNow) && Number.isFinite(next.refT) && Math.abs(tNow-next.refT)>TP_COND ? `<p class="muted" style="margin:4px 0 0;font-size:12px">Track now ${fmt(tNow,0)} °C; the baseline this step is compared with was driven at ${fmt(next.refT,0)} °C. Tests compare best in similar conditions: before deciding, the app asks for a quick 3–5 lap baseline check in these conditions.</p>` : ""; })()}${ctl(`<button class="ghost" id="tppause" style="padding:3px 12px">Pause</button> <button class="ghost" id="tpfinish" style="padding:3px 12px">Finish now: use the data so far</button>`)}</div>`; })()}
+     return `<div class="sugg p3" style="margin:0 0 10px"><h3>Next: ${esc(next.label)} <small class="muted" style="font-weight:400">step ${steps.indexOf(next)+1} of ${steps.length}</small></h3><p style="margin:4px 0 0">${next.how} Drive <b>${next.laps} clean laps</b>${next.done?` (${next.done} so far)`:""}.</p>${(()=>{ const tNow=parseFloat(((run.info||{}).WeekendInfo||{}).TrackSurfaceTemp); return Number.isFinite(tNow) && Number.isFinite(next.refT) && Math.abs(tNow-next.refT)>TP_COND ? `<p class="muted" style="margin:4px 0 0;font-size:12px">Track now ${fmt(tNow,0)} °C; the baseline this step is compared with was driven at ${fmt(next.refT,0)} °C. Tests compare best in similar conditions: before deciding, the app asks for a quick 3-lap baseline check in these conditions.</p>` : ""; })()}${ctl(`<button class="ghost" id="tppause" style="padding:3px 12px">Pause</button> <button class="ghost" id="tpfinish" style="padding:3px 12px">Finish now: use the data so far</button>`)}</div>`; })()}
    ${(()=>{ try { return tpSheetHTML(run,P,steps); } catch(e){ console.error("tpsheet",e); return ""; } })()}
    <div class="tablewrap"><table style="font-size:12px"><tr><th></th><th>Step</th><th>What to set</th><th>Clean laps</th><th>Stints found</th></tr>
     ${steps.map(s=>{ const head=s.block!==blk?`<tr><td colspan="5" style="background:rgba(127,127,127,.08);font-weight:700">${esc(s.block)}</td></tr>`:""; blk=s.block;
