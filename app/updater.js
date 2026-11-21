@@ -31,7 +31,7 @@ function init(sendFn) {
   setInterval(check, 60 * 60 * 1000);   // every hour
 }
 
-function check() { if (autoUpdater) autoUpdater.checkForUpdates().catch(() => {}); return status; }
+function check() { if (autoUpdater && status.state !== 'downloading' && status.state !== 'ready') { set({ state: 'checking' }); autoUpdater.checkForUpdates().catch(() => {}); } return status; }
 function install() { if (autoUpdater && status.state === 'ready') { app.isQuitting = true; autoUpdater.quitAndInstall(false, true); } }
 function current() { return status; }
 
