@@ -51,7 +51,7 @@ if (window.se){ window.se.onEditMode(on=>{ edit=on; document.body.classList.togg
   window.se.onPlan(p=>{ plan=p; draw(); }); window.se.getPlan().then(p=>{ plan=p; draw(); }); }
 const esc=s=>String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 const short=s=>String(s).replace(/high speed /gi,"HS ").replace(/low speed /gi,"LS ").replace(/compression damping/gi,"bump").replace(/rebound damping/gi,"rebound").replace(/arb blades/gi,"ARB").replace(/spring rate/gi,"spring").replace(/total toe in/gi,"toe").replace(/toe in/gi,"toe").replace(/ride height/gi,"RH").replace(/rear wing angle/gi,"Wing").replace(/^w/,c=>c.toUpperCase());
-function vis(){ document.body.classList.toggle("hidden", !(edit || (where.connected && where.inGarage))); }
+function vis(){ const P=plan && plan.prog, active=P && P.none===undefined; document.body.classList.toggle("hidden", !(edit || (where.connected && where.inGarage && active))); }
 function draw(){
   vis();
   const P=plan && plan.prog;

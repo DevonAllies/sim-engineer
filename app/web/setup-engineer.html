@@ -3068,8 +3068,8 @@ function render(){
     runs.forEach(r=>{ if (r.A) r.A.tw=null; }); rerender(); });   // the measured tyre window follows the range too
   wireProg(view==="programme" && PROG_RUN ? PROG_RUN : run);
   for (const [id,key] of [["lctarget","lcTarget"],["tyreloss","tyreLoss"],["racestart","startH"]]){ const el=$("#"+id); if (el) el.onchange=()=>{ RACE[key]=el.value===""?"":+el.value; PREFS.set("race", RACE); rerender(); }; }
-  if (view==="aero"){ const ob=$("#openFull"); if (ob) ob.onclick=()=>{ current=+ob.dataset.i; LIVE.follow=false; render(); }; }
-  if (view==="aero" && A.rh){ drawRH(run,A,S); try { drawRake(run,A,S); } catch(e){ console.error("rake",e); } try { drawWinMap(run,A); } catch(e){ console.error("winmap",e); } try { wirePlat(run,A,S); } catch(e){ console.error("plat",e); } { const sel=$("#aeroCmpSel"); if (sel) sel.onchange=()=>{ AERO_CMP=sel.value; render(); }; } try { wireRHC(run,A,S); } catch(e){ console.error("rhc",e); } }
+  if (view==="aero" || view==="dampers"){ const ob=$("#openFull"); if (ob) ob.onclick=()=>{ current=+ob.dataset.i; LIVE.follow=false; render(); }; }
+  if (view==="aero" && A.rh){ drawRH(run,A,S); try { drawRake(run,A,S); } catch(e){ console.error("rake",e); } { const rs=$("#rakeCmpSel"); if (rs) rs.onchange=()=>{ RAKE_CMP=rs.value||null; render(); }; } try { drawWinMap(run,A); } catch(e){ console.error("winmap",e); } try { wirePlat(run,A,S); } catch(e){ console.error("plat",e); } { const sel=$("#aeroCmpSel"); if (sel) sel.onchange=()=>{ AERO_CMP=sel.value; render(); }; } try { wireRHC(run,A,S); } catch(e){ console.error("rhc",e); } }
   if (view==="laps") drawTrace(run,A);
   if (view==="dampers"){ try { drawRoll(run,A); } catch(e){ console.error("roll", e); } for (const c of Object.keys(A.damp||{})) drawHist($("#dh"+c), A.damp[c].hist); }
   wireSugInputs(run); wireRace(run); wireFfb(); wireTabs(); if (view==="learn") wireLearn(run);
@@ -3339,6 +3339,7 @@ function rakeCanvas(cv, o){
   if (o.dots) for (const d of o.dots){ c.fillStyle=d.c; for (let i=0;i<d.x.length;i++) c.fillRect(X(d.x[i])-1, Y(d.y[i])-1, 2, 2); }
   // a line coloured green inside the window, orange outside
   if (o.line){ c.lineWidth=1.8; for (let i=1;i<o.line.x.length;i++){ const v=o.line.y[i]; c.strokeStyle = o.line.color || (inB(v) ? css("--good") : css("--os")); c.beginPath(); c.moveTo(X(o.line.x[i-1]),Y(o.line.y[i-1])); c.lineTo(X(o.line.x[i]),Y(v)); c.stroke(); } }
+  if (o.cmp){ c.strokeStyle=css("--muted"); c.lineWidth=2; c.setLineDash([6,4]); c.beginPath(); o.cmp.x.forEach((x,i)=>{ const px=X(x), py=Y(o.cmp.y[i]); i?c.lineTo(px,py):c.moveTo(px,py); }); c.stroke(); c.setLineDash([]); }
   if (o.median){ c.strokeStyle=css("--ink"); c.lineWidth=2.2; c.beginPath(); o.median.x.forEach((x,i)=>{ const px=X(x), py=Y(o.median.y[i]); i?c.lineTo(px,py):c.moveTo(px,py); }); c.stroke(); }
 }
 function rakeChartsHTML(run, A, S){
@@ -3346,15 +3347,25 @@ function rakeChartsHTML(run, A, S){
   const RW=rakeWindow(run,S), fast=[], all=[];
   for (const j of A.idx){ const v=ch.Speed[j]*3.6; if (v<60) continue; const r=rakeAt(ch,j); if (!Number.isFinite(r)) continue; all.push(r); if (v>=140 && Math.abs(ch.LatAccel[j])>7.85 && ch.Brake[j]<0.05) fast.push(r); }
   const inside = RW && fast.length ? fast.filter(r=>r>=RW.lo && r<=RW.hi).length/fast.length : NaN, medFast=fast.length?median(fast):NaN;
-  const verdict = !RW ? "" : !Number.isFinite(inside) ? "" : inside>=0.6 ? `In the fast corners (above 140 km/h, over 0.8 g) the rake is inside the window <b>${Math.round(inside*100)}%</b> of the time (typical ${fmt(medFast,1)} mm): good.`
-    : `In the fast corners (above 140 km/h, over 0.8 g), where downforce earns lap time, the rake is inside the window only <b>${Math.round(inside*100)}%</b> of the time: typically <b>${fmt(medFast,1)} mm</b>, ${medFast<RW.lo?`${fmt(RW.lo-medFast,1)} mm under`:`${fmt(medFast-RW.hi,1)} mm over`} the window (${medFast<RW.lo?"the rear too low or the front too high at speed: less front downforce":"the rear too high or the front too low: front-heavy aero, nervous at speed"}). The calculator below works out the static change.`;
+  const where = !RW || !Number.isFinite(medFast) ? "" : medFast<RW.lo ? `${fmt(RW.lo-medFast,1)} mm under the window (the rear too low or the front too high: less front downforce)` : medFast>RW.hi ? `${fmt(medFast-RW.hi,1)} mm over the window (the rear too high or the front too low: front-heavy aero, nervous at speed)` : medFast-RW.lo<1.5 ? "just inside the bottom of the window, so it dips under it often" : RW.hi-medFast<1.5 ? "just inside the top of the window, so it goes over it often" : "inside the window";
+  const verdict = !RW || !Number.isFinite(inside) ? "" : `In the fast corners (above 140 km/h, over 0.8 g), where downforce earns lap time, the rake is inside the window <b>${Math.round(inside*100)}%</b> of the time: typically <b>${fmt(medFast,1)} mm</b>, ${where}.${inside<0.6?" The platform at a glance (top of this page) and the calculator below work out the change.":""}`;
   return `<section><h2>Rake at speed and through the lap <small>rake = rear minus front ride height; window from ${RW?esc(RW.src):"no target set (add front and rear targets under Targets)"}</small></h2>
     ${verdict?`<p style="margin:0 0 8px">${verdict}</p>`:""}
+    ${(()=>{ const C=rakeCmpList(run); if (!C.length) return ""; const o=C.find(x=>x.id===RAKE_CMP); const me=rakeCurves(run,A), FI=x=>x&&x.fcIn!=null?`${fmt(x.fcIn,0)}% in the window`:"";
+      const before=o&&o.ap?` <span class="muted">Before (${esc(o.label)}): fast-corner rake ${o.ap.fcRake!=null?fmt(o.ap.fcRake,1)+" mm":"–"}${o.ap.fcIn!=null?`, ${FI(o.ap)}`:""}; now ${fmt(medFast,1)} mm, ${Number.isFinite(inside)?Math.round(inside*100)+"% in the window":""}.</span>`:"";
+      return `<div class="row" style="gap:10px;align-items:center;font-size:13px;margin:0 0 6px">Compare with <select id="rakeCmpSel"><option value="">nothing</option>${C.map(x=>`<option value="${esc(x.id)}"${x.id===RAKE_CMP?" selected":""}>${esc(x.label)}</option>`).join("")}</select> <span class="muted" style="font-size:12px">drawn dashed on both charts: what your change did to the rake</span></div>${before?`<p style="margin:0 0 6px;font-size:13px">${before}</p>`:""}`; })()}
     <h3 style="margin:6px 0 2px;font-size:13px">Rake against speed <small class="muted">every clean lap · blue: on throttle or coasting · red: braking · line: the typical rake at each speed · shaded column: the speeds of your fast corners (that's where the window matters; on the straights less rake means less drag)</small></h3>
     <canvas id="rakeV"></canvas>
     <h3 style="margin:12px 0 2px;font-size:13px">Rake through your best lap <small class="muted">green inside the window, orange outside · grey: speed · T = corners</small></h3>
     <canvas id="rakeL"></canvas>
     <p class="muted" style="font-size:12px;margin:6px 0 0">Only the fast parts of the lap matter much for the window: in slow corners there's little downforce, so the rake there costs little. Under braking the nose dives and the rear lifts, so the rake jumps up (the red dots); how far is down to the front springs, bump rubbers and dampers, not the static ride height.</p></section>`; }
+// earlier stints of this car at this track that have rake curves: stored ones, and full-data stints loaded in this session
+function rakeCmpList(run){
+  const trk=learnTrackOf(run), dt=d=>new Date(d).toLocaleString([], {weekday:"short", day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit"}), out=[];
+  for (const r of runs) if (r!==run && r.name!==run.name && !out.some(o=>o.id==="run:"+r.name) && r.carPath===run.carPath && !r.live && r.A && r.A.rh && learnTrackOf(r)===trk){ const rc=rakeCurves(r, r.A); if (rc) out.push({id:"run:"+r.name, label:r.short||r.name, rc, ap:aeroPoint(r, r.A)}); }
+  for (const r of Object.values(LEARN||{}).filter(x=>x.car===run.carPath && x.track===trk && x.aero && x.aero.rk && x.id!==run.learnedId).sort((a,b)=>b.date-a.date))
+    if (!out.some(o=>o.ap && Math.abs((o.ap.vmax||0)-(r.aero.vmax||0))<0.05 && o.ap.fcRake===r.aero.fcRake)) out.push({id:r.id, label:`${dt(r.date)} · ${r.setupName||"setup"} · ${r.laps} laps`, rc:r.aero.rk, ap:r.aero});
+  return out.slice(0,30); }
 function drawRake(run, A, S){
   const ch=run.ch, cv=$("#rakeV"), cl=$("#rakeL"); if (!cv || !cl || !ch.LRrideHeight) return; const RW=rakeWindow(run,S);
   // 1. rake against speed: every clean lap, braking in red, the typical rake per 10 km/h in black
@@ -3365,14 +3376,15 @@ function drawRake(run, A, S){
   if (!ally.length) return;
   const lo=Math.floor(Math.min(pct(ally,.01), RW?RW.lo-2:1e9)/5)*5, hi=Math.ceil(Math.max(pct(ally,.99), RW?RW.hi+2:-1e9)/5)*5;
   rakeCanvas(cv, {h:260, xr:[60, Math.ceil(A.vmax/10)*10], yr:[lo,hi], band:RW, xl:"km/h", yl:"rake mm",
-    dots:[{x:nx,y:ny,c:css("--us")+"55"},{x:bx,y:by,c:css("--bad")+"77"}], median:{x:mk, y:mk.map(b=>median(bins[b]))}, xband:(()=>{ const fv=[]; for (let i=0;i<A.idx.length;i+=step){ const j=A.idx[i], v=ch.Speed[j]*3.6; if (v>=140 && Math.abs(ch.LatAccel[j])>7.85 && ch.Brake[j]<0.05) fv.push(v); } return fv.length>50 ? [pct(fv,.1), pct(fv,.9)] : null; })()});
+    dots:[{x:nx,y:ny,c:css("--us")+"55"},{x:bx,y:by,c:css("--bad")+"77"}], median:{x:mk, y:mk.map(b=>median(bins[b]))}, cmp:(()=>{ const o=rakeCmpList(run).find(x=>x.id===RAKE_CMP); return o&&o.rc&&o.rc.V.length?{x:o.rc.V.map(p=>p[0]), y:o.rc.V.map(p=>p[1])}:null; })(), xband:(()=>{ const fv=[]; for (let i=0;i<A.idx.length;i+=step){ const j=A.idx[i], v=ch.Speed[j]*3.6; if (v>=140 && Math.abs(ch.LatAccel[j])>7.85 && ch.Brake[j]<0.05) fv.push(v); } return fv.length>50 ? [pct(fv,.1), pct(fv,.9)] : null; })()});
   // 2. rake through the best lap, against distance, with the corners and a faint speed trace
   const L=A.best; if (!L) return; const x=[],y=[],sv=[];
   for (let j=L.s;j<L.e;j+=2){ const d=ch.LapDist? ch.LapDist[j] : ch.LapDistPct[j]*1000, r=rakeAt(ch,j); if (!Number.isFinite(d)||!Number.isFinite(r)) continue; x.push(d); y.push(r); sv.push(ch.Speed[j]*3.6); }
   let corners=null; try { const M=trackPath(run,A); if (M && M.labels) corners=M.labels.map(k=>{ const j=L.s+k.i; return {n:k.n, x:ch.LapDist? ch.LapDist[j] : ch.LapDistPct[j]*1000}; }).filter(k=>Number.isFinite(k.x)); } catch(e){}
   const ylo=Math.floor(Math.min(pct(y,.01), RW?RW.lo-2:1e9)/5)*5, yhi=Math.ceil(Math.max(pct(y,.99), RW?RW.hi+2:-1e9)/5)*5;
   { const n=Math.max(1, Math.round(run.tick*0.2/2)), ys=y.map((_,i)=>{ let a=0,k=0; for (let q=Math.max(0,i-n); q<=Math.min(y.length-1,i+n); q++){ a+=y[q]; k++; } return a/k; }); y.splice(0, y.length, ...ys); }
-  rakeCanvas(cl, {h:260, xr:[0, Math.max(...x)], yr:[ylo,yhi], band:RW, xl:"m", yl:"rake mm", line:{x,y}, speed:{x, v:sv, max:A.vmax||Math.max(...sv)}, corners});
+  const lapLen=Math.max(...x), oC=rakeCmpList(run).find(q=>q.id===RAKE_CMP);
+  rakeCanvas(cl, {h:260, xr:[0, lapLen], yr:[ylo,yhi], band:RW, xl:"m", yl:"rake mm", line:{x,y}, cmp:oC&&oC.rc&&oC.rc.L.length?{x:oC.rc.L.map(p=>p[0]*lapLen), y:oC.rc.L.map(p=>p[1])}:null, speed:{x, v:sv, max:A.vmax||Math.max(...sv)}, corners});
 }
 // ---------- fast corners: where downforce and time go, and how to get the ride heights into the window ----------
 // a fast corner: above 140 km/h with more than 0.8 g, held for 0.3 s or more (merging gaps under 1 s), on every clean lap
@@ -3622,7 +3634,7 @@ function rollCal(run, A){
     return {name:c.name, v:c.v, g:lg, rollF:Math.abs(F.b)*lg, rollR:Math.abs(R.b)*lg, outF:median(J.map(out)), inF:median(J.map(inn)), outR:median(J.map(outR)), inR:median(J.map(innR))}; }).filter(Boolean);
   return A._roll={g, rF, rR, F, R, gradF:Math.abs(F.b), gradR:Math.abs(R.b), gMax, tr, per}; }
 function rollHTML(run, A){
-  const RC=rollCal(run,A); if (!RC) return ""; const tot=(RC.gradF+RC.gradR)/2, diff=(RC.gradF-RC.gradR)/tot*100, W=(PROFILES[run.carPath]||{}).aeroWin;
+  const RC=rollCal(run,A); if (!RC){ const full=[...runs].reverse().find(r=>r!==run && r.carPath===run.carPath && !r.live && r.ch && r.ch.LFrideHeight); return run.live ? `<section><h2>Roll</h2><p style="margin:0">This is the <b>live</b> stint: iRacing doesn't send ride heights live, so roll can't be measured until you get out of the car and the <b>"Stint … · full data"</b> version appears at the top.</p>${full?`<p style="margin:8px 0 0"><button id="openFull" data-i="${runs.indexOf(full)}" style="padding:3px 12px">Open ${esc(full.short)}</button></p>`:""}</section>` : ""; } const tot=(RC.gradF+RC.gradR)/2, diff=(RC.gradF-RC.gradR)/tot*100, W=(PROFILES[run.carPath]||{}).aeroWin;
   const minOut=RC.per.length?Math.min(...RC.per.map(p=>p.outF)):NaN, worst=RC.per.find(p=>p.outF===minOut);
   const pref=(()=>{ try { const st=(PREFS.get("style",{})||{})[run.carPath]||"neutral"; return (STYLES[st]||STYLES.neutral).label; } catch(e){ return "Balanced"; } })();
   const rows=RC.per.map(p=>`<tr><td><b>${esc(p.name)}</b></td><td>${fmt(p.v,0)} km/h</td><td>${fmt(p.g,2)} g</td><td>${fmt(p.rollF,2)}° / ${fmt(p.rollR,2)}°</td><td>${fmt(p.outF,1)} / ${fmt(p.inF,1)} mm</td><td>${fmt(p.outR,1)} / ${fmt(p.inR,1)} mm</td></tr>`).join("");
@@ -3657,7 +3669,7 @@ function drawRoll(run, A){
       c.fillStyle=col+"55"; c.strokeStyle=col; c.lineWidth=1.5; c.beginPath(); c.rect(-half-14, -10, 2*half+28, 20); c.fill(); c.stroke(); c.restore();
       c.fillStyle=css("--ink"); c.font="bold 12px system-ui"; c.textAlign="center"; c.fillText(label, cx, 14); c.font="11px system-ui";
       c.fillText(`${fmt(roll,2)}° roll`, cx, 30);
-      if (Number.isFinite(P.o)){ c.textAlign="left"; c.fillStyle=css("--muted"); c.fillText(`outside ${fmt(P.o,1)} mm`, cx+half-40, gy+16); c.textAlign="right"; c.fillText(`inside ${fmt(P.i,1)} mm`, cx-half+40, gy+16); }
+      if (Number.isFinite(P.o)){ c.fillStyle=css("--muted"); c.textAlign="left"; c.fillText(`inside ${fmt(P.i,1)}`, x0+2, gy+16); c.textAlign="right"; c.fillText(`outside ${fmt(P.o,1)} mm`, x0+pw-2, gy+16); }
       c.textAlign="left"; };
     panel(0, "Front", RC.gradF*gm, pF, css("--us")); panel(w/2+8, "Rear", RC.gradR*gm, pR, css("--os")); }
 }
@@ -3789,7 +3801,7 @@ function dragIndex(run, A){
   if (X.length<150) return A._drag=null; const c=fitLS(X,y); if (!c || !(c[2]<0)) return A._drag=null;
   return A._drag={k:-c[2], idx:+(-c[2]*1e4).toFixed(2), n:X.length}; }
 // ---------- compare this stint's aero with another (the baseline, the last one…) ----------
-let AERO_CMP=null;
+let AERO_CMP=null, RAKE_CMP=null;
 function aeroCmpHTML(run, A, S){
   const me=aeroPoint(run,A); if (!me) return ""; const trk=learnTrackOf(run), K=tpTempK(run).k;
   const recs=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===trk && r.aero && r.id!==run.learnedId && !r.wet).sort((a,b)=>b.date-a.date); if (!recs.length) return "";
@@ -3813,6 +3825,13 @@ function aeroCmpHTML(run, A, S){
     ${rows.map(([k,a,b,u,d,kind,a2,b2])=>{ if (a==null && b==null) return ""; const two=a2!==undefined; return `<tr><td class="muted">${k}</td><td><b>${two?`${f(a,d)} / ${f(a2,d)}`:kind==="time"?(Number.isFinite(a)?fmtTime(a):"–"):f(a,d)}</b> ${u}</td><td>${two?`${f(b,d)} / ${f(b2,d)}`:kind==="time"?(Number.isFinite(b)?fmtTime(b):"–"):f(b,d)} ${u}</td><td>${two?[dd(a,b,d),dd(a2,b2,d)].filter(Boolean).join(" / "):dd(a,b,d)}</td></tr>`; }).join("")}
     </table></div>
     <p class="muted" style="font-size:12px;margin:6px 0 0">${W&&RW?`Windows: front ${W.df.f[0]}–${W.df.f[1]}, rear ${W.df.r[0]}–${W.df.r[1]}, rake ${fmt(RW.lo,0)} to ${fmt(RW.hi,0)} mm. `:""}The lap time is taken to 30 °C track (${fmt(K,2)} s per °C${tpTempK(run).own?", measured from your stints":""}). Stints from before this version don't have the fast-corner, end-of-straight, braking and drag numbers ("–"): every stint from now on does. Drag index: from full-throttle acceleration on the straights; more wing, more rake or a higher car raise it.</p></section>`; }
+function rakeCurves(run, A){
+  const ch=run.ch; if (!ch.LRrideHeight || !A.rh) return null; const bins={};
+  for (const j of A.idx){ const v=ch.Speed[j]*3.6; if (v<60 || ch.Brake[j]>0.1) continue; const r=rakeAt(ch,j); if (!Number.isFinite(r)) continue; const b=Math.floor(v/10)*10+5; (bins[b]=bins[b]||[]).push(r); }
+  const V=Object.keys(bins).map(Number).filter(b=>bins[b].length>=20).sort((a,b)=>a-b).map(b=>[b, +median(bins[b]).toFixed(2)]);
+  const L=A.best, Lp=[]; if (L){ const n=200, buck=Array.from({length:n},()=>[]); for (let j=L.s;j<L.e;j++){ const p=ch.LapDistPct[j], r=rakeAt(ch,j); if (Number.isFinite(p)&&Number.isFinite(r)) buck[Math.min(n-1,Math.max(0,Math.floor(p*n)))].push(r); }
+    buck.forEach((a,i)=>{ if (a.length) Lp.push([+(i/n).toFixed(3), +mean(a).toFixed(2)]); }); }
+  return {V, L:Lp}; }
 // one aero data point per stint: wing, garage ride heights, ride heights measured at speed, top speed, downforce estimate, balance
 function aeroPoint(run, A){
   if (!A || !A.rh || !Number.isFinite(A.rh.front)) return null;
@@ -3828,7 +3847,7 @@ function aeroPoint(run, A){
       if (FC.length){ o.fcF=r2(median(FC.map(c=>c.F))); o.fcR=r2(median(FC.map(c=>c.R))); o.fcRake=r2(median(FC.map(c=>c.rake))); }
       if (RW){ const ch=run.ch, fr=[]; for (const j of A.idx){ if (ch.Speed[j]*3.6>=140 && Math.abs(ch.LatAccel[j])>7.85 && ch.Brake[j]<0.05){ const r=rakeAt(ch,j); if (Number.isFinite(r)) fr.push(r); } } if (fr.length>50) o.fcIn=r2(fr.filter(r=>r>=RW.lo&&r<=RW.hi).length/fr.length*100); }
       if (C){ o.topF=r2(C.F.a-C.F.c*C.vmax*C.vmax); o.topR=r2(C.R.a-C.R.c*C.vmax*C.vmax); o.brkF=r2(C.brkF); o.brkR=r2(C.brkR); o.splMin=r2(C.splMin); }
-      if (D) o.drag=D.idx; return o; } catch(e){ return {}; } })()};
+      if (D) o.drag=D.idx; const RC=rakeCurves(run,A); if (RC) o.rk=RC; return o; } catch(e){ return {}; } })()};
 }
 // ride height at speed from wing, springs and bump-rubber gaps, per axle, calibrated on this stint:
 // the aero load is worked out from how far the shocks compress at speed (spring until the rubber engages, then spring + rubber),
@@ -4143,10 +4162,27 @@ function whereOf(path){
   return cn || (/(front|frontbrakes|frontdampers)/.test(p.split(".").slice(1,3).join(".")) ? "F" : /(\.rear|reardampers|differential|gearsdifferential)/.test(p) && !/aerobalancecalc|aerocalculator/.test(p) ? "R" : "C");
 }
 // share the switched-on changes with the Garage overlay
+function setupBrief(run){
+  const A=run.A; if (!A || A.error || !A.rep || !A.rep.length) return null; const S=settingsFor(run), L=[];
+  const P=(()=>{ try { return balPref(run).total||0; } catch(e){ return 0; } })(), lo=US_BASE.loose+P, hi=US_BASE.push+P, ph=k=>learnPhase(A,k);
+  { const b=["entry","mid","exit"].map(k=>[k,ph(k)]).filter(([,v])=>Number.isFinite(v)), w=v=>v>hi?"pushes":v<lo?"loose":"ok", bad=b.filter(([,v])=>w(v)!=="ok");
+    if (b.length) L.push({k:"Balance", v: bad.length ? bad.map(([k,v])=>`${k} ${w(v)} (${fmt(v,1)}°)`).join(", ") : "as you like it on entry, mid and exit", c: bad.length?"warn":"ok"}); }
+  { const ar=A.rh ? run : [...runs].reverse().find(r=>r.carPath===run.carPath && r.A && r.A.rh && !r.live); const W0=(PROFILES[run.carPath]||{}).aeroWin;
+    if (ar && W0){ const AA=ar.A, FC=fastCorners(ar,AA), f=FC.length?median(FC.map(c=>c.F)):AA.rh.front, r=FC.length?median(FC.map(c=>c.R)):AA.rh.rear, RW=rakeWindow(ar,S);
+      const o=(v,w)=>v>w[1]+1.5?`${fmt(v-w[1],0)} mm high`:v<w[0]-1.5?`${fmt(w[0]-v,0)} mm low`:"in", rk=r-f, rin=RW&&rk>=RW.lo-1.5&&rk<=RW.hi+1.5;
+      const tx=`fast corners: front ${o(f,W0.df.f)}, rear ${o(r,W0.df.r)}, rake ${rin?"in":"out"}${ar!==run?" (last full-data stint)":""}`;
+      L.push({k:"Aero", v:tx, c: o(f,W0.df.f)==="in" && o(r,W0.df.r)==="in" && rin ? "ok" : "warn"}); }
+    else if (!A.rh && W0) L.push({k:"Aero", v:"ride heights after you get out of the car (full-data stint)", c:""}); }
+  try { const RC=A.rh?rollCal(run,A):null; if (RC){ const out=RC.per.length?Math.min(...RC.per.map(p=>p.outF)):NaN; L.push({k:"Roll", v:`${fmt((RC.gradF+RC.gradR)/2,2)}°/g${Number.isFinite(out)?` · outside front edge ${fmt(out,0)} mm`:""}`, c: Number.isFinite(out)&&out<15?"warn":""}); } } catch(e){}
+  { const tw=A.tw; if (tw && Number.isFinite(tw.front) && Number.isFinite(tw.rear)){ const o=v=>v<tw.lo?"cold":v>tw.hi?"hot":"in"; L.push({k:"Tyres", v:`front ${fmt(tw.front,0)} °C ${o(tw.front)}, rear ${fmt(tw.rear,0)} °C ${o(tw.rear)} (window ${fmt(tw.lo,0)}–${fmt(tw.hi,0)})`, c: o(tw.front)==="in"&&o(tw.rear)==="in"?"ok":"warn"}); } }
+  { const n=A.events?A.events.length/A.rep.length:NaN; if (Number.isFinite(n)) L.push({k:"Slides", v:`${fmt(n,1)} a lap`, c:n>2?"warn":"ok"}); }
+  let next=""; try { const s=(run.sug||[])[0]; if (s){ const o=s.opts&&s.opts[0]; next=`${s.title}${o&&o.label?`: ${o.label}`:""}`; } } catch(e){}
+  return {when:`${A.rep.length} clean lap${A.rep.length===1?"":"s"}`, lines:L.slice(0,5), next:next.length>110?next.slice(0,108)+"…":next}; }
 function publishPlan(run){
   if (!window.se || !window.se.publishPlan) return;
   const st=setupName(run), items=[...buildPlan(run).values()].map(p=>({where:whereOf(p.e.path), name:pretty(p.e.key), from:p.e.raw.trim(), to:p.to, done:!!(run.doneMap && run.doneMap[p.e.path+"="+p.to])}));
-  LAST_PLAN = {tests:Object.keys(PREFS.data||{}).filter(k=>{ const v=PREFS.data[k]; if (!k.startsWith("testprog|") || !v || !v.created || v.state) return false; const p=k.split("|"); if (p[2]==="car") return true; const C=PREFS.data[`testprog|${p[1]}|car`]; return !(C && C.track===p[2] && C.state==="paused"); }).map(k=>{ const v=PREFS.data[k], p=k.split("|"); return p[2]==="car" ? `${p[1]}|${v.track}` : `${p[1]}|${p[2]}`; }), car:run.carName, load:st.name, saveAs:saveAsName(st.name||"my setup.sto"), items, done:items.filter(i=>i.done).length};
+  let brief=null; try { brief=setupBrief(run); } catch(e){ console.error("brief", e); }
+  LAST_PLAN = {brief, tests:Object.keys(PREFS.data||{}).filter(k=>{ const v=PREFS.data[k]; if (!k.startsWith("testprog|") || !v || !v.created || v.state) return false; const p=k.split("|"); if (p[2]==="car") return true; const C=PREFS.data[`testprog|${p[1]}|car`]; return !(C && C.track===p[2] && C.state==="paused"); }).map(k=>{ const v=PREFS.data[k], p=k.split("|"); return p[2]==="car" ? `${p[1]}|${v.track}` : `${p[1]}|${p[2]}`; }), car:run.carName, load:st.name, saveAs:saveAsName(st.name||"my setup.sto"), items, done:items.filter(i=>i.done).length};
   publishProg();
 }
 // the Test step overlay's data rides along with the plan; sent again whenever the live garage changes

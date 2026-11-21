@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Setup brief</title>
+<style>
+:root{--ink:#eef0f4;--muted:#9aa3b2;--line:rgba(255,255,255,.09);--panel:rgba(14,16,21,.88);--accent:#ff6a4d;--ok:#5fd38d;--warn:#ffb347;--bad:#ff6a6a}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:transparent;overflow:hidden;height:100%}
+body{font:12px/1.3 system-ui,"Segoe UI",sans-serif;color:var(--ink);font-variant-numeric:tabular-nums;user-select:none}
+#root{position:relative;width:100%;height:100%;padding:9px 11px;background:var(--panel);border:1px solid var(--line);border-radius:10px;display:flex;flex-direction:column;gap:5px;overflow:hidden;transition:opacity .25s}
+body.hidden #root{opacity:0}
+body.edit #root{outline:2px dashed var(--accent);outline-offset:-2px;-webkit-app-region:drag;cursor:move}
+#editbar{display:none;position:absolute;left:0;right:0;bottom:0;font-size:10px;text-align:center;color:#fff;background:var(--accent);border-radius:0 0 10px 10px;padding:2px}
+body.edit #editbar{display:block}
+.top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.top b{font-size:11px;letter-spacing:.1em;color:var(--accent)}
+.k{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.row{display:grid;grid-template-columns:62px 1fr;gap:6px;align-items:baseline;border-bottom:1px solid var(--line);padding:2px 0}
+.row .k{padding-top:1px}
+.v{font-size:12.5px}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+.next{font-size:12px;margin-top:2px}
+.none{color:var(--muted);text-align:center;padding:16px 6px}
+</style>
+</head>
+<body class="hidden">
+<div id="root">
+  <div class="top"><b>SETUP</b><span class="k" id="info"></span></div>
+  <div id="body"></div>
+  <div id="editbar">Setup brief · drag to move · drag the edge to resize</div>
+</div>
+<script>
+"use strict";
+// a short summary of what the car is doing (from the main app's last stint): balance, aero platform, roll, tyres, and the one change to try first
+const $=id=>document.getElementById(id);
+let TEXT=1; function fit(){ document.body.style.zoom=TEXT; } fit();
+if (window.se && window.se.onStyle) window.se.onStyle(s=>{ TEXT=s.text||1; document.body.style.fontFamily=`"${s.font||"Segoe UI"}", system-ui, sans-serif`; fit(); });
+let edit=false, plan=null, where={connected:false, inGarage:false};
+if (window.se){ window.se.onEditMode(on=>{ edit=on; document.body.classList.toggle("edit",on); vis(); });
+  window.se.onPlan(p=>{ plan=p; draw(); }); window.se.getPlan().then(p=>{ plan=p; draw(); }); }
+const esc=s=>String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+function vis(){ document.body.classList.toggle("hidden", !(edit || (where.connected && where.inGarage))); }
+function draw(){
+  vis(); const B=plan && plan.brief;
+  if (!B || !B.lines || !B.lines.length){ $("info").textContent=""; $("body").innerHTML=`<div class="none">Drive a stint: a short summary of the car shows here.</div>`; return; }
+  $("info").textContent=B.when||"";
+  $("body").innerHTML=B.lines.map(l=>`<div class="row"><span class="k">${esc(l.k)}</span><span class="v ${l.c||""}">${esc(l.v)}</span></div>`).join("")
+    + (B.next?`<div class="next"><span class="k">Try first</span> ${esc(B.next)}</div>`:"");
+}
+// where is the car? (garage / pit stall = show, driving = hide)
+const TYPES={0:"getUint8",1:"getUint8",2:"getInt32",3:"getUint32",4:"getFloat32",5:"getFloat64"};
+const cstr=b=>{ let s=""; for (const x of b){ if(!x) break; s+=String.fromCharCode(x);} return s; };
+let meta=null, gen=null;
+async function poll(){
+  try{
+    const st=await (await fetch("/live/status",{cache:"no-store"})).json(); where.connected=st.connected;
+    if (st.gen>0 && st.gen!==gen){ const r=await fetch("/live/meta",{cache:"no-store"}); if (r.ok){ const b=await r.arrayBuffer(), dv=new DataView(b), i32=o=>dv.getInt32(o,true), vars={};
+      for (let i=0;i<i32(24);i++){ const o=i32(28)+i*144; vars[cstr(new Uint8Array(b,o+16,32))]={type:i32(o),off:i32(o+4)}; } meta={vars,bufLen:i32(36)}; gen=st.gen; } }
+    if (meta && st.total>0){ const r=await fetch("/live/data?from=-1&max=1",{cache:"no-store"}); const b=await r.arrayBuffer();
+      if (b.byteLength>=meta.bufLen){ const dv=new DataView(b), g=k=>{ const v=meta.vars[k]; return v? dv[TYPES[v.type]](v.off,true) : 0; };
+        where.inGarage = !g("IsOnTrack") || !!g("PlayerCarInPitStall"); } }
+  }catch(e){ where.connected=false; }
+  vis(); setTimeout(poll, 500);
+}
+draw(); poll();
+</script>
+</body>
+</html>
