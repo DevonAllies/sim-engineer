@@ -6464,7 +6464,10 @@ function dampCrossHTML(run, A){
    <p class="muted" style="font-size:12px">Fast-damper share = how much of the lap the dampers spend at high shaft speed (bumps and kerbs). A share well above your usual means the tyres are being bounced off the road there: more high-speed bump calms it (at some cost to grip over the kerbs). Bold = the effect is clearly bigger than its ±, grey = not sure yet. Each click effect is learned with the track's roughness taken out, so a bumpy track isn't blamed on a click.</p></section>`;
 }
 // ================= test programme: one change at a time from a baseline, ticked off automatically as stints come in =================
-const TP_LAPS=5;
+const TP_LAPS=5, TP_COND=4;
+// the track temperature of some stints, weighted by their laps
+const tpTrackT = L => { let a=0, n=0; for (const r of L||[]) if (Number.isFinite(r && r.trackT)){ const w=r.laps||1; a+=r.trackT*w; n+=w; } return n ? a/n : NaN; };
+const tpCheckHow = "Only if the track has changed since the baseline was driven (more than " + TP_COND + " °C): <b>3–5 laps on the baseline as it is now</b>, nothing changed, so the steps above are compared with a baseline in the same conditions. It skips itself when the conditions match.";
 let TP_KIND=null;   // "car" | "track", picked on the Test programme tab (null: the car programme at its test track, else this track's check)
 const tpKeyOf = (run, kind) => kind==="car" ? `testprog|${run.carPath}|car` : `testprog|${run.carPath}|${learnTrackOf(run)}`;
 // programmes from before the split were per track and had every step: the latest one becomes the car programme at its track (and stays that track's check)
@@ -6506,18 +6509,21 @@ function tpSteps(run, base, kind){
     for (const [id,k,d,w] of [[`heave${ax}Soft`,"less",-1,"softer"],[`heave${ax}`,"more",1,"stiffer"]]){ const r=resolve(run,{e:eb, d}); if (r && r.same) continue;
       S.push({id, block:"Heave & third springs", label:`${ax} ${name} one step ${w}`, re:new RegExp(`${ax}[A-Za-z]*\\.${key}$`,"i"), kind:k, amount:1, e0:e,
         how:`${ax} ${name} one step ${w}${r?` (<b>${esc(r.raw)}</b>)`:""} (baseline ${esc(bv(e))}). ${w==="stiffer"?"Holds the car's height at speed better (more downforce, steadier platform) but rides bumps worse":"Rides bumps and kerbs better but lets the car sink more at speed"}. The static ride heights don't change. Nothing else.`}); } }
-  if (S.some(s=>/^heave/.test(s.id))) S.push({id:"heaveApp", block:"Heave & third springs", label:"Heave & third: the best of both", how:"Drive the heave and third spring steps first: this step then sets each to its better side, on the corner springs you're running.", kind:"between", re:/HeaveSpringRate$|ThirdSpringRate$/i});
+  if (S.some(s=>/^heave/.test(s.id))) S.push({id:"heaveBase", block:"Heave & third springs", label:"Baseline check (if the track changed)", kind:"base", cond:/^heave(Front|Rear)/, lapsN:3, how:tpCheckHow});
+  if (S.some(s=>/^heave(Front|Rear)/.test(s.id))) S.push({id:"heaveApp", block:"Heave & third springs", label:"Heave & third: the best of both", how:"Drive the heave and third spring steps first: this step then sets each to its better side, on the corner springs you're running.", kind:"between", re:/HeaveSpringRate$|ThirdSpringRate$/i});
   // then the ride height (rake) on those springs: the rear a few mm lower and higher, then the better one
   if (ent(/(Left|Right)Rear\.RideHeight$|\.Rear[A-Za-z]*\.RideHeight$/i).length){ const re=/Rear[A-Za-z]*\.RideHeight$/i;
     S.push({id:"rhRearLow", block:"Ride height", label:"Rear ride height 3 mm lower", re, kind:"rhlow", how:"Rear ride height about <b>3 mm lower</b> on both sides, from the baseline as it is now (the garage sheet below has the numbers), with the rear perch offsets or ride-height adjusters; within 1 mm is fine. The front stays where it is. Less rake: usually less front downforce and a steadier car at high speed. Nothing else."});
     S.push({id:"rhRearHigh", block:"Ride height", label:"Rear ride height 3 mm higher", re, kind:"rhhigh", how:"Rear ride height about <b>3 mm higher</b> on both sides, from the baseline as it is now, within 1 mm. The front stays where it is. More rake: usually more front downforce and a sharper car in fast corners. Nothing else."});
+    S.push({id:"rhBase", block:"Ride height", label:"Baseline check (if the track changed)", kind:"base", cond:/^rhRear/, lapsN:3, how:tpCheckHow});
     S.push({id:"rhApp", block:"Ride height", label:"Ride height: the best rake", re, kind:"between", how:"Drive both ride-height steps first: this step then sets the rear to the better height, on the springs you're running."}); }
   // then the anti-roll bars, the main balance tool, on the new springs: one step softer and one step stiffer on each axle
   const ARB_RE=ax=>new RegExp(`${ax}[A-Za-z]*\\.(Arb|ArbBlades|ArbSetting|ArbSize|AntiRollBar)|${ax}Brakes[A-Za-z]*\\.Arb`,"i");
   for (const ax of ["Front","Rear"]){ const e=arbE(ax); if (!e) continue; const eb=Object.assign({}, e, {raw:bv(e)});
     for (const [id,k,d,w] of [[`arb${ax}Soft`,"less",-1,"softer"],[`arb${ax}`,"more",1,"stiffer"]]){ const r=resolve(run,{e:eb, d}); if (r && r.same) continue;
       S.push({id, block:"Anti-roll bars", label:`${ax} anti-roll bar${/Stiffness/i.test(e.key||"")?" stiffness":""} one step ${w}`, re:e.key?new RegExp(`${ax}[A-Za-z]*\\.${e.key}$`,"i"):ARB_RE(ax), kind:k, amount:1, e0:e, how:`${ax} bar one step ${w}${r?` (<b>${esc(r.raw)}</b>)`:""} (baseline ${esc(bv(e))}). Nothing else.`}); } }
-  if (S.some(s=>/^arb/.test(s.id))) S.push({id:"arbApp", block:"Anti-roll bars", label:"Bars: the best side on these springs", how:"Drive the bar steps first: this step then sets each bar to its better side, on the springs you're running.", kind:"between", re:/Arb|AntiRollBar/i});
+  if (S.some(s=>/^arb/.test(s.id))) S.push({id:"arbBase", block:"Anti-roll bars", label:"Baseline check (if the track changed)", kind:"base", cond:/^arb(Front|Rear)/, lapsN:3, how:tpCheckHow});
+  if (S.some(s=>/^arb(Front|Rear)/.test(s.id))) S.push({id:"arbApp", block:"Anti-roll bars", label:"Bars: the best side on these springs", how:"Drive the bar steps first: this step then sets each bar to its better side, on the springs you're running.", kind:"between", re:/Arb|AntiRollBar/i});
   const DN=[["highspeedcompression","high-speed bump","HighSpeedComp|HsComp|HSComp|HighSpeedBump"],["highspeedrebound","high-speed rebound","HighSpeedReb|HsReb|HSReb"],["lowspeedcompression","low-speed bump","LowSpeedComp|LsComp|LSComp|LowSpeedBump"],["lowspeedrebound","low-speed rebound","LowSpeedReb|LsReb|LSReb"]];
   let anyD=false; for (const [kind,label,pat] of DN) for (const [end,End] of [["front","Front"],["rear","Rear"]]){ const e=findDamp(run,end,kind); if (!e) continue; anyD=true;
     S.push({id:`d${end}${kind}`, block:"Dampers", label:`${End} ${label} +3`, re:new RegExp(`${End}.*(${pat})`,"i"), kind:"more", amount:3, e0:e[0],
@@ -6530,7 +6536,7 @@ function tpSteps(run, base, kind){
   { const e=first(ent(/\.FrontDivePlanes$/i)); if (e){ const eb=Object.assign({}, e, {raw:bv(e)});
       for (const [id,k,d,w,why] of [["diveLess","less",-1,"one fewer","less front downforce and drag: aero balance moves back (more understeer in fast corners)"],["diveMore","more",1,"one more","more front downforce, a bit more drag: aero balance moves forward (more oversteer in fast corners)"]]){ const r=resolve(run,{e:eb, d}); if (r && r.same) continue;
         S.push({id, block:"Dive planes (this track)", label:`Front dive planes ${w}`, re:/FrontDivePlanes$/i, kind:k, amount:1, e0:e, how:`Front dive planes ${w}${r?` (<b>${esc(r.raw)}</b>)`:""} (baseline ${esc(bv(e))}): ${why}. Nothing else.`}); } } }
-  return S.filter(s=> kind==="car" ? !/this track/.test(s.block) : kind==="track" ? (s.block==="Baseline" || /this track/.test(s.block)) : true).map(s=>Object.assign(s,{laps:TP_LAPS})); }
+  return S.filter(s=> kind==="car" ? !/this track/.test(s.block) : kind==="track" ? (s.block==="Baseline" || /this track/.test(s.block)) : true).map(s=>Object.assign(s,{laps:s.lapsN||TP_LAPS})); }
 // which of your stints (since the programme started, this car and track, dry) did each step: only that setting changed from the baseline
 // the timed laps of a stored stint that weren't counted as clean, and why (the same rule Bono uses in the car)
 function lapsLeftOut(rec){
@@ -6549,7 +6555,8 @@ function tpStatus(run, P){
   const wLo=lows.length>=2?Math.min(...lows):NaN, wHi=highs.length>=2?Math.max(...highs):NaN;
   let curBase=P.base, after=0;
   const rhOf=(o,ax)=>{ const v=Object.entries(o||{}).filter(([k])=>new RegExp(`(Left|Right)${ax}\\.RideHeight$|\\.${ax}[A-Za-z]*\\.RideHeight$`).test(k)).map(([,v])=>learnNum(v)).filter(Number.isFinite); return v.length?mean(v):NaN; };
-  for (const s of steps){ s.stints=[]; s.base=curBase; s.after=after;
+  let lastRef=[];
+  for (const s of steps){ s.stints=[]; s.base=curBase; s.after=after; s.refT=tpTrackT(lastRef);
     if (s.kind==="between"){ s.combo=tpCombo(run, steps, P, s.id==="arbApp"?"bars":s.id==="heaveApp"?"heave":s.id==="rhApp"?"rh":"springs"); const C=s.combo;
       if (C.done){
         const val=c=>c.v!==undefined ? `${c.unit==="mm"?fmt(c.v,1):c.v} ${c.unit}` : c.raw, chg=C.items.filter(c=>c.v!==undefined ? c.v!==c.base : c.raw!==c.baseRaw);
@@ -6580,10 +6587,14 @@ function tpStatus(run, P){
     const m0=(P.manual||{})[s.id], mv=m0&&typeof m0==="object"?m0.v:m0, mAt=m0&&typeof m0==="object"?m0.at||0:0;
     const m = mv===false && s.stints.some(r=>r.date>mAt) && s.stints.filter(r=>r.date>mAt).reduce((a,r)=>a+(r.laps||0),0)>=s.laps ? undefined : mv;
     s.complete = m===true || (m!==false && s.done>=s.laps); s.manual=m;
+    if (s.cond && !s.complete){ const sw=steps.filter(q=>s.cond.test(q.id)), tS=tpTrackT(sw.flatMap(q=>q.stints||[])), tR=tpTrackT(lastRef), ok2=Number.isFinite(tS) && Number.isFinite(tR);
+      if (sw.length && sw.every(q=>q.complete) && lastRef.length && ok2 && Math.abs(tS-tR)<=TP_COND && m!==false){ s.complete=true; s.auto=true; s.how=`Not needed: the steps above ran at ${fmt(tS,0)} °C track and the baseline at ${fmt(tR,0)} °C, close enough to compare.`; }
+      else if (ok2 && Math.abs(tS-tR)>TP_COND) s.how=`The track was ${fmt(Math.abs(tS-tR),0)} °C ${tS>tR?"warmer":"cooler"} for the steps above (${fmt(tS,0)} °C) than when the baseline was driven (${fmt(tR,0)} °C), so they can't be compared fairly. Drive <b>3–5 laps on the baseline as it is now</b> in conditions like the steps above, nothing changed: the app then compares like with like.`; }
     // the springs and bars you ran on this step (and the ride heights, camber and toe that came with them) carry on as the baseline
     if (s.kind==="between" && s.complete && s.stints.length){ const last=s.stints[s.stints.length-1], cs=last.setup||{}; curBase=Object.assign({}, curBase);
       for (const [k,v] of Object.entries(cs)) if ((s.re && s.re.test(learnNorm(k))) || /RideHeight|PerchOffset|SpringPerch|TorsionBarTurns|Camber|Toe/i.test(k)) curBase[k]=v;
-      after=last.date; s.setsBase=true; } }
+      after=last.date; s.setsBase=true; lastRef=s.stints; }
+    if (s.kind==="base" && s.stints.length) lastRef=s.stints; }
   // near misses: a stint that made this step's change, but changed other things too (so it can't tell what the step did).
   // Shown on the step with the extras named, so you know why it didn't tick.
   const counted=new Set(steps.flatMap(s=>s.stints.map(r=>r.id)));
@@ -6609,26 +6620,43 @@ function tpAppSpring(run){ const out=new Map(); if (!run || !run.sug) return out
   run.sug.forEach((s,i)=>{ const o=s.opts[sel[i]!=null && sel[i]>=0 ? sel[i] : 0]; if (!o) return;
     for (const c of o.ch) if (/SpringRate$/i.test(c.e.path) && !out.has(c.e.path)) out.set(c.e.path.replace(/^CarSetup./,""), {c, title:s.title}); });
   return out; }
-const TP_SCORE_PARTS = {lap:"lap time", cons:"consistency", bal:"balance nearer a touch of understeer", slides:"fewer slides", rubber:"less time on the bump rubbers", tyres:"tyres nearer their window"};
+const TP_SCORE_PARTS = {lap:"lap time (track temperature taken out)", cons:"consistency", bal:"balance nearer a touch of understeer", slides:"fewer slides", rubber:"less time on the bump rubbers", aero:"ride height at speed nearer the downforce window", tyres:"tyres nearer their window"};
+const TP_TK={};
+function tpTempK(run){
+  const trk=learnTrackOf(run), key=run.carPath+"|"+trk+"|"+Object.keys(LEARN||{}).length; if (TP_TK[key]) return TP_TK[key];
+  const groups={}; for (const r of Object.values(LEARN||{})) if (r.car===run.carPath && r.track===trk && !r.wet && r.setup && Number.isFinite(r.trackT) && Number.isFinite(r.med) && (r.laps||0)>=3){
+    const g=JSON.stringify(Object.entries(r.setup).filter(([k])=>!/InCarAdjustments|InCarDials|BrakePressureBias|TractionControl|ABSsetting|StartingPressure|ColdPressure|FuelLevel/i.test(k)).sort()); (groups[g]=groups[g]||[]).push(r); }
+  let sxy=0, sxx=0, n=0;
+  for (const L of Object.values(groups)){ if (L.length<2) continue; const w=r=>r.laps||1, W=L.reduce((a,r)=>a+w(r),0), mT=L.reduce((a,r)=>a+r.trackT*w(r),0)/W, mL=L.reduce((a,r)=>a+r.med*w(r),0)/W;
+    for (const r of L){ sxy+=w(r)*(r.trackT-mT)*(r.med-mL); sxx+=w(r)*(r.trackT-mT)**2; } n+=L.length; }
+  const own = sxx>=40 ? sxy/sxx : NaN, k = Number.isFinite(own) ? Math.max(0, Math.min(0.25, own)) : 0.08;
+  return TP_TK[key]={k, own:Number.isFinite(own), n}; }
 function tpScore(L, run){
   L=(L||[]).filter(Boolean);
   const W=(f)=>{ let s=0,n=0; for (const r of L){ const v=f(r), w=r.laps||1; if (Number.isFinite(v)){ s+=v*w; n+=w; } } return n?s/n:NaN; };
   const tw=run && run.A && run.A.tw, out={};
-  out.lap = W(r=>r.med);
+  const K=run ? tpTempK(run).k : 0.08;
+  out.lap = W(r=>Number.isFinite(r.trackT) ? r.med - K*(r.trackT-30) : r.med);
   out.cons = 0.5*(W(r=>r.sd)||0);
   { const d=["entry","mid","exit"].map(k=>W(r=>r.bal&&r.bal[k])).filter(Number.isFinite).map(u=>Math.abs(u-0.3)); out.bal = d.length ? 0.15*d.reduce((a,b)=>a+b,0)/d.length : 0; }
   out.slides = 0.05*((W(r=>r.slides)||0) + (W(r=>r.susp&&r.susp.kerbSlides)||0));
   out.rubber = 0.003*(Math.max(0, (W(r=>r.aero&&r.aero.onF)||0)*100-50) + Math.max(0, (W(r=>r.aero&&r.aero.onR)||0)*100-50));
+  { const P0=run ? (PROFILES[run.carPath]||{}) : {}, Wd=P0.aeroWin && P0.aeroWin.df, S0=run ? settingsFor(run) : {}, tol=+S0.rhTol||2;
+    const win = Wd ? {f:Wd.f, r:Wd.r} : (Number.isFinite(+S0.frontRH) && Number.isFinite(+S0.rearRH) && +S0.frontRH ? {f:[+S0.frontRH-tol, +S0.frontRH+tol], r:[+S0.rearRH-tol, +S0.rearRH+tol]} : null);
+    const out1=(v,w)=>Number.isFinite(v) ? Math.max(0, w[0]-v, v-w[1]) : 0;
+    out.aero = win ? 0.02*(out1(W(r=>r.aero&&r.aero.fA), win.f) + out1(W(r=>r.aero&&r.aero.rA), win.r)) : 0; }
   out.tyres = tw && Number.isFinite(tw.lo) && Number.isFinite(tw.hi) ? 0.01*["F","R"].map(a=>{ const v=W(r=>r.tyreT&&r.tyreT[a]); return Number.isFinite(v) ? Math.max(0, tw.lo-v, v-tw.hi) : 0; }).reduce((a,b)=>a+b,0) : 0;
   out.total = Number.isFinite(out.lap) ? Object.entries(out).filter(([k])=>k!=="total").reduce((a,[,v])=>a+(Number.isFinite(v)?v:0),0) : NaN;
   return out; }
 // why one choice beat another, in words: the parts that made the difference, for and against
 function tpScoreWhy(win, lose){
   const d=Object.keys(TP_SCORE_PARTS).map(k=>({k, d:(lose[k]||0)-(win[k]||0)})).filter(x=>Math.abs(x.d)>=0.03).sort((a,b)=>Math.abs(b.d)-Math.abs(a.d));
-  const pro=d.filter(x=>x.d>0).map(x=>x.k==="lap"?`${x.d.toFixed(2)} s a lap quicker`:`${TP_SCORE_PARTS[x.k]} (worth ${x.d.toFixed(2)} s)`);
-  const con=d.filter(x=>x.d<0).map(x=>x.k==="lap"?`${(-x.d).toFixed(2)} s a lap slower`:`${TP_SCORE_PARTS[x.k].replace(/^fewer/,"more").replace(/^less/,"more").replace(/nearer/,"further from")} (costs ${(-x.d).toFixed(2)} s)`);
+  const pro=d.filter(x=>x.d>0).map(x=>x.k==="lap"?`${x.d.toFixed(2)} s a lap quicker (track temperature taken out)`:`${TP_SCORE_PARTS[x.k]} (worth ${x.d.toFixed(2)} s)`);
+  const con=d.filter(x=>x.d<0).map(x=>x.k==="lap"?`${(-x.d).toFixed(2)} s a lap slower (track temperature taken out)`:`${TP_SCORE_PARTS[x.k].replace(/^fewer/,"more").replace(/^less/,"more").replace(/nearer/,"further from")} (costs ${(-x.d).toFixed(2)} s)`);
   return `${pro.join(", ")||"marginally better overall"}${con.length?`; against it: ${con.join(", ")}`:""}`; }
 function tpCombo(run, steps, P, what){
+  const refFor=(id, fb)=>{ const c=steps.find(x=>x.id===id); return c && c.stints && c.stints.length ? c.stints : fb; };
+  const tSpread=Ls=>{ const T=Ls.map(tpTrackT).filter(Number.isFinite); return T.length>1 ? Math.max(...T)-Math.min(...T) : 0; };
   const W=(L,f)=>{ let s=0,n=0; for (const r of L){ const v=f(r), w=r.laps||1; if (Number.isFinite(v)){ s+=v*w; n+=w; } } return n?s/n:NaN; };
   const hrsApart=(A,B)=>Math.abs(W(A,r=>r.date)-W(B,r=>r.date))/3.6e6, out={any:false, done:0, items:[]};
   const baseStints=steps.filter(x=>x.kind==="base").flatMap(x=>x.stints||[]);
@@ -6637,10 +6665,12 @@ function tpCombo(run, steps, P, what){
       const lo=steps.find(x=>x.id==="rhRearLow"), hi=steps.find(x=>x.id==="rhRearHigh"), sb=((lo||hi)||{}).base||P.base;
       const rv=o=>{ const v=Object.entries(o||{}).filter(([k])=>/(Left|Right)Rear\.RideHeight$|\.Rear[A-Za-z]*\.RideHeight$/.test(k)).map(([,v])=>learnNum(v)).filter(Number.isFinite); return v.length?mean(v):NaN; };
       const bR=rv(sb), setter=steps.filter(q=>q.setsBase && q.stints.length && q.stints[q.stints.length-1].date<=(((lo||hi)||{}).after||0)).slice(-1)[0];
-      const C=[{w:"the baseline", v:bR, L:setter?setter.stints:baseStints}, lo&&lo.stints.length&&{w:"lower", v:mean(lo.stints.map(r=>rv(r.setup))), L:lo.stints}, hi&&hi.stints.length&&{w:"higher", v:mean(hi.stints.map(r=>rv(r.setup))), L:hi.stints}]
+      const C=[{w:"the baseline", v:bR, L:refFor("rhBase", setter?setter.stints:baseStints)}, lo&&lo.stints.length&&{w:"lower", v:mean(lo.stints.map(r=>rv(r.setup))), L:lo.stints}, hi&&hi.stints.length&&{w:"higher", v:mean(hi.stints.map(r=>rv(r.setup))), L:hi.stints}]
         .filter(Boolean).map(x=>Object.assign(x,{S:tpScore(x.L,run)})).filter(x=>Number.isFinite(x.S.total)).sort((a,b)=>a.S.total-b.S.total);
       let v=bR, why, done=[lo,hi].filter(Boolean).every(x=>x.complete) && C.length>1; const best=C[0], base=C.find(x=>x.w==="the baseline");
+      const spr=tSpread(C.map(x=>x.L));
       if (!done) why="rear ride height: drive both the lower and the higher step first";
+      else if (spr>TP_COND){ done=false; why=`rear ride height: the track temperature differs by ${fmt(spr,0)} °C between these stints: drive the baseline check (3–5 laps) in the same conditions first`; }
       else if (!base || best===base || base.S.total-best.S.total<0.1) why=`rear ride height: ${best===base?"the baseline scores best":`${best.w} is within 0.1 s of the baseline overall`}: stays at ${fmt(bR,1)} mm`;
       else { v=Math.round(best.v*10)/10; why=`rear ride height: ${best.w} (${fmt(best.v,1)} mm) scores best: ${tpScoreWhy(best.S, base.S)} against the baseline`; }
       out.RearRH={v, base:bR, unit:"mm", why, done, label:"Rear ride height (average)"}; out.items.push(out.RearRH); if (done) out.done++; if (Math.abs(v-bR)>=1) out.any=true; continue; }
@@ -6662,15 +6692,16 @@ function tpCombo(run, steps, P, what){
       const bk=re && Object.keys(P.base||{}).find(k=>re.test(learnNorm(k)));
       if (bk){ const sb=(st||so).base||P.base, braw=String(sb[bk]!=null?sb[bk]:P.base[bk]).trim(); let raw=braw, why, done=false;
         // the bars' own baseline: the stints that set it (the springs combination), or the baseline stints
-        const setter=steps.filter(q=>q.setsBase && q.stints.length && q.stints[q.stints.length-1].date<=((st||so).after||0)).slice(-1)[0], baseStints2=setter?setter.stints:baseStints;
+        const setter=steps.filter(q=>q.setsBase && q.stints.length && q.stints[q.stints.length-1].date<=((st||so).after||0)).slice(-1)[0], baseStints2=refFor(what==="heave"?"heaveBase":"arbBase", setter?setter.stints:baseStints);
         const ends=[["softer",so],["stiffer",st]].filter(([,x])=>x && x.stints.length).map(([w,x])=>({w, raw:String((x.stints[0].setup||{})[bk]||"").trim(), med:W(x.stints,r=>r.med), mid:W(x.stints,r=>r.bal&&r.bal.mid), L:x.stints}));
         const B={w:"baseline", raw:braw, med:W(baseStints2,r=>r.med), mid:W(baseStints2,r=>r.bal&&r.bal.mid), L:baseStints2};
         if (![so,st].filter(Boolean).every(x=>x.complete)) why=`${ax.toLowerCase()} ${nm}: drive both the softer and the stiffer step first: baseline ${braw}`;
         else if (!ends.length) why=`${ax.toLowerCase()} ${nm} not tested: baseline ${braw}`;
         else { done=true;
           const C=[B, ...ends].filter(x=>x.L && x.L.length).map(x=>Object.assign(x, {S:tpScore(x.L, run)})).filter(x=>Number.isFinite(x.S.total)).sort((x,y)=>x.S.total-y.S.total);
-          const best=C[0], base=C.find(x=>x.w==="baseline");
-          if (!best) why=`${ax.toLowerCase()} ${nm}: not enough data: baseline ${braw}`;
+          const best=C[0], base=C.find(x=>x.w==="baseline"), spr=tSpread(C.map(x=>x.L));
+          if (spr>TP_COND){ done=false; why=`${ax.toLowerCase()} ${nm}: the track temperature differs by ${fmt(spr,0)} °C between these stints: drive the baseline check (3–5 laps) in the same conditions first: baseline ${braw}`; }
+          else if (!best) why=`${ax.toLowerCase()} ${nm}: not enough data: baseline ${braw}`;
           else if (best.w==="baseline" || !base || base.S.total-best.S.total<0.1) why=`${ax.toLowerCase()} ${nm}: ${best.w==="baseline"?"the baseline scores best":`${best.w} is within 0.1 s of the baseline overall`} (pace, balance, slides and tyres together): stays at ${braw}`;
           else { raw=best.raw; const gap=hrsApart(best.L, base.L); why=`${ax.toLowerCase()} ${nm}: ${best.w} (${best.raw}) scores best: ${tpScoreWhy(best.S, base.S)} against the baseline${gap>=1?` (driven ${gap.toFixed(1)} h apart)`:""}`; } }
         const ok2=ax+(what==="heave"?"Heave":"Arb"); out[ok2]={raw, baseRaw:braw, why, done, key:learnNorm(bk), label:`${ax} ${nm}`}; out.items.push(out[ok2]); if (done) out.done++; if (raw!==braw) out.any=true; } } }
@@ -6964,7 +6995,7 @@ function testProgHTML(run){
    ${(()=>{ const st=tpStateOf(P,steps), left=steps.filter(s=>!s.complete).length, ctl=h=>"";
      if (st==="paused") return `<div class="sugg p2" style="margin:0 0 10px"><h3>Paused at step ${steps.indexOf(next)+1} of ${steps.length}${next?`: ${esc(next.label)}`:""}</h3><p style="margin:4px 0 0">${doneN} of ${steps.length} steps done. While it's paused Bono gives his normal in-car advice and the Test step overlay stands down. A stint that matches a step still counts when you continue.</p>${ctl(`<button id="tpresume" style="padding:3px 12px">Continue the programme</button> <button class="ghost" id="tpfinish" style="padding:3px 12px">Finish now: use the data so far</button>`)}</div>`;
      if (st==="done") return `<div class="sugg p3" style="margin:0 0 10px"><h3>${left?`Finished early: ${doneN} of ${steps.length} steps`:"Programme complete"}</h3><p style="margin:4px 0 0">${left?`You finished it${P.finished?` on ${dt(P.finished)}`:""}. "What the tests show" above uses only the stints captured. Every stint still teaches the models (Learning), programme or not.`:`Every step is done: the models now know each of these settings on this car. "What to test next" (Learning) shows anything still uncertain.`}</p>${left?ctl(`<button id="tpresume" style="padding:3px 12px">Continue the remaining ${left} step${left>1?"s":""}</button>`):""}</div>`;
-     return `<div class="sugg p3" style="margin:0 0 10px"><h3>Next: ${esc(next.label)} <small class="muted" style="font-weight:400">step ${steps.indexOf(next)+1} of ${steps.length}</small></h3><p style="margin:4px 0 0">${next.how} Drive <b>${next.laps} clean laps</b>${next.done?` (${next.done} so far)`:""}.</p>${ctl(`<button class="ghost" id="tppause" style="padding:3px 12px">Pause</button> <button class="ghost" id="tpfinish" style="padding:3px 12px">Finish now: use the data so far</button>`)}</div>`; })()}
+     return `<div class="sugg p3" style="margin:0 0 10px"><h3>Next: ${esc(next.label)} <small class="muted" style="font-weight:400">step ${steps.indexOf(next)+1} of ${steps.length}</small></h3><p style="margin:4px 0 0">${next.how} Drive <b>${next.laps} clean laps</b>${next.done?` (${next.done} so far)`:""}.</p>${(()=>{ const tNow=parseFloat(((run.info||{}).WeekendInfo||{}).TrackSurfaceTemp); return Number.isFinite(tNow) && Number.isFinite(next.refT) && Math.abs(tNow-next.refT)>TP_COND ? `<p class="muted" style="margin:4px 0 0;font-size:12px">Track now ${fmt(tNow,0)} °C; the baseline this step is compared with was driven at ${fmt(next.refT,0)} °C. Tests compare best in similar conditions: before deciding, the app asks for a quick 3–5 lap baseline check in these conditions.</p>` : ""; })()}${ctl(`<button class="ghost" id="tppause" style="padding:3px 12px">Pause</button> <button class="ghost" id="tpfinish" style="padding:3px 12px">Finish now: use the data so far</button>`)}</div>`; })()}
    ${(()=>{ try { return tpSheetHTML(run,P,steps); } catch(e){ console.error("tpsheet",e); return ""; } })()}
    <div class="tablewrap"><table style="font-size:12px"><tr><th></th><th>Step</th><th>What to set</th><th>Clean laps</th><th>Stints found</th></tr>
     ${steps.map(s=>{ const head=s.block!==blk?`<tr><td colspan="5" style="background:rgba(127,127,127,.08);font-weight:700">${esc(s.block)}</td></tr>`:""; blk=s.block;
