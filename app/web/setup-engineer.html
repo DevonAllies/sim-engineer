@@ -1706,7 +1706,16 @@ function plot(cv, {series, xr, yr, h=240, bands=[], xl="", yl=""}){
   }
 }
 function drawMap(cv, run, A){
-  const ch=run.ch, L=A.best; if (!ch.Lat || !ch.Lon) return;
+  const ch=run.ch, L=A.best; if (!L) return;
+  if (!ch.Lat || !ch.Lon){ if (!ch.LapDistPct) return; const [c,w,h]=canvasCtx(cv,340), m={l:34,r:8,t:14,b:26}, lim=3, X=p=>m.l+p*(w-m.l-m.r), Y=v=>m.t+(lim-Math.max(-lim,Math.min(lim,v)))/(2*lim)*(h-m.t-m.b);
+    c.font="11px system-ui"; c.fillStyle=css("--muted"); c.strokeStyle=css("--grid"); c.lineWidth=1;
+    for (const v of [-2,-1,0,1,2]){ c.beginPath(); c.moveTo(m.l,Y(v)); c.lineTo(w-m.r,Y(v)); c.stroke(); c.fillText((v>0?"+":"")+v+"°",2,Y(v)+4); }
+    c.fillStyle=css("--neutral")+"22"; c.fillRect(m.l,Y(US_PUSH),w-m.l-m.r,Y(US_LOOSE)-Y(US_PUSH));
+    c.fillStyle=css("--muted"); c.fillText("understeer ↑",m.l+4,m.t+10); c.fillText("loose ↓",m.l+4,h-m.b-4); c.textAlign="right"; c.fillText("lap distance",w-m.r,h-8); c.textAlign="left";
+    c.lineWidth=2.5; let prev=null;
+    for (let j=L.s;j<L.e;j++){ const p=ch.LapDistPct[j], v=A.us[j]; if (!Number.isFinite(p)||!Number.isFinite(v)){ prev=null; continue; } const pt=[X(p),Y(v)]; if (prev && pt[0]>=prev[0]){ c.strokeStyle=usColor(v); c.beginPath(); c.moveTo(...prev); c.lineTo(...pt); c.stroke(); } prev=pt; }
+    c.fillStyle=css("--bad"); for (const e of (A.events||[])){ const p=e.pct; if (Number.isFinite(p)){ c.beginPath(); c.arc(X(p),Y(lim)-2,3.5,0,7); c.fill(); } }
+    return; }
   const [c,w,h]=canvasCtx(cv,340);
   let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9; const lat0=ch.Lat[L.s]*Math.PI/180;
   const P=[]; for (let j=L.s;j<L.e;j++){ const x=ch.Lon[j]*Math.cos(lat0), y=ch.Lat[j]; P.push([x,y,j]); x0=Math.min(x0,x);x1=Math.max(x1,x);y0=Math.min(y0,y);y1=Math.max(y1,y); }
@@ -3027,8 +3036,8 @@ function render(){
    </div>
    ${A.warnings.map(w=>`<p class="muted">⚠ ${w}</p>`).join("")}
    <div class="two"><div><canvas id="map"></canvas>
-     <div class="legend"><span><i style="background:${css("--us")}"></i>understeer &gt; ${US_PUSH}°</span><span><i style="background:${css("--neutral")}"></i>neutral</span><span><i style="background:${css("--os")}"></i>loose &lt; ${US_LOOSE}°</span><span><i style="background:${css("--bad")};border-radius:50%"></i>slide</span></div>
-     <p class="muted" style="font-size:12px">Map is your best lap. Dots are slide moments from all laps used.</p></div>
+     <div class="legend"><span><i style="background:${css("--us")}"></i>understeer &gt; ${fmt(US_PUSH,1)}°</span><span><i style="background:${css("--neutral")}"></i>neutral</span><span><i style="background:${css("--os")}"></i>loose &lt; ${fmt(US_LOOSE,1)}°</span><span><i style="background:${css("--bad")};border-radius:50%"></i>slide</span></div>
+     <p class="muted" style="font-size:12px">${run.ch.Lat&&run.ch.Lon?"Map is your best lap. Dots are slide moments from all laps used.":"Live stints have no GPS, so this is your best lap laid out by distance (the track map comes with the full-data stint). Dots are slides."}</p></div>
     <div class="tablewrap">${balanceTable(A)}
      <p class="muted" style="font-size:12px">Entry = on the brakes, mid = coasting / part throttle, exit = throttle above 40%. Steering ratio ${fmt(A.ratio)}:1 (estimated from gentle cornering).</p></div></div>
   </section>` + safe(()=>balanceWhyHTML(run, A),"balwhy") + cornerBalanceHTML(run, A) + limitHTML(run, A) + arbHTML(run, A) + rotationHTML(run, A) + areaCards("balance"),
