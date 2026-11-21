@@ -3343,6 +3343,7 @@ function rakeCanvas(cv, o){
   const [c,w,h]=canvasCtx(cv, o.h||240), m={l:44,r:10,t:16,b:28}, xr=o.xr, yr=o.yr;
   const X=x=>m.l+(x-xr[0])/(xr[1]-xr[0])*(w-m.l-m.r), Y=y=>h-m.b-(y-yr[0])/(yr[1]-yr[0])*(h-m.t-m.b), inB=v=>o.band && v>=o.band.lo && v<=o.band.hi;
   c.font="11px system-ui"; c.lineWidth=1;
+  if (o.bands) for (const b of o.bands){ c.fillStyle=b.c; c.fillRect(m.l, Y(b.hi), w-m.l-m.r, Y(b.lo)-Y(b.hi)); c.fillStyle=b.t; c.font="11px system-ui"; c.fillText(b.label, w-m.r-c.measureText(b.label).width-4, b.below?Y(b.lo)+12:Y(b.hi)-3); }
   if (o.xband){ c.fillStyle=css("--ink")+"12"; c.fillRect(X(o.xband[0]), m.t, X(o.xband[1])-X(o.xband[0]), h-m.t-m.b); c.fillStyle=css("--muted"); c.fillText("fast corners", X(o.xband[0])+4, h-m.b-4); }
   if (o.band){ c.fillStyle=css("--good")+"26"; c.fillRect(m.l, Y(o.band.hi), w-m.l-m.r, Y(o.band.lo)-Y(o.band.hi)); c.strokeStyle=css("--good")+"88"; c.setLineDash([4,3]);
     for (const v of [o.band.lo, o.band.hi]){ c.beginPath(); c.moveTo(m.l,Y(v)); c.lineTo(w-m.r,Y(v)); c.stroke(); } c.setLineDash([]);
@@ -3358,6 +3359,7 @@ function rakeCanvas(cv, o){
   if (o.dots) for (const d of o.dots){ c.fillStyle=d.c; for (let i=0;i<d.x.length;i++) c.fillRect(X(d.x[i])-1, Y(d.y[i])-1, 2, 2); }
   // a line coloured green inside the window, orange outside
   if (o.line){ c.lineWidth=1.8; for (let i=1;i<o.line.x.length;i++){ const v=o.line.y[i]; c.strokeStyle = o.line.color || (inB(v) ? css("--good") : css("--os")); c.beginPath(); c.moveTo(X(o.line.x[i-1]),Y(o.line.y[i-1])); c.lineTo(X(o.line.x[i]),Y(v)); c.stroke(); } }
+  if (o.medians) for (const md of o.medians){ c.strokeStyle=md.c; c.lineWidth=2.6; c.beginPath(); md.x.forEach((x,i)=>{ const px=X(x), py=Y(md.y[i]); i?c.lineTo(px,py):c.moveTo(px,py); }); c.stroke(); }
   if (o.cmp){ c.strokeStyle=css("--muted"); c.lineWidth=2; c.setLineDash([6,4]); c.beginPath(); o.cmp.x.forEach((x,i)=>{ const px=X(x), py=Y(o.cmp.y[i]); i?c.lineTo(px,py):c.moveTo(px,py); }); c.stroke(); c.setLineDash([]); }
   if (o.median){ c.strokeStyle=css("--ink"); c.lineWidth=2.2; c.beginPath(); o.median.x.forEach((x,i)=>{ const px=X(x), py=Y(o.median.y[i]); i?c.lineTo(px,py):c.moveTo(px,py); }); c.stroke(); }
 }
@@ -3375,6 +3377,8 @@ function rakeChartsHTML(run, A, S){
       return `<div class="row" style="gap:10px;align-items:center;font-size:13px;margin:0 0 6px">Compare with <select id="rakeCmpSel"><option value="">nothing</option>${C.map(x=>`<option value="${esc(x.id)}"${x.id===RAKE_CMP?" selected":""}>${esc(x.label)}</option>`).join("")}</select> <span class="muted" style="font-size:12px">drawn dashed on both charts: what your change did to the rake</span></div>${before?`<p style="margin:0 0 6px;font-size:13px">${before}</p>`:""}`; })()}
     <h3 style="margin:6px 0 2px;font-size:13px">Rake against speed <small class="muted">every clean lap · blue: on throttle or coasting · red: braking · line: the typical rake at each speed · shaded column: the speeds of your fast corners (that's where the window matters; on the straights less rake means less drag)</small></h3>
     <canvas id="rakeV"></canvas>
+    <h3 style="margin:12px 0 2px;font-size:13px">Front and rear against speed <small class="muted">blue: front, with its window shaded blue · orange: rear, with its window shaded orange · lines: the typical height at each speed (braking left out)</small></h3>
+    <canvas id="rakeFR"></canvas>
     <h3 style="margin:12px 0 2px;font-size:13px">Rake through your best lap <small class="muted">green inside the window, orange outside · grey: speed · T = corners</small></h3>
     <canvas id="rakeL"></canvas>
     <p class="muted" style="font-size:12px;margin:6px 0 0">Only the fast parts of the lap matter much for the window: in slow corners there's little downforce, so the rake there costs little. Under braking the nose dives and the rear lifts, so the rake jumps up (the red dots); how far is down to the front springs, bump rubbers and dampers, not the static ride height.</p></section>`; }
@@ -3396,6 +3400,16 @@ function drawRake(run, A, S){
   const lo=Math.floor(Math.min(pct(ally,.01), RW?RW.lo-2:1e9)/5)*5, hi=Math.ceil(Math.max(pct(ally,.99), RW?RW.hi+2:-1e9)/5)*5;
   rakeCanvas(cv, {h:260, xr:[60, Math.ceil(A.vmax/10)*10], yr:[lo,hi], band:RW, xl:"km/h", yl:"rake mm",
     dots:[{x:nx,y:ny,c:css("--us")+"55"},{x:bx,y:by,c:css("--bad")+"77"}], median:{x:mk, y:mk.map(b=>median(bins[b]))}, cmp:(()=>{ const o=rakeCmpList(run).find(x=>x.id===RAKE_CMP); return o&&o.rc&&o.rc.V.length?{x:o.rc.V.map(p=>p[0]), y:o.rc.V.map(p=>p[1])}:null; })(), xband:(()=>{ const fv=[]; for (let i=0;i<A.idx.length;i+=step){ const j=A.idx[i], v=ch.Speed[j]*3.6; if (v>=140 && Math.abs(ch.LatAccel[j])>7.85 && ch.Brake[j]<0.05) fv.push(v); } return fv.length>50 ? [pct(fv,.1), pct(fv,.9)] : null; })()});
+  // 1b. front and rear against speed, each against its own window
+  { const cf=$("#rakeFR"), AW=(PROFILES[run.carPath]||{}).aeroWin; if (cf){ const fx=[],fy=[],rx=[],ry=[], fb={}, rb={};
+      for (let i=0;i<A.idx.length;i+=step){ const j=A.idx[i], v=ch.Speed[j]*3.6; if (v<60 || ch.Brake[j]>0.1) continue; const f=(ch.LFrideHeight[j]+ch.RFrideHeight[j])*500, r=(ch.LRrideHeight[j]+ch.RRrideHeight[j])*500; if (!Number.isFinite(f)||!Number.isFinite(r)) continue;
+        fx.push(v); fy.push(f); rx.push(v); ry.push(r); const b=Math.floor(v/10)*10+5; (fb[b]=fb[b]||[]).push(f); (rb[b]=rb[b]||[]).push(r); }
+      if (fy.length){ const ks=Object.keys(fb).map(Number).filter(b=>fb[b].length>=20).sort((a,b)=>a-b), all=[...fy,...ry, ...(AW?[...AW.df.f,...AW.df.r]:[])];
+        const lo=Math.floor((Math.min(pct(fy,.01),pct(ry,.01), AW?AW.df.f[0]:99)-2)/5)*5, hi=Math.ceil((Math.max(pct(fy,.99),pct(ry,.99))+2)/5)*5;
+        rakeCanvas(cf, {h:260, xr:[60, Math.ceil(A.vmax/10)*10], yr:[lo,hi], xl:"km/h", yl:"ride height mm",
+          bands: AW ? [{lo:AW.df.f[0], hi:AW.df.f[1], c:css("--us")+"33", t:css("--us"), below:true, label:`front window ${AW.df.f[0]}–${AW.df.f[1]}`}, {lo:AW.df.r[0], hi:AW.df.r[1], c:css("--os")+"33", t:css("--os"), label:`rear window ${AW.df.r[0]}–${AW.df.r[1]}`}] : null,
+          dots:[{x:fx,y:fy,c:css("--us")+"40"},{x:rx,y:ry,c:css("--os")+"40"}], medians:[{x:ks, y:ks.map(b=>median(fb[b])), c:css("--us")}, {x:ks, y:ks.map(b=>median(rb[b])), c:css("--os")}],
+          xband:(()=>{ const fv=[]; for (let i=0;i<A.idx.length;i+=step){ const j=A.idx[i], v=ch.Speed[j]*3.6; if (v>=140 && Math.abs(ch.LatAccel[j])>7.85 && ch.Brake[j]<0.05) fv.push(v); } return fv.length>50 ? [pct(fv,.1), pct(fv,.9)] : null; })()}); } } }
   // 2. rake through the best lap, against distance, with the corners and a faint speed trace
   const L=A.best; if (!L) return; const x=[],y=[],sv=[];
   for (let j=L.s;j<L.e;j+=2){ const d=ch.LapDist? ch.LapDist[j] : ch.LapDistPct[j]*1000, r=rakeAt(ch,j); if (!Number.isFinite(d)||!Number.isFinite(r)) continue; x.push(d); y.push(r); sv.push(ch.Speed[j]*3.6); }
@@ -4007,17 +4021,18 @@ function aeroOptionsHTML(run, A, S){
       : `<section><p class="muted">No ride-height data in this run.</p></section>`; }
   const st = end => { const v=run.setupFlat.filter(e=>e.key.toLowerCase()==="rideheight" && e.path.toLowerCase().includes(end)).map(e=>parseFloat(e.raw)); return v.length? mean(v) : NaN; };
   const sF=st("front"), sR=st("rear"), L=A.lapRH||[], avg=k=>mean(L.filter(l=>l.rep).map(l=>l[k]).filter(Number.isFinite));
-  const tgt=(v,t)=>!t||!Number.isFinite(v)?"":Math.abs(v-t)<=S.rhTol?"ok":"warn";
+  const AW=((PROFILES[run.carPath]||{}).aeroWin||{}).df, outW=(v,w)=>v<w[0]?v-w[0]:v>w[1]?v-w[1]:0, tolW=AW?0.5:S.rhTol;
+  const tgt=(v,t)=>!t||!Number.isFinite(v)?"":AW?(Math.abs(outW(v, t===S.frontRH?AW.f:AW.r))<=tolW?"ok":"warn"):Math.abs(v-t)<=S.rhTol?"ok":"warn";
   const say=[];
-  if (S.frontRH){ const df=A.rh.front-S.frontRH, dr=A.rh.rear-S.rearRH;
-    say.push(`At speed the front runs ${fmt(A.rh.front)} mm (target ${S.frontRH}) and the rear ${fmt(A.rh.rear)} mm (target ${S.rearRH})${Math.abs(df)>S.rhTol||Math.abs(dr)>S.rhTol?`: ${[Math.abs(df)>S.rhTol?`front ${fmt(Math.abs(df),1)} mm ${df>0?"high":"low"}`:"",Math.abs(dr)>S.rhTol?`rear ${fmt(Math.abs(dr),1)} mm ${dr>0?"high":"low"}`:""].filter(Boolean).join(", ")}, which costs downforce`:", inside the window for maximum downforce"}.`); }
+  if (S.frontRH){ const df=AW?outW(A.rh.front,AW.f):A.rh.front-S.frontRH, dr=AW?outW(A.rh.rear,AW.r):A.rh.rear-S.rearRH;
+    say.push(`At speed the front runs ${fmt(A.rh.front)} mm (${AW?`window ${AW.f[0]}–${AW.f[1]}`:`target ${S.frontRH}`}) and the rear ${fmt(A.rh.rear)} mm (${AW?`window ${AW.r[0]}–${AW.r[1]}`:`target ${S.rearRH}`})${Math.abs(df)>tolW||Math.abs(dr)>tolW?`: ${[Math.abs(df)>tolW?`front ${fmt(Math.abs(df),1)} mm ${df>0?"high":"low"}`:"",Math.abs(dr)>tolW?`rear ${fmt(Math.abs(dr),1)} mm ${dr>0?"high":"low"}`:""].filter(Boolean).join(", ")}, which costs downforce`:", inside the window for maximum downforce"}.`); }
   if (Number.isFinite(sF)) say.push(`Downforce pulls the car down ${fmt(sF-A.rh.front,0)} mm at the front and ${fmt(sR-A.rh.rear,0)} mm at the rear from its parked height.`);
   if (S.rearRH && A.rh.brkRear > S.rearRH + 2*S.rhTol) say.push(`Under heavy braking the rear rises to ${fmt(A.rh.brkRear)} mm, above the target: the balance moves forward and the car gets nervous on entry.`);
   if (Number.isFinite(A.rh.splMin)) say.push(`The splitter's lowest point is ${fmt(A.rh.splMin)} mm${A.rh.splLow>0.4?", touching down often":""}.`);
   const calc = run.setupFlat.filter(e=>/aerobalancecalc|aerocalculator|aerospec/i.test(e.path)).map(e=>`${pretty(e.key)} ${esc(e.raw)}`).join(" · ");
   // what to do about it, in plain words (the matching change is in What to change and Changes)
   const todo=[];
-  if (S.frontRH && Number.isFinite(A.rh.front)){ const df=A.rh.front-S.frontRH, dr=A.rh.rear-S.rearRH, rake=A.rh.rear-A.rh.front, rakeT=S.rearRH-S.frontRH;
+  if (S.frontRH && Number.isFinite(A.rh.front)){ const df=AW?outW(A.rh.front,AW.f):A.rh.front-S.frontRH, dr=AW?outW(A.rh.rear,AW.r):A.rh.rear-S.rearRH, rake=A.rh.rear-A.rh.front, rakeT=AW?(AW.r[0]+AW.r[1])/2-(AW.f[0]+AW.f[1])/2:S.rearRH-S.frontRH; S.rhTol=tolW;
     if (dr<-S.rhTol) todo.push(`<b>Raise the rear</b> by about ${fmt(-dr,0)} mm at speed (more rake: ${fmt(rake,0)} mm now, ${fmt(rakeT,0)} mm at the targets). Do it in steps of 2–3 mm per run with the rear perch offsets${profileOf(run).springsKeepRH?" or a step stiffer rear springs":""}; more rake moves the aero balance forward, so the rear may need a click more wing.`);
     if (dr>S.rhTol) todo.push(`<b>Lower the rear</b> by about ${fmt(dr,0)} mm at speed (rake ${fmt(rake,0)} mm vs ${fmt(rakeT,0)} mm at the targets).`);
     if (df>S.rhTol){ let how="";
@@ -4037,7 +4052,7 @@ function aeroOptionsHTML(run, A, S){
      <div class="row" style="margin-top:6px"><button class="ghost" data-goto="changes" style="padding:3px 10px">See it in Changes</button></div></div>`:""}
    <div class="grid" style="margin:10px 0">
     <div class="stat"><div class="k">Parked (garage)</div><div class="v">${fmt(sF)} / ${fmt(sR)}</div><div class="s">front / rear mm</div></div>
-    <div class="stat"><div class="k">At speed</div><div class="v"><span class="${tgt(A.rh.front,S.frontRH)}">${fmt(A.rh.front)}</span> / <span class="${tgt(A.rh.rear,S.rearRH)}">${fmt(A.rh.rear)}</span></div><div class="s">${S.frontRH?`target ${S.frontRH} / ${S.rearRH} ±${S.rhTol}`:"no target for this car"}</div></div>
+    <div class="stat"><div class="k">At speed</div><div class="v"><span class="${tgt(A.rh.front,S.frontRH)}">${fmt(A.rh.front)}</span> / <span class="${tgt(A.rh.rear,S.rearRH)}">${fmt(A.rh.rear)}</span></div><div class="s">${AW?`straights · window ${AW.f[0]}–${AW.f[1]} / ${AW.r[0]}–${AW.r[1]}`:S.frontRH?`target ${S.frontRH} / ${S.rearRH} ±${S.rhTol}`:"no target for this car"}</div></div>
     <div class="stat"><div class="k">Fast corners</div><div class="v">${fmt(A.rh.hsFront)} / ${fmt(A.rh.hsRear)}</div><div class="s">&gt;140 km/h, &gt;0.8 g</div></div>
     <div class="stat"><div class="k">Heavy braking</div><div class="v">${fmt(A.rh.brkFront)} / ${fmt(A.rh.brkRear)}</div><div class="s">front lowest / rear highest</div></div>
     <div class="stat"><div class="k">Splitter min</div><div class="v">${fmt(A.rh.splMin)} mm</div><div class="s">${fmt(A.rh.splLow,1)} s/lap under 3 mm</div></div>
