@@ -647,6 +647,10 @@ function analyze(run){
   for (const k of Object.keys(bins)) if (bins[k].length<150 && binsAll[k].length>bins[k].length) bins[k]=binsAll[k];
   A.us=us; A.usLim=lim; A.bins={};
   for (const [k,v] of Object.entries(bins)) A.bins[k] = {n:v.length, med:median(v)};
+  // mid-corner split: coasting (no brake, throttle < 5%) against light throttle (5–40%), near the limit (all cornering if too few)
+  { const S2={}; for (const b of ["low","med","high"]) S2[b]={coast:[],maint:[],coastA:[],maintA:[]};
+    for (const j of idx){ const u=us[j]; if (!Number.isFinite(u) || ch.Brake[j]>0.05 || ch.Throttle[j]>=0.4) continue; const t2=ch.Throttle[j]<0.05?"coast":"maint", s=S2[bandOf(ch.Speed[j]*3.6)]; s[t2+"A"].push(u); if (lim[j]) s[t2].push(u); }
+    A.midSplit={}; for (const [b,s] of Object.entries(S2)){ A.midSplit[b]={}; for (const k of ["coast","maint"]){ const a=s[k].length>=150?s[k]:s[k+"A"]; A.midSplit[b][k]={n:a.length, med:median(a)}; } } }
   const pool = (ph,bd) => { const a=[]; for (const p of ph) for (const b of bd) a.push(...bins[p+b]); return {n:a.length, med:median(a)}; };
   A.mechMid = pool(["mid"],["low","med"]);
   A.mechAll = pool(["mid","exit"],["low"]);
@@ -3039,8 +3043,8 @@ function render(){
      <div class="legend"><span><i style="background:${css("--us")}"></i>understeer &gt; ${fmt(US_PUSH,1)}°</span><span><i style="background:${css("--neutral")}"></i>neutral</span><span><i style="background:${css("--os")}"></i>loose &lt; ${fmt(US_LOOSE,1)}°</span><span><i style="background:${css("--bad")};border-radius:50%"></i>slide</span></div>
      <p class="muted" style="font-size:12px">${run.ch.Lat&&run.ch.Lon?"Map is your best lap. Dots are slide moments from all laps used.":"Live stints have no GPS, so this is your best lap laid out by distance (the track map comes with the full-data stint). Dots are slides."}</p></div>
     <div class="tablewrap">${balanceTable(A)}
-     <p class="muted" style="font-size:12px">Entry = on the brakes, mid = coasting / part throttle, exit = throttle above 40%. Steering ratio ${fmt(A.ratio)}:1 (estimated from gentle cornering).</p></div></div>
-  </section>` + safe(()=>balanceWhyHTML(run, A),"balwhy") + cornerBalanceHTML(run, A) + limitHTML(run, A) + arbHTML(run, A) + rotationHTML(run, A) + areaCards("balance"),
+     <p class="muted" style="font-size:12px">Entry = on the brakes, mid = coasting / part throttle (split below), exit = throttle above 40%. Steering ratio ${fmt(A.ratio)}:1 (estimated from gentle cornering).</p></div></div>
+  </section>` + safe(()=>midSplitHTML(run, A),"midsplit") + safe(()=>balanceWhyHTML(run, A),"balwhy") + cornerBalanceHTML(run, A) + limitHTML(run, A) + arbHTML(run, A) + rotationHTML(run, A) + areaCards("balance"),
     brakes: () => inCarHTML(run, A) + brakesHTML(run, A) + areaCards("brakes"),
     loss: () => gpHTML(run, A),
     gp: () => gpHTML(run, A) + safe(()=>inputsHTML(run, A, S),"inputs") + safe(()=>refLapHTML(run, A),"reflap") + (()=>{ try { return teamCompareHTML(run, A); } catch(e){ console.error(e); return ""; } })(),
@@ -3161,10 +3165,12 @@ function sinceBaseHTML(run, A){
   const sum=uniq.reduce((a,c)=>a+(c.e.bal||0),0);
   // what the car does now (against your preference), and the change to undo first
   const pref=(()=>{ try { return balPref(run).total||0; } catch(e){ return 0; } })(), lo=US_BASE.loose+pref, hi=US_BASE.push+pref, ph=k=>learnPhase(A,k);
+  const band=(p,b)=>{ const x=A.bins&&A.bins[p+b]; return x&&x.n>=30&&Number.isFinite(x.med)?x.med:null; }, fastPush=["mid","exit"].map(p=>[p, [band(p,"med"),band(p,"high")].filter(v=>v!=null)]).filter(([,v])=>v.length&&Math.max(...v)>hi).map(([p,v])=>[p,Math.max(...v)]);
   const push=["mid","exit","entry"].filter(k=>Number.isFinite(ph(k)) && ph(k)>hi), loose=["entry","mid","exit"].filter(k=>Number.isFinite(ph(k)) && ph(k)<lo), wheelspin=(A.osExit||0)>0.5;
-  const prio=c=>/Arb|AntiRollBar/i.test(c.k)?(/Rear/i.test(c.k)?0:1):/ToeIn/i.test(c.k)?2:/Camber/i.test(c.k)?3:/Preload|Friction/i.test(c.k)?4:/SpringRate/i.test(c.k)?6:5;
+  const prio=c=>/Arb|AntiRollBar/i.test(c.k)?(/Rear/i.test(c.k)?(wheelspin?1:0):(wheelspin?0:1)):/ToeIn/i.test(c.k)?2:/Camber/i.test(c.k)?3:/Preload|Friction/i.test(c.k)?4:/SpringRate/i.test(c.k)?6:5;
   let next=null, why="";
   if (push.length){ next=uniq.filter(c=>c.e.bal>0).sort((a,b)=>prio(a)-prio(b))[0]; why=`the car pushes (${push.map(k=>`${k} ${fmt(ph(k),1)}°`).join(", ")}) and this change adds understeer`; }
+  else if (fastPush.length){ next=uniq.filter(c=>c.e.bal>0).sort((a,b)=>prio(a)-prio(b))[0]; if (next){ push.push(...fastPush.map(([p])=>p)); why=`the car pushes in the medium and fast corners (${fastPush.map(([p,v])=>`${p} up to ${fmt(v,1)}°`).join(", ")}) and this change adds understeer`; } }
   if (!next && (loose.length || wheelspin)){ next=uniq.filter(c=>c.e.bal<0).sort((a,b)=>(wheelspin&&/Rear.*ToeIn|ToeIn.*Rear/i.test(learnNorm(b.k))?1:0)-(wheelspin&&/Rear.*ToeIn|ToeIn.*Rear/i.test(learnNorm(a.k))?1:0) || prio(a)-prio(b))[0]; why=wheelspin?"the rear slides or spins on throttle and this change frees the rear":`the car is loose (${loose.map(k=>`${k} ${fmt(ph(k),1)}°`).join(", ")}) and this change adds rotation`; }
   const then=next && push.length && wheelspin ? uniq.find(c=>c!==next && c.e.bal<0 && /ToeIn/i.test(c.k) && /Rear/i.test(learnNorm(c.k))) : null;
   const v=(c,x)=>fmt(x, Math.abs(x)%1?1:0);
@@ -3748,7 +3754,7 @@ function drawRoll(run, A){
     const [c,w,h]=canvasCtx(cv,260), m={l:40,r:10,t:10,b:28}, X=x=>m.l+(x+gm)/(2*gm)*(w-m.l-m.r), Y=y=>h-m.b-(y+ym)/(2*ym)*(h-m.t-m.b);
     c.font="11px system-ui"; c.strokeStyle=css("--grid"); c.fillStyle=css("--muted");
     for (let i=0;i<=4;i++){ const y=-ym+2*ym*i/4; c.beginPath(); c.moveTo(m.l,Y(y)); c.lineTo(w-m.r,Y(y)); c.stroke(); c.fillText(y.toFixed(1)+"°",2,Y(y)+4); }
-    for (let i=0;i<=4;i++){ const x=-gm+2*gm*i/4; c.fillText(x.toFixed(1),X(x)-8,h-10); } c.textAlign="right"; c.fillText("cornering g",w-m.r,h-10); c.textAlign="left";
+    for (let i=0;i<=4;i++){ const x=-gm+2*gm*i/4; c.fillText(x.toFixed(1),X(x)-8,h-10); } c.textAlign="right"; c.fillText("cornering g",w-m.r,h-24); c.textAlign="left";
     const dots=(ys,col)=>{ c.fillStyle=col; for (let i=0;i<RC.g.length;i+=2) c.fillRect(X(RC.g[i])-1,Y(ys[i])-1,2,2); }; dots(RC.rF, css("--us")+"55"); dots(RC.rR, css("--os")+"55");
     const line=(f,col)=>{ c.strokeStyle=col; c.lineWidth=2.2; c.beginPath(); c.moveTo(X(-gm),Y(f.a+f.b*-gm)); c.lineTo(X(gm),Y(f.a+f.b*gm)); c.stroke(); }; line(RC.F, css("--us")); line(RC.R, css("--os")); }
   if (cw){ const [c,w,h]=canvasCtx(cw,230), ex=4, gm=RC.gMax;
@@ -8287,6 +8293,25 @@ function drawPair(){
       c.fillStyle=css("--muted"); c.fillText(`A ${fmt(ra.gF,2)} / ${fmt(ra.gR,2)} °/g · B ${fmt(rb.gF,2)} / ${fmt(rb.gR,2)} °/g (front / rear)`, m.l+4, m.t+10);
       if (ra.outF!=null && rb.outF!=null){ c.fillText(`outside front edge: A ${fmt(ra.outF,1)} mm · B ${fmt(rb.outF,1)} mm`, m.l+4, m.t+24); } } }
 }
+// ---------- mid-corner, split: off both pedals (coasting) against light throttle (5–40%) ----------
+function midSplitHTML(run, A){
+  const M=A.midSplit; if (!M) return ""; const tk=run.tick||60, bands=[["low","Slow < 125 km/h"],["med","Medium 125–175"],["high","Fast > 175"]];
+  const cell=c=>!c||c.n<tk*0.5||!Number.isFinite(c.med)?`<td class="muted" style="text-align:center">–</td>`:`<td style="text-align:center"><span style="display:inline-block;min-width:54px;padding:3px 8px;border-radius:6px;background:${usColor(c.med)}22;color:${usColor(c.med)};font-weight:600">${fmt(c.med,1)}°</span><div class="muted" style="font-size:11px">${fmt(c.n/tk,0)} s</div></td>`;
+  const pool=(t,bd)=>{ let s=0,n=0; for (const b of bd){ const c=M[b]&&M[b][t]; if (c&&c.n>=tk*0.5&&Number.isFinite(c.med)){ s+=c.med*c.n; n+=c.n; } } return n?{med:s/n,n}:null; };
+  const C=pool("coast",["med","high"]), T=pool("maint",["med","high"]), C0=pool("coast",["low"]), T0=pool("maint",["low"]);
+  const say=(C,T,where)=>{ if (!C||!T) return ""; const d=T.med-C.med, cp=C.med>US_PUSH, tp=T.med>US_PUSH, cl=C.med<US_LOOSE, tl=T.med<US_LOOSE;
+    if (tp && d>0.4 && !cp) return `<b>${where}: it pushes once you pick up the throttle (${fmt(T.med,1)}°), not while coasting (${fmt(C.med,1)}°).</b> The front has the grip; it's lost when the weight moves back and the diff starts locking. Look at the rear of the car before the front: less diff preload (or fewer clutch plates) first, then a stiffer rear bar. Driving: wait a moment longer at the apex before picking up the throttle, then squeeze it.`;
+    if (cp && tp) return `<b>${where}: it pushes coasting (${fmt(C.med,1)}°) and on light throttle (${fmt(T.med,1)}°).</b> That's the front grip itself, not the throttle: front bar softer, ${/high/.test(where)||where.startsWith("Medium")?"or a click less rear wing (the push grows with speed), ":""}or more front camber.${d>0.4?` Light throttle adds another ${fmt(d,1)}° on top: once the front is better, less diff preload takes that part out.`:""}`;
+    if (cp && !tp) return `<b>${where}: it pushes coasting (${fmt(C.med,1)}°) and settles on light throttle (${fmt(T.med,1)}°).</b> The front runs out of grip when the car has no drive: a softer front bar helps, and so does getting to the throttle sooner (shorter coast).`;
+    if (cl && !tl) return `<b>${where}: loose coasting (${fmt(C.med,1)}°), fine on throttle.</b> The rear lets go off both pedals (lift-off rotation): more diff preload or a softer rear bar, or carry a little throttle through the apex.`;
+    if (tl && !cl) return `<b>${where}: loose on light throttle (${fmt(T.med,1)}°), fine coasting.</b> The rear gives up under drive: softer rear bar, more rear toe-in, or less diff locking on power.`;
+    return `${where}: coasting ${fmt(C.med,1)}° and light throttle ${fmt(T.med,1)}°, both inside what you like.`; };
+  const lines=[say(C,T,"Medium and fast corners"), say(C0,T0,"Slow corners")].filter(Boolean);
+  return `<section><h2>Mid-corner, split <small>off both pedals against light throttle (5–40%), near the grip limit</small></h2>
+    <div class="tablewrap"><table style="font-size:13px;max-width:520px"><tr><th></th><th style="text-align:center">Coasting</th><th style="text-align:center">Light throttle</th></tr>
+    ${bands.map(([b,l])=>`<tr><td>${l}</td>${cell(M[b]&&M[b].coast)}${cell(M[b]&&M[b].maint)}</tr>`).join("")}</table></div>
+    ${lines.length?`<ul style="margin:8px 0 0 18px;line-height:1.6;font-size:13.5px">${lines.map(l=>`<li>${l}</li>`).join("")}</ul>`:""}
+    <p class="muted" style="font-size:12px;margin:6px 0 0">Mid in the table above is both of these together. Coasting = no brake, throttle under 5%; light throttle = 5–40%. Fewer than half a second in a box isn't enough to read.</p></section>`; }
 function stintPairHTML(run){
   PAIR_RUN=run;
   const R=pairRecs(run); if (R.length<2) return "";
