@@ -6708,13 +6708,21 @@ function tpSteps(run, base, kind){
   if (S.some(s=>/^spr/.test(s.id))){
     S.push({id:"base2", block:"Springs", label:"Baseline check", how:"Back to the baseline setup: shows how much the track and you improved since the start, so it isn't blamed on the springs.", kind:"base"});
     S.push({id:"sprApp", block:"Springs", label:"Springs: the best of both sweeps", how:"Drive both spring sweeps first: this step then puts the best front and rear springs together.", kind:"between", re:/SpringRate$|TorsionBarSize$/i}); }
-  // the front aero platform: softer front springs on the bump rubbers, so the front runs down in the downforce window at speed
+  // the AERO PLATFORM, before the mechanical balance: springs, bump rubbers and ride heights set together so the car runs in the downforce window at speed.
+  // Each platform is one step (front springs + the bump rubber gap that lets the front sink to the window + the rear static height for the rake),
+  // driven and scored on the lap like everything else; the best becomes the baseline. Worked out once from a stint (kept for the programme).
   if (kind!=="track"){ try { const sp=first(spring("Front")), gp=first(ent(/(Left|Right)Front\.BumpRubberGap$/i));
     if (sp && gp && !/TorsionBar/i.test(sp.path) && (PROFILES[run.carPath]||{}).aeroWin){
-      const FP=run.A ? frontPlatform(run, run.A, settingsFor(run)) : null, o=FP ? (FP.opts.find(x=>x.reach) || FP.opts[FP.opts.length-1]) : null;
-      const k0=learnNum(bv(sp)), g0=learnNum(bv(gp)), k2=o ? o.k2 : Math.round((k0-60)/20)*20, g2=o && o.g2!=null ? o.g2 : g0+3;
-      if (k2>0 && Number.isFinite(g0)) S.push({id:"platF", block:"Springs", label:"Front aero platform: softer springs on the bump rubbers", re:/Front[A-Za-z]*\.(SpringRate|BumpRubberGap)$/i, kind:"platform", tSpring:k2, tGap:g2, allow:/Camber|Toe|PerchOffset|SpringPerch/i,
-        how:`Front springs to <b>${k2} N/mm</b> and the front bump rubber gap to <b>${g2} mm</b>, both sides, from the springs you settled on; ride heights back to the baseline with the perch offsets. The softer springs let the front sink towards the downforce window at speed${o?` (about ${fmt(o.f,1)} mm on the straights, window ${FP.win[0]}–${FP.win[1]})`:""}; the bump rubbers catch it there and hold it up on the brakes and kerbs. Nothing else. Shows whether the floor downforce is worth more than the stiffer springs' support.`}); } } catch(e){} }
+      const pk="platplan|"+run.carPath+"|"+learnTrackOf(run); let plan=PREFS.get(pk);
+      if (!plan && run.A && run.A.rh){ const S0=settingsFor(run), FP=frontPlatform(run, run.A, S0), W=(PROFILES[run.carPath]||{}).aeroWin;
+        if (FP && FP.opts.length){ const dR=Math.max(-4, Math.min(4, Math.round(((W.df.r[0]+W.df.r[1])/2 - run.A.rh.rear)*2)/2));
+          plan={made:Date.now(), k0:FP.kF, g0:FP.g0, f0:FP.f0, win:FP.win, rWin:W.df.r, r0:run.A.rh.rear, dR, opts:FP.opts.map(o=>({k2:o.k2, g2:o.g2!=null?o.g2:FP.g0, f:o.f, reach:o.reach}))}; PREFS.set(pk, plan); } }
+      if (plan){ plan.opts.forEach((o,i)=>S.push({id:`plat${i+1}`, block:"Aero platform", label:`Platform ${i+1}: front springs ${o.k2}${o.g2!==plan.g0?`, bump gap ${o.g2} mm`:""}${plan.dR?`, rear ${plan.dR>0?"+":""}${plan.dR} mm`:""}`,
+          re:/Front[A-Za-z]*\.(SpringRate|BumpRubberGap)$|Rear[A-Za-z]*\.RideHeight$/i, kind:"platform", tSpring:o.k2, tGap:o.g2, g0:plan.g0, dR:plan.dR, allow:/Camber|Toe|PerchOffset|SpringPerch/i,
+          how:`One aero platform, everything together: front springs to <b>${o.k2} N/mm</b>${o.g2!==plan.g0?` and the front bump rubber gap to <b>${o.g2} mm</b>`:` (bump rubber gap stays ${plan.g0} mm)`}, front static ride height back to the baseline with the perch offsets${plan.dR?`, and the rear static ride height <b>${plan.dR>0?"+":""}${plan.dR} mm</b> on both sides (for the rake: the rear to the middle of its window at speed)`:""}. Nothing else. Expected at speed: front about ${fmt(o.f,1)} mm (window ${plan.win[0]}–${plan.win[1]}${o.reach?"":"; as close as these springs get"}), rear about ${fmt(plan.r0+plan.dR,1)} mm (window ${plan.rWin[0]}–${plan.rWin[1]}). Shows whether the floor working is worth more than the stiffer springs' support.`}));
+        S.push({id:"platBase", block:"Aero platform", label:"Baseline check (if the track changed)", kind:"base", cond:/^plat\d/, lapsN:3, how:tpCheckHow});
+        S.push({id:"platApp", block:"Aero platform", label:"Aero platform: the best one", kind:"between", re:/Front[A-Za-z]*\.(SpringRate|BumpRubberGap)$|Rear[A-Za-z]*\.RideHeight$/i,
+          how:"Drive the platform steps first: this step then sets the platform that scored best (lap time with the track temperature taken out, balance, slides, tyres, ride height at speed against the window), or keeps the current one. It becomes the baseline for the ride height, bars and dampers."}); } } } catch(e){ console.error("platform steps", e); } }
   // then the heave (front) and third (rear) springs, on those corner springs: they hold the height at speed (the aero platform) without changing roll stiffness
   for (const [ax,key,name] of [["Front","HeaveSpringRate","heave spring"],["Rear","ThirdSpringRate","third spring"]]){ const e=first(ent(new RegExp(`\\.${key}$`,"i"))); if (!e) continue; const eb=Object.assign({}, e, {raw:bv(e)});
     for (const [id,k,d,w] of [[`heave${ax}Soft`,"less",-1,"softer"],[`heave${ax}`,"more",1,"stiffer"]]){ const r=resolve(run,{e:eb, d}); if (r && r.same) continue;
@@ -6770,7 +6778,7 @@ function tpStatus(run, P){
   const rhOf=(o,ax)=>{ const v=Object.entries(o||{}).filter(([k])=>new RegExp(`(Left|Right)${ax}\\.RideHeight$|\\.${ax}[A-Za-z]*\\.RideHeight$`).test(k)).map(([,v])=>learnNum(v)).filter(Number.isFinite); return v.length?mean(v):NaN; };
   let lastRef=[];
   for (const s of steps){ s.stints=[]; s.base=curBase; s.after=after; s.refT=tpTrackT(lastRef);
-    if (s.kind==="between"){ s.combo=tpCombo(run, steps, P, s.id==="arbApp"?"bars":s.id==="heaveApp"?"heave":s.id==="rhApp"?"rh":"springs"); const C=s.combo;
+    if (s.kind==="between"){ s.combo=tpCombo(run, steps, P, s.id==="arbApp"?"bars":s.id==="heaveApp"?"heave":s.id==="rhApp"?"rh":s.id==="platApp"?"platform":"springs"); const C=s.combo;
       if (C.done){
         const val=c=>c.v!==undefined ? `${c.unit==="mm"?fmt(c.v,1):c.v} ${c.unit}` : c.raw, chg=C.items.filter(c=>c.v!==undefined ? c.v!==c.base : c.raw!==c.baseRaw);
         s.how = C.any ? `${C.items.map(c=>`${c.label} <b>${esc(val(c))}</b>${(c.v!==undefined?c.v!==c.base:c.raw!==c.baseRaw)?"":" (baseline)"}`).join(", ")}, all together. Why: ${C.items.map(c=>esc(c.why)).join("; ")}. ${s.id==="sprApp"?" Ride heights back near the baseline with the perch offsets (torsion bar turns at the front of a torsion-bar car).":""} Nothing else. This checks they work together, not just each on its own; once driven, it's the baseline for the steps after it.`
@@ -6789,8 +6797,8 @@ function tpStatus(run, P){
         else if (/^w/.test(s.kind)){ const to=c.to, from=c.from, L=learnNum(s.lim), isMin=Number.isFinite(L)&&s.kind==="wmin"?Math.abs(to-L)<1e-6:Math.abs(to-wLo)<1e-6&&to<from, isMax=Number.isFinite(L)&&s.kind==="wmax"?Math.abs(to-L)<1e-6:Math.abs(to-wHi)<1e-6&&to>from;
           ok = s.kind==="wmin" ? isMin : s.kind==="wmax" ? isMax : s.kind==="wless" ? to<from && !isMin : to>from && !isMax; }
         // the combination: any stint after the sweeps that changes only these settings (and isn't another step's); the values you ran become the baseline
-        else if (s.kind==="platform") ok=ch.some(c=>/SpringRate/i.test(c.k) && c.to<c.from) && ch.some(c=>/BumpRubberGap/i.test(c.k));
-        else if (s.kind==="between"){ const grp=s.id==="arbApp"?/^arb(Front|Rear)/:s.id==="heaveApp"?/^heave(Front|Rear)/:/^spr(Front|Rear)/, lastSweep=Math.max(0, ...steps.filter(q=>grp.test(q.id)).map(q=>{ let n=0; for (const x of q.stints){ n+=x.laps||0; if (n>=q.laps) return x.date; } return q.stints.length?q.stints[q.stints.length-1].date:0; }));
+        else if (s.kind==="platform"){ const dR0=rhOf(r.setup,"Rear")-rhOf(s.base,"Rear"); ok=ch.some(c=>/Front/i.test(c.k) && /SpringRate/i.test(c.k) && Math.abs(c.to-s.tSpring)<1e-6) && (s.tGap===s.g0 ? !ch.some(c=>/BumpRubberGap/i.test(c.k)) : ch.some(c=>/BumpRubberGap/i.test(c.k) && Math.abs(c.to-s.tGap)<1e-6)) && Math.abs(dR0-(s.dR||0))<=1 && !(Math.abs(dF)>2); }
+        else if (s.kind==="between"){ const grp=s.id==="arbApp"?/^arb(Front|Rear)/:s.id==="heaveApp"?/^heave(Front|Rear)/:s.id==="platApp"?/^plat\d/:/^spr(Front|Rear)/, lastSweep=Math.max(0, ...steps.filter(q=>grp.test(q.id)).map(q=>{ let n=0; for (const x of q.stints){ n+=x.laps||0; if (n>=q.laps) return x.date; } return q.stints.length?q.stints[q.stints.length-1].date:0; }));
           // (a sweep step that already had its laps before this stint doesn't keep it from the combination, which may run the same value)
           ok = r.date>lastSweep && !steps.some(q=>q!==s && q.kind!=="between" && q.stints && q.stints.some(x=>x.id===r.id) && !(/^(min|max|less|more)$/.test(q.kind) && q.stints.filter(x=>x.date<r.date).reduce((a,x)=>a+(x.laps||0),0)>=q.laps)); }
         else { const d=s.e0?dirFor(run,s.e0):1, need=Math.max(1,s.amount-1); ok=ch.every(c=>(c.to-c.from)*d*(s.kind==="less"?-1:1)>=need-1e-6); } }
@@ -6876,6 +6884,19 @@ function tpCombo(run, steps, P, what){
   const W=(L,f)=>{ let s=0,n=0; for (const r of L){ const v=f(r), w=r.laps||1; if (Number.isFinite(v)){ s+=v*w; n+=w; } } return n?s/n:NaN; };
   const hrsApart=(A,B)=>Math.abs(W(A,r=>r.date)-W(B,r=>r.date))/3.6e6, out={any:false, done:0, items:[]};
   const baseStints=steps.filter(x=>x.kind==="base").flatMap(x=>x.stints||[]);
+  // the aero platform: the current platform (the baseline check, or the stints that set the baseline) against each platform driven; the best overall wins
+  if (what==="platform"){
+    const PS=steps.filter(x=>/^plat\d/.test(x.id)), setter=steps.filter(q=>q.setsBase && q.stints.length && q.stints[q.stints.length-1].date<=((PS[0]||{}).after||0)).slice(-1)[0];
+    const ref=refFor("platBase", setter?setter.stints:baseStints), item={label:"Aero platform", raw:"current", baseRaw:"current", set:null, done:false, why:""};
+    if (!PS.length || !PS.every(x=>x.complete)) item.why="aero platform: drive every platform step first";
+    else { const C=[{w:"the current platform", L:ref, s:null}, ...PS.filter(x=>x.stints.length).map(x=>({w:x.label.replace(/^Platform \d: /,""), L:x.stints, s:x}))].filter(x=>x.L && x.L.length).map(x=>Object.assign(x,{S:tpScore(x.L,run)})).filter(x=>Number.isFinite(x.S.total)).sort((a,b)=>a.S.total-b.S.total);
+      const spr=tSpread(C.map(x=>x.L)), best=C[0], base=C.find(x=>!x.s);
+      if (spr>TP_COND) item.why=`aero platform: the track temperature differs by ${fmt(spr,0)} °C between these stints: drive the baseline check (3 laps) in the same conditions first`;
+      else if (!best) item.why="aero platform: not enough data";
+      else { item.done=true;
+        if (!best.s || !base || base.S.total-best.S.total<0.1) item.why=`aero platform: ${!best.s?"the current platform scores best":`${best.w} is within 0.1 s of the current one overall`}: it stays`;
+        else { item.raw=best.w; item.set={spring:best.s.tSpring, gap:best.s.tGap, dR:best.s.dR}; item.why=`aero platform: ${best.w} scores best: ${tpScoreWhy(best.S, base.S)} against the current platform`; out.any=true; } } }
+    out.Platform=item; out.items.push(item); if (item.done) out.done++; return out; }
   for (const ax of ["Front","Rear"]){
     if (what==="rh"){ if (ax!=="Rear") continue;
       const lo=steps.find(x=>x.id==="rhRearLow"), hi=steps.find(x=>x.id==="rhRearHigh"), sb=((lo||hi)||{}).base||P.base;
@@ -6934,8 +6955,14 @@ function tpTarget(run, s, path, baseRaw){
   if (s.kind==="min"||s.kind==="max"||s.kind==="wmin"||s.kind==="wmax") return s.lim!=null ? withV(s.lim) : (s.kind==="min"||s.kind==="wmin" ? "garage minimum" : "garage maximum");
   if (s.kind==="more"||s.kind==="less"){ const r=resolve(run,{e, d:(s.kind==="less"?-1:1)*(s.amount||1)}); return r?r.raw:`${s.amount||1} step${(s.amount||1)>1?"s":""} ${s.kind==="less"?"softer":"stiffer"}`; }
   if (s.kind==="wless"||s.kind==="wmore"){ const r=resolve(run,{e, d:s.kind==="wless"?-2:2}); return r?r.raw:`2 steps ${s.kind==="wless"?"lower":"higher"}`; }
+  if (s.kind==="platform" && /RideHeight$/i.test(path)) return s.dR ? baseRaw.replace(/-?\d+(\.\d+)?/, (learnNum(baseRaw)+s.dR).toFixed(1)) : baseRaw;
   if (s.kind==="platform") return /SpringRate$/i.test(path) ? baseRaw.replace(/-?\d+(\.\d+)?/, String(s.tSpring)) : /BumpRubberGap$/i.test(path) ? baseRaw.replace(/-?\d+(\.\d+)?/, String(s.tGap)) : baseRaw;
   if (s.kind==="rhlow" || s.kind==="rhhigh") return baseRaw.replace(/-?\d+(\.\d+)?/, (learnNum(baseRaw)+(s.kind==="rhlow"?-3:3)).toFixed(1));
+  if (s.kind==="between" && s.combo && s.combo.Platform){ const Pl=s.combo.Platform.set, k=learnNorm(path); if (!Pl) return baseRaw;
+    if (/Front/.test(k) && /SpringRate$/i.test(k)) return baseRaw.replace(/-?\d+(\.\d+)?/, String(Pl.spring));
+    if (/Front/.test(k) && /BumpRubberGap$/i.test(k)) return baseRaw.replace(/-?\d+(\.\d+)?/, String(Pl.gap));
+    if (/Rear/.test(k) && /RideHeight$/i.test(k)) return Pl.dR ? baseRaw.replace(/-?\d+(\.\d+)?/, (learnNum(baseRaw)+Pl.dR).toFixed(1)) : baseRaw;
+    return baseRaw; }
   if (s.kind==="between" && s.combo && s.combo.done){ const k=learnNorm(path), a=/Front/.test(k)?"Front":/Rear/.test(k)?"Rear":null; if (!a) return baseRaw;
     if (/RideHeight$/i.test(k)){ const c=s.combo.RearRH; return a==="Rear" && c && Math.abs(c.v-c.base)>=1 ? baseRaw.replace(/-?\d+(\.\d+)?/, (learnNum(baseRaw)+(c.v-c.base)).toFixed(1)) : baseRaw; }
     if (/SpringRate$|TorsionBarSize$/i.test(k) && !/HeaveSpring|ThirdSpring/i.test(k)){ const c=s.combo[a]; return c && c.v!==c.base ? baseRaw.replace(/-?\d+(\.\d+)?/, String(c.v)) : baseRaw; }
@@ -6986,7 +7013,7 @@ function tpOverlayData(){
 function tpSheetRows(run, P, steps){
   const s=steps.find(x=>x.id===TP_SHOW) || steps.find(x=>!x.complete) || steps[steps.length-1]; if (!s || !P.base) return null;
   const w=liveWhere(), lcs=LIVE.connected && w && liveMatches(run,w) && LIVE.meta && LIVE.meta.info && LIVE.meta.info.CarSetup;
-  const cur=lcs ? tpSetupFlat(flatten(lcs,"CarSetup")) : tpSetup(run), src=lcs?"garage now":"this stint", isSpr=/^spr/.test(s.id)||s.id==="sprApp";
+  const cur=lcs ? tpSetupFlat(flatten(lcs,"CarSetup")) : tpSetup(run), src=lcs?"garage now":"this stint", isSpr=/^spr/.test(s.id)||s.id==="sprApp"||/^plat(\d|App)/.test(s.id);
   const rows=Object.entries(s.base||P.base).filter(([path])=>!SM_DERIVED.test(learnNorm(path)) || /PerchOffset|TorsionBarTurns/i.test(path)).map(([path,raw])=>{ const k=learnNorm(path), key=path.split(".").pop(); raw=String(raw).trim();
     let st="keep", to=raw, note="";
     if (s.kind!=="base" && s.re && s.re.test(k)){ const to0=tpTarget(run,s,path,raw); if (s.kind!=="between" || to0!==raw){ st="set"; to=to0; } }
@@ -7045,7 +7072,7 @@ const TP_MEAS = [
   ["cR","Rear tyres, inner minus outer", r=>r.tread&&r.tread.LR&&r.tread.RR?((r.tread.LR.i-r.tread.LR.o)+(r.tread.RR.i-r.tread.RR.o))/2:NaN, "°C", 1, 1.5],
 ];
 const TP_MEANS = {Springs:"how the car uses its mechanical grip and how stable the aero platform is", Dampers:"how it rides bumps and kerbs and how quickly it settles",
-  "Anti-roll bars":"the biggest lever on mid-corner balance", "Wing (this track)":"downforce in the fast corners against speed on the straights here", "Heave & third springs":"how well the car holds its height at speed (the aero platform) against how it rides bumps", "Dive planes (this track)":"front downforce and aero balance against drag here"};
+  "Anti-roll bars":"the biggest lever on mid-corner balance", "Wing (this track)":"downforce in the fast corners against speed on the straights here", "Heave & third springs":"how well the car holds its height at speed (the aero platform) against how it rides bumps", "Aero platform":"the springs, bump rubbers and ride heights together: whether the car runs in its downforce window at speed, and what that's worth against the stiffer springs' support", "Dive planes (this track)":"front downforce and aero balance against drag here"};
 function tpInsightsHTML(run, steps){
   const baseL=steps.filter(s=>s.kind==="base").flatMap(s=>s.stints||[]); if (!baseL.length) return "";
   // sector times: the median of each stint's counted laps (loaded in the background, so they appear a moment later)
