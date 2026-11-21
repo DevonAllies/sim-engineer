@@ -313,7 +313,8 @@ function endLap(){
     if (ST.cur.valid && Number.isFinite(t) && t>20 && Number.isFinite(ST.best) && t>ST.best*1.03) ST.cur.slowLap=true; }
   if (ST.stint && ST.cur.valid && !ST.cur.slowLap && ST.cur.mid.length+ST.cur.exit.length>40){
     ST.stint.laps++; ST.lapsClean=(ST.lapsClean||0)+1;
-    { const T=testLaps(); if (T && T.setUp) addLog(T.total>=T.P.laps ? `Test step done: ${T.total} of ${T.P.laps} laps. Back to the garage for the next step` : `Test lap ${T.total} of ${T.P.laps} counted`); } for (const p of ["entry","mid","exit"]) ST.stint[p].push(...ST.cur[p]);
+    { const s0=ST.last, tl=(s0 && ST.lapT0!==null) ? s0.SessionTime-ST.lapT0 : NaN; if (Number.isFinite(tl) && tl>20) (ST.stint.times||(ST.stint.times=[])).push({lap:ST.lap, t:tl}); }
+    { const T=testLaps(); if (T && T.setUp && T.odd.some(x=>x.lap===ST.lap)) addLog(`Lap ${ST.lap} won't count for the test: much slower than your typical lap (traffic or a moment)`); else if (T && T.setUp) addLog(T.total>=T.P.laps ? `Test step done: ${T.total} of ${T.P.laps} laps. Back to the garage for the next step` : `Test lap ${T.total} of ${T.P.laps} counted`); } for (const p of ["entry","mid","exit"]) ST.stint[p].push(...ST.cur[p]);
     if (ST.cur.tyre.n>300){ ST.stint.lastLapTyres = ST.cur.tyre;   // add this lap to the stint's tyre average
       // each lap's own average (all its corners) is added; the report divides by the number of laps, so every lap counts the same
       const S=ST.stint.tyreSum || (ST.stint.tyreSum={n:0, laps:0}), T=ST.cur.tyre; S.laps++; S.n=S.laps;
@@ -454,13 +455,17 @@ let TESTS=[], PROG=null; try { if (window.se && window.se.onPlan){ window.se.onP
 const testingHere = () => !!(ST.meta && ST.meta.car && TESTS.includes(ST.meta.car+"|"+ST.meta.trackId));
 const escT=s=>String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 // the step you're on and its laps: the ones already counted (finished stints) plus this stint's clean laps, when the car is set up for the step
+// the app's rule for odd laps (traffic, a moment): with 5 or more clean laps in the stint, a lap more than max(3.5 × the spread, 0.8 s) slower than the typical one is left out
+function oddLaps(times){ const T=times||[]; if (T.length<5) return []; const t=T.map(x=>x.t).sort((a,b)=>a-b), med=a=>{ const s=[...a].sort((x,y)=>x-y), m=s.length>>1; return s.length%2?s[m]:(s[m-1]+s[m])/2; };
+  const m=med(t), mad=med(t.map(x=>Math.abs(x-m)))*1.4826, thr=m+Math.max(3.5*mad, 0.8), best=Math.min(...t), odd=T.filter(x=>x.t!==best && x.t>thr); return odd.length<=T.length/3 ? odd : []; }
 function testLaps(){ const P=PROG; if (!testingHere() || !P || P.none!==undefined || !P.label) return null;
-  const setUp = P.live && !(P.off||[]).length && !P.nothing, here = setUp && ST.stint && !ST.stint.closed ? (ST.stint.laps||0) : 0;
-  return {P, setUp, here, total:Math.min(P.laps, (P.lapsDone||0)+here)}; }
+  const setUp = P.live && !(P.off||[]).length && !P.nothing, odd = ST.stint ? oddLaps(ST.stint.times) : [], here = setUp && ST.stint && !ST.stint.closed ? Math.max(0, (ST.stint.laps||0)-odd.length) : 0;
+  return {P, setUp, here, odd, total:Math.min(P.laps, (P.lapsDone||0)+here)}; }
 function drawTest(){ const el=$("test"); if (!el) return; const T=testLaps(); if (!T){ el.style.display="none"; return; } el.style.display="";
   const {P, setUp, here, total}=T, done=total>=P.laps;
   el.innerHTML = `<b>Testing</b> · step ${P.n} of ${P.total}: <b>${escT(P.label)}</b> · ${done?`<span class="ok">${total} of ${P.laps} laps: done, back to the garage for the next step</span>`:`<span class="ok">${total} of ${P.laps} laps</span>`}`
-    + (!setUp ? ` <span class="warn">· the car isn't set up for this step: these laps don't count</span>` : here && P.lapsDone ? ` <span class="tgt">(${P.lapsDone} before, ${here} this stint)</span>` : ""); }
+    + (!setUp ? ` <span class="warn">· the car isn't set up for this step: these laps don't count</span>` : here && P.lapsDone ? ` <span class="tgt">(${P.lapsDone} before, ${here} this stint)</span>` : "")
+    + (setUp && T.odd.length ? ` <span class="tgt">· not counted: lap ${T.odd.map(x=>x.lap).join(", lap ")} (odd lap: traffic or a moment)</span>` : ""); }
 // ---------- in-car adjustments: brake bias, TC, ABS (things you can change from the cockpit) ----------
 function drawInCar(s, car){
   // you changed bias / TC / ABS: forget what was measured on the old value, so the advice doesn't keep asking for more
