@@ -3002,7 +3002,7 @@ function render(){
     </section>`;
   if (view==="changes"){ out.innerHTML = head + changesHTML(run, A); wireChanges(run); return; }
   if (view==="compare"){ let sh=""; try { sh=modelRangeHTML(run, "Setting history and models") + settingHistoryHTML(run); } catch(e){ console.error("history", e); }
-    out.innerHTML = head + compareHTML(run) + sh;
+    out.innerHTML = head + (()=>{ try { return stintPairHTML(run); } catch(e){ console.error("pair", e); return ""; } })() + compareHTML(run) + sh; try { wirePair(); } catch(e){}
     { const hk=$("#histkey"); if (hk) hk.onchange=()=>{ try { PREFS.set("histKey", hk.value); } catch(e){} render(); }; }
     out.querySelectorAll(".mrange").forEach(s=>s.onchange=()=>{ const R=modelRange(); R[s.dataset.k]=s.value; try { PREFS.set("modelRange", R); } catch(e){} runs.forEach(r=>{ if (r.A) r.A.tw=null; }); render(); });
     const c=$("#cmpcsv"); if (c) c.onclick=()=>compareCSV(run); const cd=$("#cmpcsvdir"); if (cd) cd.onclick=()=>window.se.dataOpen("csv");
@@ -7976,6 +7976,45 @@ function compareRows(run){
       wing:sv(r,/(RearWingAngle|WingSetting|WingAngle)$/i), bias:sv(r,/BrakePressureBias$/i), tc:sv(r,/TcSetting$/i), abs:sv(r,/AbsSetting$/i),
       changes: prev ? learnDiff(prev.setup, r.setup).map(c=>c.txt) : null, cur: run.learnedId===r.id }; });
 }
+// ---------- two stints side by side, from what's stored (so it works any time later): pace, setup, balance, aero, dampers, tyres ----------
+let PAIR={a:null, b:null};
+function pairRecs(run){
+  const trk=learnTrackOf(run), all=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===trk && !r.wet).sort((a,b)=>b.date-a.date), out=[];
+  // the live stint and its full-data (.ibt) version can be stored twice: keep the fuller one
+  const full=r=>(r.aero&&r.aero.fcF!=null?4:0)+(r.aero?2:0)+(r.susp?1:0);
+  for (const r of all){ const d=out.find(x=>Math.abs(x.date-r.date)<5*60000 && x.laps===r.laps); if (!d) out.push(r); else if (full(r)>full(d)) out[out.indexOf(d)]=r; }
+  return out; }
+function stintPairHTML(run){
+  const R=pairRecs(run); if (R.length<2) return "";
+  const progBase=(()=>{ const P=PREFS.get(tpKeyOf(run,"car")); if (!P) return null; try { const b=tpStatus(run,P).find(s=>s.id==="base"); return b && b.stints[0] ? b.stints[0].id : null; } catch(e){ return null; } })();
+  if (!PAIR.a || !R.some(r=>r.id===PAIR.a)) PAIR.a=(R.find(r=>r.laps>=3)||R[0]).id;
+  if (!PAIR.b || !R.some(r=>r.id===PAIR.b) || PAIR.b===PAIR.a) PAIR.b=(progBase && progBase!==PAIR.a && R.some(r=>r.id===progBase)) ? progBase : (R.find(r=>r.id!==PAIR.a)||{}).id;
+  const a=R.find(r=>r.id===PAIR.a), b=R.find(r=>r.id===PAIR.b); if (!a || !b) return "";
+  const K=tpTempK(run).k, corr=r=>Number.isFinite(r.med)&&Number.isFinite(r.trackT)?r.med-K*(r.trackT-30):r.med, g=(o,p)=>p.split(".").reduce((x,k)=>x==null?null:x[k],o);
+  const dt=d=>new Date(d).toLocaleString([], {weekday:"short", day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit"});
+  const opt=sel=>R.slice(0,60).map(r=>`<option value="${esc(r.id)}"${r.id===sel?" selected":""}>${esc(dt(r.date))} · ${esc(r.setupName||"setup")} · ${r.laps} laps · ${fmtTime(r.med)}${r.id===progBase?" · programme baseline":""}</option>`).join("");
+  // rows: [label, value(rec), decimals, unit, better ("lo" | "hi" | "mid:x" | ""), note]
+  const tr=(c,f)=>r=>{ const t=r.tread&&r.tread[c]; return t?`${fmt(t.i,0)} / ${fmt(t.m,0)} / ${fmt(t.o,0)}`:null; };
+  const G=[["Pace and conditions", [["Typical lap (temperature taken out)", corr, 3, "s", "lo", "time"], ["Best lap", r=>r.best, 3, "s", "lo", "time"], ["Lap-to-lap spread", r=>r.sd, 2, "s", "lo"], ["Clean laps", r=>r.laps, 0, ""], ["Track / air temperature", r=>r.trackT, 0, "°C", "", null, r=>r.airT], ["Fuel per lap", r=>r.fuel, 2, "L", "lo"]]],
+    ["Balance (+ understeer, − oversteer, degrees)", [["Entry", r=>g(r,"bal.entry"), 2, "°", "mid:0.3"], ["Mid-corner", r=>g(r,"bal.mid"), 2, "°", "mid:0.3"], ["Exit", r=>g(r,"bal.exit"), 2, "°", "mid:0.3"], ["Slow corners", r=>g(r,"bal.slow"), 2, "°", "mid:0.3"], ["Fast corners", r=>g(r,"bal.fast"), 2, "°", "mid:0.3"], ["Slides per lap", r=>r.slides, 1, "", "lo"], ["Kerb slides", r=>g(r,"susp.kerbSlides"), 1, "", "lo"]]],
+    ["Aero platform", [["Fast corners: front / rear", r=>g(r,"aero.fcF"), 1, "mm", "", null, r=>g(r,"aero.fcR")], ["Fast corners: rake", r=>g(r,"aero.fcRake"), 1, "mm"], ["Fast corners: time in the rake window", r=>g(r,"aero.fcIn"), 0, "%", "hi"], ["At speed (straights): front / rear", r=>g(r,"aero.fA"), 1, "mm", "", null, r=>g(r,"aero.rA")], ["End of the straight: front / rear", r=>g(r,"aero.topF"), 1, "mm", "", null, r=>g(r,"aero.topR")], ["Braking from top speed: front / rear", r=>g(r,"aero.brkF"), 1, "mm", "", null, r=>g(r,"aero.brkR")], ["Splitter's lowest point", r=>g(r,"aero.splMin"), 1, "mm"], ["Front / rear on the bump rubbers (straights)", r=>g(r,"aero.onF")!=null?g(r,"aero.onF")*100:null, 0, "%", "", null, r=>g(r,"aero.onR")!=null?g(r,"aero.onR")*100:null], ["Top speed", r=>g(r,"aero.vmax"), 1, "km/h", "hi"], ["Drag index", r=>g(r,"aero.drag"), 2, "", "lo"], ["Drag K (power method)", r=>g(r,"drag.K"), 3, "", "lo"]]],
+    ["Dampers and track", [["Track roughness", r=>g(r,"susp.rough"), 2, ""], ["Front / rear high-speed damper work", r=>g(r,"susp.F.hs"), 2, "", "", null, r=>g(r,"susp.R.hs")], ["Front / rear damper speed p95 (mm/s)", r=>g(r,"susp.F.p95"), 0, "", "", null, r=>g(r,"susp.R.p95")], ["Front / rear damper work off the kerbs", r=>g(r,"susp.FnoKerb"), 2, "", "", null, r=>g(r,"susp.RnoKerb")], ["Kerbs per lap", r=>g(r,"susp.kerbPerLap"), 1, ""], ["Bottoming (hard laps)", r=>g(r,"susp.bottom"), 0, "", "lo"]]],
+    ["Tyres", [["Front / rear temperature (°C)", r=>g(r,"tyreT.F"), 1, "", "", null, r=>g(r,"tyreT.R")], ["Hot pressure front (kPa)", r=>g(r,"tyreT.pF"), 0, ""], ["LF inner / middle / outer", tr("LF"), null, "°C"], ["RF inner / middle / outer", tr("RF"), null, "°C"], ["LR inner / middle / outer", tr("LR"), null, "°C"], ["RR inner / middle / outer", tr("RR"), null, "°C"], ["Tread used per lap front / rear (%)", r=>r.wearF, 2, "", "lo", null, r=>r.wearR]]]];
+  const f=(v,d,kind)=>v==null||(typeof v==="number"&&!Number.isFinite(v))?"–":typeof v==="string"?v:kind==="time"?fmtTime(v):fmt(v,d);
+  const better=(x,y,rule)=>{ if (!rule || typeof x!=="number" || typeof y!=="number" || !Number.isFinite(x) || !Number.isFinite(y)) return ""; const m=rule.startsWith("mid:")?+rule.slice(4):null;
+    const ax=m!=null?Math.abs(x-m):x, ay=m!=null?Math.abs(y-m):y; if (Math.abs(ax-ay)<1e-9) return ""; return (rule==="hi"?ax>ay:ax<ay) ? "ok" : "warn"; };
+  const diff=(x,y,d)=>typeof x==="number"&&typeof y==="number"&&Number.isFinite(x)&&Number.isFinite(y)&&d!=null&&Math.abs(x-y)>=Math.pow(10,-d)/2?`${x-y>0?"+":""}${fmt(x-y,d)}`:"";
+  const ch=tpChanged(b.setup||{}, a.setup||{}).map(c=>`${learnLabel(c.k)} ${fmt(c.from,1)} → ${fmt(c.to,1)}`).filter((v,i,x)=>x.indexOf(v)===i);
+  return `<section><h2>Two stints side by side <small>pick any two: pace, setup, balance, aero, dampers and tyres, from what each stint stored</small></h2>
+    <div class="row" style="gap:10px;flex-wrap:wrap;align-items:center;font-size:13px;margin-bottom:8px"><b>A</b> <select id="pairA">${opt(PAIR.a)}</select> <b>B</b> <select id="pairB">${opt(PAIR.b)}</select> <button class="ghost" id="pairSwap" style="padding:3px 10px">Swap</button></div>
+    <p style="margin:0 0 8px;font-size:13px"><b>What changed from B to A:</b> ${ch.length?esc(ch.join("; ")):"nothing in the setup (bias, TC, ABS, pressures and fuel aside)"}${Number.isFinite(a.trackT)&&Number.isFinite(b.trackT)&&Math.abs(a.trackT-b.trackT)>TP_COND?` <span class="warn">· the track was ${fmt(Math.abs(a.trackT-b.trackT),0)} °C ${a.trackT>b.trackT?"warmer":"cooler"} for A: the lap time is corrected, but balance and tyres move with temperature too</span>`:""}</p>
+    ${G.map(([h,rows])=>{ const body=rows.map(([k,fn,d,u,rule,kind,fn2])=>{ const x=fn(a), y=fn(b), x2=fn2?fn2(a):undefined, y2=fn2?fn2(b):undefined; if ((x==null||Number.isNaN(x))&&(y==null||Number.isNaN(y))) return "";
+        const two=fn2!==undefined; return `<tr><td class="muted">${k}</td><td class="${better(x,y,rule)}"><b>${f(x,d,kind)}${two?" / "+f(x2,d):""}</b> ${u}</td><td>${f(y,d,kind)}${two?" / "+f(y2,d):""} ${u}</td><td>${[diff(x,y,d), two?diff(x2,y2,d):""].filter(Boolean).join(" / ")}</td></tr>`; }).join("");
+      return body ? `<h3 style="margin:10px 0 4px;font-size:14px">${h}</h3><div class="tablewrap"><table style="font-size:12.5px"><tr><th></th><th>A · ${esc(dt(a.date))}</th><th>B · ${esc(dt(b.date))}</th><th>A − B</th></tr>${body}</table></div>` : ""; }).join("")}
+    <p class="muted" style="font-size:12px;margin:6px 0 0">Green / orange on A: better / worse than B for that line (balance: nearer a touch of understeer, 0.3°). "–": that stint didn't store it (older stints have fewer aero numbers; a live stint gets its ride heights from the full-data file iRacing saves when you get out of the car).</p></section>`; }
+function wirePair(){
+  const a=$("#pairA"), b=$("#pairB"), s=$("#pairSwap"); if (!a) return;
+  a.onchange=()=>{ PAIR.a=a.value; render(); }; b.onchange=()=>{ PAIR.b=b.value; render(); }; if (s) s.onclick=()=>{ PAIR={a:PAIR.b, b:PAIR.a}; render(); }; }
 function compareHTML(run){
   const R=compareRows(run); if (!R.length) return `<section><h2>Compare stints</h2><p class="muted">No stints remembered for this car and track yet. Every stint you drive (live or recorded) is added automatically.</p></section>`;
   const best=Math.min(...R.map(x=>x.r.med).filter(Number.isFinite)), w=d=>`${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
