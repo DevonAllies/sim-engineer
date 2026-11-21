@@ -3412,6 +3412,18 @@ function fastCornersHTML(run, A, S){
       <td class="${RW&&(c.rake<RW.lo||c.rake>RW.hi)?"warn":"ok"}">${mm(c.rake)}</td><td>${Number.isFinite(c.us)?fmt(c.us,1)+"°":"–"}</td><td>${c.lose>0.01?fmt(c.lose,2)+" s":"–"}</td><td style="font-size:12px">${esc(why(c))}</td></tr>`).join("")}</table></div>
     <p class="muted" style="font-size:12px;margin:6px 0 0">Balance: + understeer, − oversteer, in degrees. iRacing doesn't give the total downforce, so what the floor costs can't be put in seconds; the heights against the window show how far off it is.</p>
     ${frontFixHTML(run,A,S,FC)}</section>`; }
+// softer front springs with a bump rubber gap that catches the front at the top of the downforce window at speed:
+// the springs let the front sink as downforce builds, the rubber stops it there and holds it up under braking (the bump-rubber model from this stint)
+function frontPlatform(run, A, S){
+  const W=(PROFILES[run.carPath]||{}).aeroWin, M=rhModel(run,A); if (!W || !M || !M.F || !A.rh || !Number.isFinite(A.rh.front)) return null;
+  const spE=SET.spring(run,"front"), kF=spE?parseFloat(spE.raw):NaN, gE=SET.bump(run,"front"), g0=gE?parseFloat(gE.raw):NaN; if (!(kF>0) || !Number.isFinite(g0)) return null;
+  const f=A.rh.front, tgt=W.df.f[1]-0.5, at=(k2,g2)=>f-(M.F.squash(1,k2,g2)-M.F.now), out=[];
+  for (const k2 of [kF-40,kF-60,kF-80].map(k=>Math.round(k/20)*20).filter((k,i,a)=>k>0 && k<kF && a.indexOf(k)===i)){
+    const nat=at(k2,999);
+    if (nat>tgt){ let g2=g0; while (g2<g0+25 && at(k2,g2)>nat+0.2) g2+=1; out.push({k2, g2, f:at(k2,g2), reach:false}); continue; }
+    let best=null; for (let g2=Math.max(2,Math.round(g0-6)); g2<=g0+20; g2+=1){ const v=at(k2,g2); if (!best || Math.abs(v-tgt)<Math.abs(best.f-tgt)) best={g2, f:v}; }
+    out.push({k2, g2:best.g2, f:best.f, reach:true}); }
+  return {kF, g0, f0:f, tgt, win:W.df.f, opts:out}; }
 // what gets the fast corners into the window: each option worked out from this stint (springs from the suspension model)
 function frontFixHTML(run, A, S, FC){
   const W=(PROFILES[run.carPath]||{}).aeroWin; if (!W || !FC.length) return "";
@@ -3420,7 +3432,11 @@ function frontFixHTML(run, A, S, FC){
   const dSq=k2=>{ if (M && M.F) return M.F.squash(1,k2,M.F.g)-M.F.now; return Number.isFinite(sF0) ? (sF0-f0)*(kF/k2-1) : NaN; };
   const spl=findSet(run,(p,k)=>k==="centerfrontsplitterheight"), splNow=spl?parseFloat(spl.raw):NaN, fit=A.splFit||{a:1.32,b:-0.24}, splMin=+S.minSplitter||0, minFS=+S.minFrontStatic||0;
   const add=(what,dF,dR,note)=>opts.push({what, F:f0+dF, R:r0+dR, note});
-  if (Number.isFinite(kF)) for (const k2 of [kF-30, kF-60].filter(k=>k>0)){ const d=dSq(k2); if (Number.isFinite(d)) add(`Front springs ${fmt(kF,0)} → ${fmt(k2,0)} N/mm`, -d, 0, "softer: the front sinks more at speed, the static height stays. Less front support: more roll and dive, and your spring sweep preferred stiffer. Worth one test step."); }
+  if (Number.isFinite(kF) && !frontPlatform(run,A,S)) for (const k2 of [kF-30, kF-60].filter(k=>k>0)){ const d=dSq(k2); if (Number.isFinite(d)) add(`Front springs ${fmt(kF,0)} → ${fmt(k2,0)} N/mm`, -d, 0, "softer: the front sinks more at speed, the static height stays. Less front support: more roll and dive, and your spring sweep preferred stiffer. Worth one test step."); }
+  { const FP=frontPlatform(run,A,S); if (FP) for (const o of FP.opts){ const sh=o.f-FP.f0;
+      add(`Front springs ${fmt(FP.kF,0)} → ${fmt(o.k2,0)} N/mm${o.g2!==FP.g0?` + bump rubber gap ${fmt(FP.g0,0)} → ${fmt(o.g2,0)} mm`:""}`, sh, 0,
+        o.reach ? `the softer springs let the front sink to about ${mm(o.f)} mm on the straights (window ${FP.win[0]}–${FP.win[1]}); the bump rubbers catch it there, so it doesn't stall the floor and still has support on the brakes and kerbs. One test step (in the programme).`
+          : `the front gets to about ${mm(o.f)} mm on the straights (window ${FP.win[0]}–${FP.win[1]})${o.g2!==FP.g0?`; the gap opens so the rubbers don't hold it up first`:""}. Less front support on the brakes and in roll${o.f>FP.win[1]+0.5?"; softer still would be needed for the window":""}.`); } }
   if (Number.isFinite(splNow) && splMin){ const room=Math.max(0,(splNow-splMin)/fit.a); if (room>=0.3) add(`Front static −${mm(room)} mm (to the splitter minimum)`, -room, 0, `all the static drop the ${splMin} mm splitter rule leaves`); else opts.push({what:"Front static lower", F:NaN, R:NaN, note:`no room: the splitter is at ${mm(splNow)} mm against the ${splMin} mm minimum`}); }
   if (minFS && Number.isFinite(sF0)){ const room=Math.max(0,sF0-minFS); add(`Front static −${mm(room)} mm (to the ${mm(minFS)} mm tech minimum)`, -room, 0, "all the static drop the tech minimum leaves"); }
   if (r0<W.df.r[1]-0.5){ const d=Math.min(W.df.r[1]-0.5-r0, 4); add(`Rear static +${mm(d)} mm`, 0, d, "more rake: more of the downforce moves to the front (balance forward, sharper at speed); the rear stays in its window"); }
@@ -6692,6 +6708,13 @@ function tpSteps(run, base, kind){
   if (S.some(s=>/^spr/.test(s.id))){
     S.push({id:"base2", block:"Springs", label:"Baseline check", how:"Back to the baseline setup: shows how much the track and you improved since the start, so it isn't blamed on the springs.", kind:"base"});
     S.push({id:"sprApp", block:"Springs", label:"Springs: the best of both sweeps", how:"Drive both spring sweeps first: this step then puts the best front and rear springs together.", kind:"between", re:/SpringRate$|TorsionBarSize$/i}); }
+  // the front aero platform: softer front springs on the bump rubbers, so the front runs down in the downforce window at speed
+  if (kind!=="track"){ try { const sp=first(spring("Front")), gp=first(ent(/(Left|Right)Front\.BumpRubberGap$/i));
+    if (sp && gp && !/TorsionBar/i.test(sp.path) && (PROFILES[run.carPath]||{}).aeroWin){
+      const FP=run.A ? frontPlatform(run, run.A, settingsFor(run)) : null, o=FP ? (FP.opts.find(x=>x.reach) || FP.opts[FP.opts.length-1]) : null;
+      const k0=learnNum(bv(sp)), g0=learnNum(bv(gp)), k2=o ? o.k2 : Math.round((k0-60)/20)*20, g2=o && o.g2!=null ? o.g2 : g0+3;
+      if (k2>0 && Number.isFinite(g0)) S.push({id:"platF", block:"Springs", label:"Front aero platform: softer springs on the bump rubbers", re:/Front[A-Za-z]*\.(SpringRate|BumpRubberGap)$/i, kind:"platform", tSpring:k2, tGap:g2, allow:/Camber|Toe|PerchOffset|SpringPerch/i,
+        how:`Front springs to <b>${k2} N/mm</b> and the front bump rubber gap to <b>${g2} mm</b>, both sides, from the springs you settled on; ride heights back to the baseline with the perch offsets. The softer springs let the front sink towards the downforce window at speed${o?` (about ${fmt(o.f,1)} mm on the straights, window ${FP.win[0]}–${FP.win[1]})`:""}; the bump rubbers catch it there and hold it up on the brakes and kerbs. Nothing else. Shows whether the floor downforce is worth more than the stiffer springs' support.`}); } } catch(e){} }
   // then the heave (front) and third (rear) springs, on those corner springs: they hold the height at speed (the aero platform) without changing roll stiffness
   for (const [ax,key,name] of [["Front","HeaveSpringRate","heave spring"],["Rear","ThirdSpringRate","third spring"]]){ const e=first(ent(new RegExp(`\\.${key}$`,"i"))); if (!e) continue; const eb=Object.assign({}, e, {raw:bv(e)});
     for (const [id,k,d,w] of [[`heave${ax}Soft`,"less",-1,"softer"],[`heave${ax}`,"more",1,"stiffer"]]){ const r=resolve(run,{e:eb, d}); if (r && r.same) continue;
@@ -6766,6 +6789,7 @@ function tpStatus(run, P){
         else if (/^w/.test(s.kind)){ const to=c.to, from=c.from, L=learnNum(s.lim), isMin=Number.isFinite(L)&&s.kind==="wmin"?Math.abs(to-L)<1e-6:Math.abs(to-wLo)<1e-6&&to<from, isMax=Number.isFinite(L)&&s.kind==="wmax"?Math.abs(to-L)<1e-6:Math.abs(to-wHi)<1e-6&&to>from;
           ok = s.kind==="wmin" ? isMin : s.kind==="wmax" ? isMax : s.kind==="wless" ? to<from && !isMin : to>from && !isMax; }
         // the combination: any stint after the sweeps that changes only these settings (and isn't another step's); the values you ran become the baseline
+        else if (s.kind==="platform") ok=ch.some(c=>/SpringRate/i.test(c.k) && c.to<c.from) && ch.some(c=>/BumpRubberGap/i.test(c.k));
         else if (s.kind==="between"){ const grp=s.id==="arbApp"?/^arb(Front|Rear)/:s.id==="heaveApp"?/^heave(Front|Rear)/:/^spr(Front|Rear)/, lastSweep=Math.max(0, ...steps.filter(q=>grp.test(q.id)).map(q=>{ let n=0; for (const x of q.stints){ n+=x.laps||0; if (n>=q.laps) return x.date; } return q.stints.length?q.stints[q.stints.length-1].date:0; }));
           // (a sweep step that already had its laps before this stint doesn't keep it from the combination, which may run the same value)
           ok = r.date>lastSweep && !steps.some(q=>q!==s && q.kind!=="between" && q.stints && q.stints.some(x=>x.id===r.id) && !(/^(min|max|less|more)$/.test(q.kind) && q.stints.filter(x=>x.date<r.date).reduce((a,x)=>a+(x.laps||0),0)>=q.laps)); }
@@ -6910,6 +6934,7 @@ function tpTarget(run, s, path, baseRaw){
   if (s.kind==="min"||s.kind==="max"||s.kind==="wmin"||s.kind==="wmax") return s.lim!=null ? withV(s.lim) : (s.kind==="min"||s.kind==="wmin" ? "garage minimum" : "garage maximum");
   if (s.kind==="more"||s.kind==="less"){ const r=resolve(run,{e, d:(s.kind==="less"?-1:1)*(s.amount||1)}); return r?r.raw:`${s.amount||1} step${(s.amount||1)>1?"s":""} ${s.kind==="less"?"softer":"stiffer"}`; }
   if (s.kind==="wless"||s.kind==="wmore"){ const r=resolve(run,{e, d:s.kind==="wless"?-2:2}); return r?r.raw:`2 steps ${s.kind==="wless"?"lower":"higher"}`; }
+  if (s.kind==="platform") return /SpringRate$/i.test(path) ? baseRaw.replace(/-?\d+(\.\d+)?/, String(s.tSpring)) : /BumpRubberGap$/i.test(path) ? baseRaw.replace(/-?\d+(\.\d+)?/, String(s.tGap)) : baseRaw;
   if (s.kind==="rhlow" || s.kind==="rhhigh") return baseRaw.replace(/-?\d+(\.\d+)?/, (learnNum(baseRaw)+(s.kind==="rhlow"?-3:3)).toFixed(1));
   if (s.kind==="between" && s.combo && s.combo.done){ const k=learnNorm(path), a=/Front/.test(k)?"Front":/Rear/.test(k)?"Rear":null; if (!a) return baseRaw;
     if (/RideHeight$/i.test(k)){ const c=s.combo.RearRH; return a==="Rear" && c && Math.abs(c.v-c.base)>=1 ? baseRaw.replace(/-?\d+(\.\d+)?/, (learnNum(baseRaw)+(c.v-c.base)).toFixed(1)) : baseRaw; }
