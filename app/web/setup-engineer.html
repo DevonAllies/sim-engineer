@@ -3149,7 +3149,7 @@ function homeHTML(run, A){
   const bias=SET.bias(run), wing=SET.wing(run);
   return `<section>${raceBarHTML(A)}</section>
   <section class="home">
-    ${(A.sessLaps??A.rep.length)<MIN_LAPS ? `<p class="summary" style="color:var(--warn)">Early read: ${A.sessLaps??A.rep.length} of ${MIN_LAPS} clean laps this session. Changes stay switched off until you've done ${MIN_LAPS}; after that every clean lap keeps counting.</p>` : ""}
+    ${(A.sessLaps??A.rep.length)<MIN_LAPS ? `<p class="summary" style="color:var(--warn)">Early read: ${A.sessLaps??A.rep.length} of ${MIN_LAPS} clean laps on this setup${A.sessFrom&&A.sessFrom.length?` (this stint ${A.rep.length} + ${A.sessFrom.map(s=>`${s.laps} at ${new Date(s.date).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}`).join(" + ")})`:""}. Changes stay switched off until you've done ${MIN_LAPS}; your other stints today on exactly this setup count too.</p>` : (A.sessFrom&&A.sessFrom.length?`<p class="summary muted" style="font-size:12px">${A.sessLaps} clean laps on this setup today: this stint ${A.rep.length} + ${A.sessFrom.map(s=>`${s.laps} at ${new Date(s.date).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}`).join(" + ")}.</p>`:"")}
     <p class="summary">${s1}</p>${s2?`<p class="summary">${s2}</p>`:""}${learnHomeLine(run)}
     ${(()=>{ const L=A.limit&&A.limit.rows||[], U=L.filter(r=>r.verdict==="under").map(r=>"T"+r.n), O=L.filter(r=>r.verdict==="over").map(r=>"T"+r.n), B=(A.bottom||[]).filter(p=>p.hardLaps);
       const bits=[U.length?`grip left at ${U.join(", ")}`:"", O.length?`over the limit at ${O.join(", ")}`:"", B.length?`bottoming at ${B.map(p=>p.name||fmt(p.d/1000,2)+" km").join(", ")}`:""].filter(Boolean);
@@ -5709,10 +5709,18 @@ function balanceLaps(run, A){
 const balanceReady = (run, A) => balanceLaps(run, A) >= MIN_LAPS;
 const balanceWait = (run, A) => `Balance is judged after ${MIN_LAPS} clean laps on this setup: ${balanceLaps(run,A)} so far. Until then these numbers are only a first read, and no balance or anti-roll bar change is suggested.`;
 function sessionLaps(run, A){
-  run.repN = A.rep.length;
-  if (!run.live) return A.rep.length;
-  return runs.filter(r=>r.live && r.gen===run.gen && r.carPath===run.carPath).reduce((a,r)=>a+(r===run ? A.rep.length : (r.repN||0)), 0);
-}
+  run.repN = A.rep.length; A.sessFrom=[];
+  try { const free=/InCarAdjustments|InCarDials|BrakePressureBias|TractionControl|ABSsetting|DashDisplay|StartingPressure|ColdPressure|FuelLevel/i;
+    const mine={}; for (const e of run.setupFlat) if (!LEARN_SKIP.test(e.path) && !free.test(e.path) && Number.isFinite(learnNum(e.raw))) mine[e.path.replace(/^CarSetup./,"")]=e.raw.trim();
+    const sig=o=>JSON.stringify(Object.keys(o||{}).filter(k=>!free.test(k)).sort().map(k=>[k,String(o[k]).trim()])), me=sig(mine);
+    const fm=String(run.name||"").match(/(d{4})-(dd)-(dd) (dd)-(dd)-(dd)/), when=fm?new Date(+fm[1],fm[2]-1,+fm[3],+fm[4],+fm[5],+fm[6]).getTime():Date.now();
+    const T=parseFloat((run.info.WeekendInfo||{}).TrackSurfaceTemp), trk=learnTrackOf(run), seen=[];
+    const recs=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===trk && !r.wet && r.setup && r.id!==run.learnedId && Math.abs(r.date-when)<=2.5*3600e3 && Math.abs(r.date-when)>2*60e3
+      && new Date(r.date).toDateString()===new Date(when).toDateString() && (!Number.isFinite(T)||!Number.isFinite(r.trackT)||Math.abs(r.trackT-T)<=TP_COND) && sig(r.setup)===me).sort((a,b)=>a.date-b.date);
+    // the live copy and the full-data copy of one stint count once
+    for (const r of recs) if (!seen.some(s=>Math.abs(s.date-r.date)<5*60e3)) seen.push(r);
+    A.sessFrom=seen.map(r=>({date:r.date, laps:r.laps}));
+    return A.rep.length + seen.reduce((a,r)=>a+(r.laps||0),0); } catch(e){ return A.rep.length; } }
 // one direction per setting: if two suggestions would move the same setting opposite ways, the higher-priority one wins
 function resolveConflicts(run, sug){
   const conf={high:3, medium:2, low:1}, order=sug.map((s,i)=>i).sort((a,b)=>sug[b].pr-sug[a].pr || (conf[sug[b].conf]||0)-(conf[sug[a].conf]||0) || a-b);
