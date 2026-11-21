@@ -3010,7 +3010,7 @@ function render(){
   const areaCards = k => `<section><h2>What to change <small>switch these on or off here or in Changes</small></h2>${sugCardsHTML(run, s=>AREAS[k].includes(s.area), "Nothing to change in this area.")}</section>`;
   const safe = (f, name) => { try { return f(); } catch(e){ console.error(name, e); return ""; } };
   const W = {
-    home: () => homeHTML(run, A) + safe(()=>setupOrderHTML(run, A),"setupOrder") + safeBalanceFeel(run, A) + rotationHTML(run, A) + safe(()=>carFitHTML(run, A),"carFit") + safe(()=>similarSetupHTML(run, A),"similar"),
+    home: () => homeHTML(run, A) + safe(()=>setupOrderHTML(run, A),"setupOrder") + safe(()=>sinceBaseHTML(run, A),"sinceBase") + safeBalanceFeel(run, A) + rotationHTML(run, A) + safe(()=>carFitHTML(run, A),"carFit") + safe(()=>similarSetupHTML(run, A),"similar"),
     graphs: () => { try { return graphsHTML(run, A, S); } catch(e){ console.error(e); return `<section><h2>Graphs</h2><p class="muted">Couldn't draw the graphs for this stint (${esc(e.message)}).</p></section>`; } },
     tyres: () => `<section><h2>Tyres <small>temperatures, pressures, camber and wear</small></h2><div class="two"><div>${tiresHTML(A,S,run)}</div><div>${wearHTML(A)}
         <div class="grid" style="margin-top:10px"><div class="stat"><div class="k">Rear wheelspin</div><div class="v">${fmt((A.spin||0)*100,0)}%</div><div class="s">of throttle &gt;60% samples</div></div>
@@ -3115,6 +3115,52 @@ function drawHist(cv, hist){
 }
 let view = "home";
 const lc = s => s ? s[0].toLowerCase()+s.slice(1) : s;
+// ---------- since your baseline: what you changed, what each change does, how they add up, and what to undo first ----------
+// effect of moving one setting up (+1) or down (−1): words, and its push on the mechanical balance (+ understeer, − rotation) and on the aero platform
+function setEffect(k, d){
+  const K=learnNorm(k), F=/Front/i.test(K), R=/Rear/i.test(K), up=d>0;
+  if (/Arb|AntiRollBar/i.test(K)) return F ? {txt: up?"front stiffer in roll: more understeer, quicker response":"front softer in roll: less understeer, more front grip", bal: up?1:-1}
+                                           : {txt: up?"rear stiffer in roll: more rotation, less traction on exit":"rear softer in roll: less rotation (more understeer), more traction", bal: up?-1:1};
+  if (/SpringRate|TorsionBarSize/i.test(K) && !/Heave|Third/i.test(K)) return F ? {txt: up?"front stiffer: holds the front higher at speed, more support on the brakes, a touch more understeer":"front softer: sinks lower at speed (towards the downforce window), more dive on the brakes, more front grip", bal: up?0.5:-0.5, aero:true}
+                                           : {txt: up?"rear stiffer: rear higher at speed, more rotation":"rear softer: rear lower at speed, more traction", bal: up?-0.5:0.5, aero:true};
+  if (/HeaveSpring|ThirdSpring/i.test(K)) return {txt: up?`${F?"front":"rear"} held up better at speed (steadier platform), worse over bumps`:`${F?"front":"rear"} sinks more at speed, rides bumps better`, bal:0, aero:true};
+  if (/TotalToeIn|Front.*ToeIn|ToeIn/i.test(K) && F) return {txt: up?"front toe-in: steadier on the straights, lazier turn-in":"front toe-out: sharper turn-in, a little less straight-line stability", bal: up?0.3:-0.3};
+  if (/ToeIn/i.test(K) && R) return {txt: up?"more rear toe-in: steadier rear, especially on throttle":"less rear toe-in: more rotation, easier to spin the rear on throttle", bal: up?0.4:-0.4};
+  if (/Camber/i.test(K)) return {txt: up?`less ${F?"front":"rear"} camber: more braking/traction grip, less cornering grip`:`more ${F?"front":"rear"} camber: more cornering grip, hotter inner edges`, bal: F?(up?0.3:-0.3):(up?-0.3:0.3)};
+  if (/Wing/i.test(K) && !/Gurney/i.test(K)) return {txt: up?"more wing: more rear downforce, more understeer at speed, more drag":"less wing: less drag, less rear downforce, more rotation at speed", bal: up?0.5:-0.5, aero:true};
+  if (/RideHeight/i.test(K)) return {txt: `${F?"front":"rear"} ${up?"higher":"lower"}: rake ${F===up?"down":"up"}, balance at speed ${F===up?"rearward (understeer)":"forward (rotation)"}`, bal: F===up?0.5:-0.5, aero:true};
+  if (/BumpRubberGap/i.test(K)) return {txt: up?`${F?"front":"rear"} reaches its bump rubbers later: lower at top speed and on the brakes`:`${F?"front":"rear"} caught sooner by its bump rubbers: held higher`, bal:0, aero:true};
+  if (/Preload/i.test(K)) return {txt: up?"more diff preload: steadier on entry and lift-off, more understeer off throttle":"less diff preload: freer rotation on entry, less stable on lift-off", bal: up?0.3:-0.3};
+  if (/FrictionFaces|ClutchPlates/i.test(K)) return {txt: up?"more diff locking: steadier under braking, more power oversteer":"less diff locking: rotates more off throttle, less power oversteer", bal:0};
+  if (/LsComp|LowSpeedComp/i.test(K)) return {txt: `${F?"front":"rear"} low-speed bump ${up?"stiffer":"softer"}: ${F?(up?"slower dive, more understeer on turn-in":"faster dive, sharper turn-in"):(up?"slower squat, more traction early":"more squat on throttle")}`, bal: F?(up?0.2:-0.2):(up?-0.2:0.2)};
+  if (/LsReb|LowSpeedReb/i.test(K)) return {txt: `${F?"front":"rear"} low-speed rebound ${up?"stiffer":"softer"}: ${R?(up?"rear lifts slower on the brakes (calmer entry)":"rear lifts faster on the brakes"):(up?"front rises slower on throttle":"front rises faster on throttle")}`, bal:0};
+  if (/HsComp|HsReb|HighSpeed/i.test(K)) return {txt: `${F?"front":"rear"} high-speed damping ${up?"stiffer: holds the platform over kerbs, less compliant":"softer: rides kerbs and bumps better"}`, bal:0};
+  if (/BrakePads|MasterCyl/i.test(K)) return {txt:"brake feel and bias", bal:0};
+  return {txt:"", bal:0}; }
+function sinceBaseHTML(run, A){
+  const trk=learnTrackOf(run), P=PREFS.get(tpKeyOf(run,"car")), progBase=P && P.track===trk && P.base ? P.base : null;
+  const cur=tpSetup(run); let ref=null, refName="";
+  if (progBase){ ref=progBase; refName=P.baseName?`your programme baseline (${P.baseName})`:"your programme baseline"; }
+  else { const today=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===trk && r.setup && r.id!==run.learnedId && new Date(r.date).toDateString()===new Date().toDateString()).sort((a,b)=>a.date-b.date)[0];
+    if (today){ ref=today.setup; refName=`your first stint today (${new Date(today.date).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}${today.setupName?`, ${today.setupName}`:""})`; } }
+  if (!ref) return "";
+  const ch=tpChanged(ref, cur).filter(c=>!/FuelLevel|InCarAdjust|BrakePressureBias|TractionControl|ABSsetting|StartingPressure|ColdPressure/i.test(c.k)); if (!ch.length) return "";
+  const uniq=[], seen=new Set(); for (const c of ch){ const l=learnLabel(c.k); if (seen.has(l)) continue; seen.add(l); uniq.push(Object.assign({l, e:setEffect(c.k, Math.sign(c.to-c.from))}, c)); }
+  const sum=uniq.reduce((a,c)=>a+(c.e.bal||0),0);
+  // what the car does now (against your preference), and the change to undo first
+  const pref=(()=>{ try { return balPref(run).total||0; } catch(e){ return 0; } })(), lo=US_BASE.loose+pref, hi=US_BASE.push+pref, ph=k=>learnPhase(A,k);
+  const push=["mid","exit","entry"].filter(k=>Number.isFinite(ph(k)) && ph(k)>hi), loose=["entry","mid","exit"].filter(k=>Number.isFinite(ph(k)) && ph(k)<lo), wheelspin=(A.osExit||0)>0.5;
+  const prio=c=>/Arb|AntiRollBar/i.test(c.k)?(/Rear/i.test(c.k)?0:1):/ToeIn/i.test(c.k)?2:/Camber/i.test(c.k)?3:/Preload|Friction/i.test(c.k)?4:/SpringRate/i.test(c.k)?6:5;
+  let next=null, why="";
+  if (push.length){ next=uniq.filter(c=>c.e.bal>0).sort((a,b)=>prio(a)-prio(b))[0]; why=`the car pushes (${push.map(k=>`${k} ${fmt(ph(k),1)}°`).join(", ")}) and this change adds understeer`; }
+  if (!next && (loose.length || wheelspin)){ next=uniq.filter(c=>c.e.bal<0).sort((a,b)=>(wheelspin&&/Rear.*ToeIn|ToeIn.*Rear/i.test(learnNorm(b.k))?1:0)-(wheelspin&&/Rear.*ToeIn|ToeIn.*Rear/i.test(learnNorm(a.k))?1:0) || prio(a)-prio(b))[0]; why=wheelspin?"the rear slides or spins on throttle and this change frees the rear":`the car is loose (${loose.map(k=>`${k} ${fmt(ph(k),1)}°`).join(", ")}) and this change adds rotation`; }
+  const then=next && push.length && wheelspin ? uniq.find(c=>c!==next && c.e.bal<0 && /ToeIn/i.test(c.k) && /Rear/i.test(learnNorm(c.k))) : null;
+  const v=(c,x)=>fmt(x, Math.abs(x)%1?1:0);
+  return `<section><h2>Since ${esc(refName)} <small>${uniq.length} setting${uniq.length===1?"":"s"} changed · what each does, and what to undo first</small></h2>
+    <div class="tablewrap"><table style="font-size:13px"><tr><th>Setting</th><th>Baseline → now</th><th>What it does</th></tr>
+    ${uniq.map(c=>`<tr${next&&c===next?' style="background:rgba(255,179,71,.10)"':""}><td><b>${esc(c.l)}</b></td><td style="white-space:nowrap">${v(c,c.from)} → <b>${v(c,c.to)}</b></td><td style="font-size:12.5px">${esc(c.e.txt||"")}${c.e.bal>0.25?' <span class="tag">understeer</span>':c.e.bal<-0.25?' <span class="tag">rotation</span>':""}${c.e.aero?' <span class="tag">aero platform</span>':""}</td></tr>`).join("")}</table></div>
+    <p style="margin:8px 0 0;font-size:13px">${uniq.length>1?`<b>Together</b> they push the balance towards ${Math.abs(sum)<0.5?"about where it was (they cancel out)":sum>0?"<b>understeer</b>":"<b>rotation</b>"}. With ${uniq.length} changes at once the app can't tell which one did what: from here, change <b>one thing at a time</b>. `:""}
+      ${next?`<b>Undo first: ${esc(next.l)} back to ${v(next,next.from)}</b>: ${why}.${then?` <b>Then, if it oversteers on throttle:</b> ${esc(then.l)} back to ${v(then,then.from)}.`:""} Drive 5 clean laps and compare in Compare stints.`:"The car does what you like: keep it, and change one thing at a time from here."}</p></section>`; }
 function setupOrderHTML(run, A){
   const S=settingsFor(run), items=[], first=k=>{ const s=areaSug(run,k).filter(x=>x.pr>=1)[0]; if (!s) return null; const o=s.opts&&s.opts[0]; return `${s.title}${o&&o.label?`: <b>${esc(o.label)}</b>`:""}`; };
   // 1. aero platform: the window check and the change that gets it in
@@ -5715,7 +5761,7 @@ function sessionLaps(run, A){
     const sig=o=>JSON.stringify(Object.keys(o||{}).filter(k=>!free.test(k)).sort().map(k=>[k,String(o[k]).trim()])), me=sig(mine);
     const fm=String(run.name||"").match(/(d{4})-(dd)-(dd) (dd)-(dd)-(dd)/), when=fm?new Date(+fm[1],fm[2]-1,+fm[3],+fm[4],+fm[5],+fm[6]).getTime():Date.now();
     const T=parseFloat((run.info.WeekendInfo||{}).TrackSurfaceTemp), trk=learnTrackOf(run), seen=[];
-    const recs=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===trk && !r.wet && r.setup && r.id!==run.learnedId && Math.abs(r.date-when)<=2.5*3600e3 && Math.abs(r.date-when)>2*60e3
+    const recs=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===trk && !r.wet && r.setup && r.id!==run.learnedId && Math.abs(r.date-when)<=2.5*3600e3 && Math.abs(r.date-when)>2*60e3 && !(A.best && Number.isFinite(r.best) && Math.abs(r.best-A.best.time)<0.002)
       && new Date(r.date).toDateString()===new Date(when).toDateString() && (!Number.isFinite(T)||!Number.isFinite(r.trackT)||Math.abs(r.trackT-T)<=TP_COND) && sig(r.setup)===me).sort((a,b)=>a.date-b.date);
     // the live copy and the full-data copy of one stint count once
     for (const r of recs) if (!seen.some(s=>Math.abs(s.date-r.date)<5*60e3)) seen.push(r);
