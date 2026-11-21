@@ -3040,7 +3040,7 @@ function render(){
     guide: () => guideHTML(run),
     programme: () => safe(()=>{ PROG_RUN=progRun(run); return (PROG_RUN!==run?`<p class="muted" style="margin:0 0 8px;font-size:13px">Showing the car you're live in: <b>${esc(PROG_RUN.carName)}</b> at <b>${esc(((PROG_RUN.info.WeekendInfo||{}).TrackDisplayName)||"")}</b>, from its garage setup.</p>`:"") + testProgHTML(PROG_RUN); },"testProg"),
     learn: () => learnHTML(run) + safe(()=>setupModelHTML(run),"setupModel") + safe(()=>testNextHTML(run, A),"testNext"),
-    dampers: () => (Object.keys(A.damp||{}).length?`<section><h2>Dampers <small>shock speed histograms, all laps used · right = compression (bump), left = extension (rebound)</small></h2>
+    dampers: () => (()=>{ try { return rollHTML(run, A); } catch(e){ console.error("roll", e); return ""; } })() + (Object.keys(A.damp||{}).length?`<section><h2>Dampers <small>shock speed histograms, all laps used · right = compression (bump), left = extension (rebound)</small></h2>
    <div class="dampgrid">${["LF","RF","LR","RR"].filter(c=>A.damp[c]).map(c=>`<div><b>${c}</b><canvas id="dh${c}"></canvas></div>`).join("")}</div>
    <div class="tablewrap" style="margin-top:10px"><table><tr><th></th><th>Low-speed bump</th><th>Low-speed rebound</th><th>High-speed bump</th><th>High-speed rebound</th><th>95% bump / rebound speed</th><th>Peak (99%)</th></tr>
    ${["LF","RF","LR","RR"].filter(c=>A.damp[c]).map(c=>{const d=A.damp[c]; return `<tr><td>${c}</td><td>${fmt(d.lsB*100,0)}%</td><td>${fmt(d.lsR*100,0)}%</td><td>${fmt(d.hsB*100,0)}%</td><td>${fmt(d.hsR*100,0)}%</td><td>${fmt(d.p95B,0)} / ${fmt(d.p95R,0)} mm/s (${fmt(d.p95B/d.p95R,2)})</td><td>${fmt(d.p99,0)} mm/s</td></tr>`;}).join("")}</table></div>
@@ -3071,7 +3071,7 @@ function render(){
   if (view==="aero"){ const ob=$("#openFull"); if (ob) ob.onclick=()=>{ current=+ob.dataset.i; LIVE.follow=false; render(); }; }
   if (view==="aero" && A.rh){ drawRH(run,A,S); try { drawRake(run,A,S); } catch(e){ console.error("rake",e); } try { drawWinMap(run,A); } catch(e){ console.error("winmap",e); } try { wirePlat(run,A,S); } catch(e){ console.error("plat",e); } { const sel=$("#aeroCmpSel"); if (sel) sel.onchange=()=>{ AERO_CMP=sel.value; render(); }; } try { wireRHC(run,A,S); } catch(e){ console.error("rhc",e); } }
   if (view==="laps") drawTrace(run,A);
-  if (view==="dampers") for (const c of Object.keys(A.damp||{})) drawHist($("#dh"+c), A.damp[c].hist);
+  if (view==="dampers"){ try { drawRoll(run,A); } catch(e){ console.error("roll", e); } for (const c of Object.keys(A.damp||{})) drawHist($("#dh"+c), A.damp[c].hist); }
   wireSugInputs(run); wireRace(run); wireFfb(); wireTabs(); if (view==="learn") wireLearn(run);
   document.querySelectorAll("[data-goto]").forEach(b=>b.onclick=()=>{ view=b.dataset.goto; render(); window.scrollTo(0,0); });
   document.querySelectorAll("[data-rot]").forEach(b=>b.onclick=()=>{ ROT_SEL=b.dataset.rot; const y=window.scrollY; render(); window.scrollTo(0,y); });
@@ -3392,7 +3392,7 @@ function fastCorners(run, A){
         us:mean(J.map(j=>A.us?A.us[j]:NaN).filter(Number.isFinite))}; }).filter(Boolean);
     if (!per.length) return null;
     const best=per.reduce((x,y)=>y.t<x.t?y:x), typ=median(per.map(x=>x.t));
-    return {name, len:(p1-p0)*lapLen, n:per.length, v:median(per.map(x=>x.v)), vmin:median(per.map(x=>x.vmin)), F:median(per.map(x=>x.F)), R:median(per.map(x=>x.R)),
+    return {name, p0, p1, len:(p1-p0)*lapLen, n:per.length, v:median(per.map(x=>x.v)), vmin:median(per.map(x=>x.vmin)), F:median(per.map(x=>x.F)), R:median(per.map(x=>x.R)),
       rake:median(per.map(x=>x.R-x.F)), us:median(per.map(x=>x.us).filter(Number.isFinite)), lose:Math.max(0, typ-best.t)}; }).filter(Boolean);
   { const seen={}; for (const c of A._fast){ if (!c.name) continue; seen[c.name]=(seen[c.name]||0)+1; if (seen[c.name]>1) c.name+=" ("+(seen[c.name])+")"; } }
   return A._fast; }
@@ -3605,6 +3605,62 @@ function drawWinMap(run, A){
     if (p.s==="o") c.arc(x,y,4,0,7); else if (p.s==="s") c.rect(x-4,y-4,8,8); else { c.moveTo(x,y-5); c.lineTo(x+5,y+4); c.lineTo(x-5,y+4); c.closePath(); }
     p.hollow ? c.stroke() : c.fill(); if (!p.hollow && p.n && p.s==="o"){ c.fillStyle=css("--muted"); c.fillText(p.n, x+6, y-4); } };
   pts.forEach(mark); sh.forEach(mark); }
+// ---------- roll: how far the car leans in corners, front and rear, and how close the outside edge gets to the track ----------
+// roll angle on an axle = atan((left − right ride height) / track); against cornering g it gives the roll gradient (° per g)
+function rollCal(run, A){
+  if (A._roll!==undefined) return A._roll; const ch=run.ch; if (!ch.LFrideHeight || !ch.LRrideHeight || !ch.LatAccel) return A._roll=null;
+  const S=settingsFor(run), tr=(+S.track||1.6)*1000, deg=180/Math.PI, g=[], rF=[], rR=[], step=Math.max(1,Math.floor(A.idx.length/12000));
+  for (let i=0;i<A.idx.length;i+=step){ const j=A.idx[i]; if (ch.Speed[j]*3.6<60 || ch.Brake[j]>0.1) continue; const lg=ch.LatAccel[j]/9.81; if (!Number.isFinite(lg)) continue;
+    g.push(lg); rF.push(Math.atan((ch.LFrideHeight[j]-ch.RFrideHeight[j])*1000/tr)*deg); rR.push(Math.atan((ch.LRrideHeight[j]-ch.RRrideHeight[j])*1000/tr)*deg); }
+  if (g.length<300) return A._roll=null;
+  const fitB=y=>{ const c=fitLS(g.map(x=>[x]), y); return c ? {a:c[0], b:c[1]} : null; }, F=fitB(rF), R=fitB(rR); if (!F || !R) return A._roll=null;
+  const gMax=pct(g.map(Math.abs).filter(x=>x>0.5), 0.9);
+  // the fast corners: roll, and the outside and inside front corner heights (the splitter's outside edge is the part nearest the track)
+  const FC=fastCorners(run,A), per=FC.map(c=>{ const J=[]; for (const l of (A.rep||[])) for (let j=l.s;j<l.e;j++){ const p=ch.LapDistPct[j]; if (p>=c.p0 && p<=c.p1) J.push(j); } if (J.length<5) return null;
+    const lg=median(J.map(j=>Math.abs(ch.LatAccel[j]/9.81))), out=j=>Math.min(ch.LFrideHeight[j],ch.RFrideHeight[j])*1000, inn=j=>Math.max(ch.LFrideHeight[j],ch.RFrideHeight[j])*1000,
+      outR=j=>Math.min(ch.LRrideHeight[j],ch.RRrideHeight[j])*1000, innR=j=>Math.max(ch.LRrideHeight[j],ch.RRrideHeight[j])*1000;
+    return {name:c.name, v:c.v, g:lg, rollF:Math.abs(F.b)*lg, rollR:Math.abs(R.b)*lg, outF:median(J.map(out)), inF:median(J.map(inn)), outR:median(J.map(outR)), inR:median(J.map(innR))}; }).filter(Boolean);
+  return A._roll={g, rF, rR, F, R, gradF:Math.abs(F.b), gradR:Math.abs(R.b), gMax, tr, per}; }
+function rollHTML(run, A){
+  const RC=rollCal(run,A); if (!RC) return ""; const tot=(RC.gradF+RC.gradR)/2, diff=(RC.gradF-RC.gradR)/tot*100, W=(PROFILES[run.carPath]||{}).aeroWin;
+  const minOut=RC.per.length?Math.min(...RC.per.map(p=>p.outF)):NaN, worst=RC.per.find(p=>p.outF===minOut);
+  const pref=(()=>{ try { const st=(PREFS.get("style",{})||{})[run.carPath]||"neutral"; return (STYLES[st]||STYLES.neutral).label; } catch(e){ return "Balanced"; } })();
+  const rows=RC.per.map(p=>`<tr><td><b>${esc(p.name)}</b></td><td>${fmt(p.v,0)} km/h</td><td>${fmt(p.g,2)} g</td><td>${fmt(p.rollF,2)}° / ${fmt(p.rollR,2)}°</td><td>${fmt(p.outF,1)} / ${fmt(p.inF,1)} mm</td><td>${fmt(p.outR,1)} / ${fmt(p.inR,1)} mm</td></tr>`).join("");
+  return `<section><h2>Roll <small>how far the car leans in corners, front and rear, and how close its outside edge gets to the track</small></h2>
+    <div class="grid" style="margin-bottom:8px">
+      <div class="stat"><div class="k">Roll gradient front</div><div class="v">${fmt(RC.gradF,2)}°/g</div><div class="s">${fmt(RC.gradF*RC.gMax,2)}° at ${fmt(RC.gMax,1)} g</div></div>
+      <div class="stat"><div class="k">Roll gradient rear</div><div class="v">${fmt(RC.gradR,2)}°/g</div><div class="s">${fmt(RC.gradR*RC.gMax,2)}° at ${fmt(RC.gMax,1)} g</div></div>
+      <div class="stat"><div class="k">Front vs rear</div><div class="v">${Math.abs(diff)<5?"about equal":`front ${diff>0?"+":""}${fmt(diff,0)}%`}</div><div class="s">${Math.abs(diff)<5?"front and rear lean the same":diff>0?"the front leans more than the rear":"the rear leans more than the front"}</div></div>
+      ${Number.isFinite(minOut)?`<div class="stat"><div class="k">Outside front edge, fast corners</div><div class="v">${fmt(minOut,1)} mm</div><div class="s">lowest at ${esc(worst.name)} · the axle average there ${fmt((worst.outF+worst.inF)/2,1)} mm</div></div>`:""}
+    </div>
+    <div class="row" style="gap:12px;flex-wrap:wrap;align-items:flex-start"><div style="flex:1 1 380px;min-width:300px"><canvas id="rollG"></canvas><div class="legend" style="font-size:12px"><span><i style="background:${css("--us")}"></i>front</span><span><i style="background:${css("--os")}"></i>rear</span><span>roll angle against cornering g (left and right corners), lines: the roll gradient</span></div></div>
+      <div style="flex:1 1 300px;min-width:280px"><canvas id="rollView"></canvas><div class="muted" style="font-size:12px">The car from behind at ${fmt(RC.gMax,1)} g (exaggerated 4×), front and rear axle: the outside wheel side drops, the inside lifts.</div></div></div>
+    ${rows?`<div class="tablewrap" style="margin-top:8px"><table style="font-size:12.5px"><tr><th>Fast corner</th><th>Speed</th><th>Cornering</th><th>Roll front / rear</th><th>Front outside / inside height</th><th>Rear outside / inside</th></tr>${rows}</table></div>`:""}
+    <p style="margin:8px 0 0;font-size:13px">What changes it: <b>stiffer bars or springs</b> make the car lean less (the outside edge stays higher, the tyres stay flatter, quicker response) but cost mechanical grip over kerbs and bumps; <b>softer</b> the opposite. How the roll stiffness is <b>split</b> between the axles sets the mechanical balance: more at the front = more understeer, more at the rear = more rotation. The bar steps in the test programme find the split that gives <b>your</b> balance (${esc(pref)}, set on the Balance page). There's no single right amount of roll: watch that the outside front edge stays clear of the track (the splitter's lowest point is under Aero), and that the outside tyres don't run much hotter on their outer edge.</p></section>`; }
+function drawRoll(run, A){
+  const RC=rollCal(run,A), cv=$("#rollG"), cw=$("#rollView"); if (!RC || !cv) return;
+  { const gm=Math.ceil(Math.max(...RC.g.map(Math.abs))*2)/2, all=[...RC.rF,...RC.rR], ym=Math.ceil(Math.max(Math.abs(pct(all,.01)),Math.abs(pct(all,.99)))*2)/2;
+    const [c,w,h]=canvasCtx(cv,260), m={l:40,r:10,t:10,b:28}, X=x=>m.l+(x+gm)/(2*gm)*(w-m.l-m.r), Y=y=>h-m.b-(y+ym)/(2*ym)*(h-m.t-m.b);
+    c.font="11px system-ui"; c.strokeStyle=css("--grid"); c.fillStyle=css("--muted");
+    for (let i=0;i<=4;i++){ const y=-ym+2*ym*i/4; c.beginPath(); c.moveTo(m.l,Y(y)); c.lineTo(w-m.r,Y(y)); c.stroke(); c.fillText(y.toFixed(1)+"°",2,Y(y)+4); }
+    for (let i=0;i<=4;i++){ const x=-gm+2*gm*i/4; c.fillText(x.toFixed(1),X(x)-8,h-10); } c.textAlign="right"; c.fillText("cornering g",w-m.r,h-10); c.textAlign="left";
+    const dots=(ys,col)=>{ c.fillStyle=col; for (let i=0;i<RC.g.length;i+=2) c.fillRect(X(RC.g[i])-1,Y(ys[i])-1,2,2); }; dots(RC.rF, css("--us")+"55"); dots(RC.rR, css("--os")+"55");
+    const line=(f,col)=>{ c.strokeStyle=col; c.lineWidth=2.2; c.beginPath(); c.moveTo(X(-gm),Y(f.a+f.b*-gm)); c.lineTo(X(gm),Y(f.a+f.b*gm)); c.stroke(); }; line(RC.F, css("--us")); line(RC.R, css("--os")); }
+  if (cw){ const [c,w,h]=canvasCtx(cw,230), ex=4, gm=RC.gMax;
+    const per=RC.per, mx=a=>a.length?median(a):NaN, pF={o:mx(per.map(p=>p.outF)), i:mx(per.map(p=>p.inF))}, pR={o:mx(per.map(p=>p.outR)), i:mx(per.map(p=>p.inR))};
+    const panel=(x0, label, roll, P, col)=>{ const pw=w/2-14, cx=x0+pw/2, gy=h-36, half=pw*0.38, sc=0.75;
+      c.strokeStyle=css("--muted"); c.lineWidth=2; c.beginPath(); c.moveTo(x0, gy); c.lineTo(x0+pw, gy); c.stroke();
+      // wheels
+      c.fillStyle=css("--ink")+"cc"; for (const s of [-1,1]) c.fillRect(cx+s*half-10, gy-44, 20, 44);
+      // the body, tilted by the roll (exaggerated), the outside (here the right) lower
+      const a=roll*ex*Math.PI/180, hc=Number.isFinite(P.o)&&Number.isFinite(P.i)?(P.o+P.i)/2:50; c.save(); c.translate(cx, gy-hc*sc-8); c.rotate(a);
+      c.fillStyle=col+"55"; c.strokeStyle=col; c.lineWidth=1.5; c.beginPath(); c.rect(-half-14, -10, 2*half+28, 20); c.fill(); c.stroke(); c.restore();
+      c.fillStyle=css("--ink"); c.font="bold 12px system-ui"; c.textAlign="center"; c.fillText(label, cx, 14); c.font="11px system-ui";
+      c.fillText(`${fmt(roll,2)}° roll`, cx, 30);
+      if (Number.isFinite(P.o)){ c.textAlign="left"; c.fillStyle=css("--muted"); c.fillText(`outside ${fmt(P.o,1)} mm`, cx+half-40, gy+16); c.textAlign="right"; c.fillText(`inside ${fmt(P.i,1)} mm`, cx-half+40, gy+16); }
+      c.textAlign="left"; };
+    panel(0, "Front", RC.gradF*gm, pF, css("--us")); panel(w/2+8, "Rear", RC.gradR*gm, pR, css("--os")); }
+}
 function rhcHTML(run, A, S){
   if (!A.rh || !Number.isFinite(A.rh.front)) return "";
   const W=(PROFILES[run.carPath]||{}).aeroWin;
@@ -3926,7 +3982,16 @@ function aeroOptionsHTML(run, A, S){
   if (S.frontRH && Number.isFinite(A.rh.front)){ const df=A.rh.front-S.frontRH, dr=A.rh.rear-S.rearRH, rake=A.rh.rear-A.rh.front, rakeT=S.rearRH-S.frontRH;
     if (dr<-S.rhTol) todo.push(`<b>Raise the rear</b> by about ${fmt(-dr,0)} mm at speed (more rake: ${fmt(rake,0)} mm now, ${fmt(rakeT,0)} mm at the targets). Do it in steps of 2–3 mm per run with the rear perch offsets${profileOf(run).springsKeepRH?" or a step stiffer rear springs":""}; more rake moves the aero balance forward, so the rear may need a click more wing.`);
     if (dr>S.rhTol) todo.push(`<b>Lower the rear</b> by about ${fmt(dr,0)} mm at speed (rake ${fmt(rake,0)} mm vs ${fmt(rakeT,0)} mm at the targets).`);
-    if (df>S.rhTol) todo.push(`<b>Lower the front</b> by about ${fmt(df,0)} mm at speed${S.minSplitter?` (the splitter has to stay at ${S.minSplitter} mm or more in the garage)`:""}.`);
+    if (df>S.rhTol){ let how="";
+      try { const spl=findSet(run,(p,k)=>k==="centerfrontsplitterheight"), splNow=spl?parseFloat(spl.raw):NaN, fit=A.splFit||{a:1.32,b:-0.24}, rhs=run.setupFlat.filter(e=>/(Left|Right)Front.RideHeight$/.test(e.path)).map(e=>learnNum(e.raw)).filter(Number.isFinite), sF0=rhs.length?mean(rhs):NaN;
+        const room = S.minSplitter && Number.isFinite(splNow) ? Math.max(0,(splNow-S.minSplitter)/fit.a) : (+S.minFrontStatic && Number.isFinite(sF0) ? Math.max(0, sF0-S.minFrontStatic) : NaN);
+        const parts=[];
+        if (Number.isFinite(room)) parts.push(room>=df-0.5 ? `<b>Static ride height</b>: ${fmt(df,1)} mm lower at the front in the garage (${fmt(room,1)} mm of room before the ${S.minSplitter?"splitter":"tech"} limit) does it on its own.` : `<b>Static ride height</b>: only ${fmt(room,1)} mm of room left before the ${S.minSplitter?`splitter's ${S.minSplitter} mm minimum`:"tech minimum"}, so the rest has to come from the springs.`);
+        const FP=frontPlatform(run,A,S); if (FP && FP.opts.length){ const o2=FP.opts.map(o=>`front springs ${fmt(FP.kF,0)} → ${fmt(o.k2,0)}${o.g2!==FP.g0?` with the bump gap ${fmt(FP.g0,0)} → ${fmt(o.g2,0)} mm`:""}: fast corners ${fmt(o.fc,1)} mm (now ${fmt(FP.fc0,1)}), end of the straight ${fmt(o.top,1)} mm`).slice(0,3);
+          parts.push(`<b>Springs and bump rubbers</b>: softer front springs let the front sink further as downforce builds; the bump gap is set so it stops at the window at top speed and the splitter stays clear on the brakes. ${o2.join("; ")}. The cost: less front support in roll and on the brakes (bigger dive).`); }
+        parts.push(`<b>Bump gap on its own</b> only moves the front where it's already resting on the rubbers (the end of the straight and the brakes), not in the fast corners.`);
+        how=`<ul style="margin:4px 0 0 0;padding-left:18px">${parts.map(p=>`<li>${p}</li>`).join("")}</ul><span class="muted" style="font-size:12px">Try them in Aero platform as a system below, then test one as a step.</span>`; } catch(e){}
+      todo.push(`<b>Lower the front</b> by about ${fmt(df,0)} mm at speed${S.minSplitter?` (the splitter has to stay at ${S.minSplitter} mm or more in the garage)`:""}. How:${how}`); }
     if (df<-S.rhTol) todo.push(`<b>Raise the front</b> by about ${fmt(-df,0)} mm at speed: it's below the target, so the floor can stall.`); }
   return `<section><h2>Aero & ride height <small>measured all lap long, averaged per lap</small></h2>
    <p class="summary">${say.join(" ")}</p>
@@ -7042,7 +7107,7 @@ function tpAppSpring(run){ const out=new Map(); if (!run || !run.sug) return out
   run.sug.forEach((s,i)=>{ const o=s.opts[sel[i]!=null && sel[i]>=0 ? sel[i] : 0]; if (!o) return;
     for (const c of o.ch) if (/SpringRate$/i.test(c.e.path) && !out.has(c.e.path)) out.set(c.e.path.replace(/^CarSetup./,""), {c, title:s.title}); });
   return out; }
-const TP_SCORE_PARTS = {lap:"lap time (track temperature taken out)", cons:"consistency", bal:"balance nearer a touch of understeer", slides:"fewer slides", rubber:"less time on the bump rubbers", aero:"ride height at speed nearer the downforce window", tyres:"tyres nearer their window"};
+const TP_SCORE_PARTS = {lap:"lap time (track temperature taken out)", cons:"consistency", bal:"balance nearer your preferred balance", slides:"fewer slides", rubber:"less time on the bump rubbers", aero:"ride height at speed nearer the downforce window", tyres:"tyres nearer their window"};
 const TP_TK={};
 function tpTempK(run){
   const trk=learnTrackOf(run), key=run.carPath+"|"+trk+"|"+Object.keys(LEARN||{}).length; if (TP_TK[key]) return TP_TK[key];
@@ -7060,7 +7125,8 @@ function tpScore(L, run){
   const K=run ? tpTempK(run).k : 0.08;
   out.lap = W(r=>Number.isFinite(r.trackT) ? r.med - K*(r.trackT-30) : r.med);
   out.cons = 0.5*(W(r=>r.sd)||0);
-  { const d=["entry","mid","exit"].map(k=>W(r=>r.bal&&r.bal[k])).filter(Number.isFinite).map(u=>Math.abs(u-0.3)); out.bal = d.length ? 0.15*d.reduce((a,b)=>a+b,0)/d.length : 0; }
+  const balT=0.3+(run ? (()=>{ try { return balPref(run).total||0; } catch(e){ return 0; } })() : 0);
+  { const d=["entry","mid","exit"].map(k=>W(r=>r.bal&&r.bal[k])).filter(Number.isFinite).map(u=>Math.abs(u-balT)); out.bal = d.length ? 0.15*d.reduce((a,b)=>a+b,0)/d.length : 0; }
   out.slides = 0.05*((W(r=>r.slides)||0) + (W(r=>r.susp&&r.susp.kerbSlides)||0));
   out.rubber = 0.003*(Math.max(0, (W(r=>r.aero&&r.aero.onF)||0)*100-50) + Math.max(0, (W(r=>r.aero&&r.aero.onR)||0)*100-50));
   { const P0=run ? (PROFILES[run.carPath]||{}) : {}, Wd=P0.aeroWin && P0.aeroWin.df, S0=run ? settingsFor(run) : {}, tol=+S0.rhTol||2;
@@ -8041,13 +8107,13 @@ function stintPairHTML(run){
   if (!PAIR.a || !R.some(r=>r.id===PAIR.a)) PAIR.a=(R.find(r=>r.laps>=3)||R[0]).id;
   if (!PAIR.b || !R.some(r=>r.id===PAIR.b) || PAIR.b===PAIR.a) PAIR.b=(progBase && progBase!==PAIR.a && R.some(r=>r.id===progBase)) ? progBase : (R.find(r=>r.id!==PAIR.a)||{}).id;
   const a=R.find(r=>r.id===PAIR.a), b=R.find(r=>r.id===PAIR.b); if (!a || !b) return "";
-  const K=tpTempK(run).k, corr=r=>Number.isFinite(r.med)&&Number.isFinite(r.trackT)?r.med-K*(r.trackT-30):r.med, g=(o,p)=>p.split(".").reduce((x,k)=>x==null?null:x[k],o);
+  const K=tpTempK(run).k, corr=r=>Number.isFinite(r.med)&&Number.isFinite(r.trackT)?r.med-K*(r.trackT-30):r.med, g=(o,p)=>p.split(".").reduce((x,k)=>x==null?null:x[k],o), BT="mid:"+(0.3+(()=>{ try { return balPref(run).total||0; } catch(e){ return 0; } })()).toFixed(2);
   const dt=d=>new Date(d).toLocaleString([], {weekday:"short", day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit"});
   const opt=sel=>R.slice(0,60).map(r=>`<option value="${esc(r.id)}"${r.id===sel?" selected":""}>${esc(dt(r.date))} · ${esc(r.setupName||"setup")} · ${r.laps} laps · ${fmtTime(r.med)}${r.id===progBase?" · programme baseline":""}</option>`).join("");
   // rows: [label, value(rec), decimals, unit, better ("lo" | "hi" | "mid:x" | ""), note]
   const tr=(c,f)=>r=>{ const t=r.tread&&r.tread[c]; return t?`${fmt(t.i,0)} / ${fmt(t.m,0)} / ${fmt(t.o,0)}`:null; };
   const G=[["Pace and conditions", [["Typical lap (temperature taken out)", corr, 3, "s", "lo", "time"], ["Best lap", r=>r.best, 3, "s", "lo", "time"], ["Lap-to-lap spread", r=>r.sd, 2, "s", "lo"], ["Clean laps", r=>r.laps, 0, ""], ["Track / air temperature", r=>r.trackT, 0, "°C", "", null, r=>r.airT], ["Fuel per lap", r=>r.fuel, 2, "L", "lo"]]],
-    ["Balance (+ understeer, − oversteer, degrees)", [["Entry", r=>g(r,"bal.entry"), 2, "°", "mid:0.3"], ["Mid-corner", r=>g(r,"bal.mid"), 2, "°", "mid:0.3"], ["Exit", r=>g(r,"bal.exit"), 2, "°", "mid:0.3"], ["Slow corners", r=>g(r,"bal.slow"), 2, "°", "mid:0.3"], ["Fast corners", r=>g(r,"bal.fast"), 2, "°", "mid:0.3"], ["Slides per lap", r=>r.slides, 1, "", "lo"], ["Kerb slides", r=>g(r,"susp.kerbSlides"), 1, "", "lo"]]],
+    ["Balance (+ understeer, − oversteer, degrees)", [["Entry", r=>g(r,"bal.entry"), 2, "°", BT], ["Mid-corner", r=>g(r,"bal.mid"), 2, "°", BT], ["Exit", r=>g(r,"bal.exit"), 2, "°", BT], ["Slow corners", r=>g(r,"bal.slow"), 2, "°", BT], ["Fast corners", r=>g(r,"bal.fast"), 2, "°", BT], ["Slides per lap", r=>r.slides, 1, "", "lo"], ["Kerb slides", r=>g(r,"susp.kerbSlides"), 1, "", "lo"]]],
     ["Aero platform", [["Fast corners: front / rear", r=>g(r,"aero.fcF"), 1, "mm", "", null, r=>g(r,"aero.fcR")], ["Fast corners: rake", r=>g(r,"aero.fcRake"), 1, "mm"], ["Fast corners: time in the rake window", r=>g(r,"aero.fcIn"), 0, "%", "hi"], ["At speed (straights): front / rear", r=>g(r,"aero.fA"), 1, "mm", "", null, r=>g(r,"aero.rA")], ["End of the straight: front / rear", r=>g(r,"aero.topF"), 1, "mm", "", null, r=>g(r,"aero.topR")], ["Braking from top speed: front / rear", r=>g(r,"aero.brkF"), 1, "mm", "", null, r=>g(r,"aero.brkR")], ["Splitter's lowest point", r=>g(r,"aero.splMin"), 1, "mm"], ["Front / rear on the bump rubbers (straights)", r=>g(r,"aero.onF")!=null?g(r,"aero.onF")*100:null, 0, "%", "", null, r=>g(r,"aero.onR")!=null?g(r,"aero.onR")*100:null], ["Top speed", r=>g(r,"aero.vmax"), 1, "km/h", "hi"], ["Drag index", r=>g(r,"aero.drag"), 2, "", "lo"], ["Drag K (power method)", r=>g(r,"drag.K"), 3, "", "lo"]]],
     ["Dampers and track", [["Track roughness", r=>g(r,"susp.rough"), 2, ""], ["Front / rear high-speed damper work", r=>g(r,"susp.F.hs"), 2, "", "", null, r=>g(r,"susp.R.hs")], ["Front / rear damper speed p95 (mm/s)", r=>g(r,"susp.F.p95"), 0, "", "", null, r=>g(r,"susp.R.p95")], ["Front / rear damper work off the kerbs", r=>g(r,"susp.FnoKerb"), 2, "", "", null, r=>g(r,"susp.RnoKerb")], ["Kerbs per lap", r=>g(r,"susp.kerbPerLap"), 1, ""], ["Bottoming (hard laps)", r=>g(r,"susp.bottom"), 0, "", "lo"]]],
     ["Tyres", [["Front / rear temperature (°C)", r=>g(r,"tyreT.F"), 1, "", "", null, r=>g(r,"tyreT.R")], ["Hot pressure front (kPa)", r=>g(r,"tyreT.pF"), 0, ""], ["LF inner / middle / outer", tr("LF"), null, "°C"], ["RF inner / middle / outer", tr("RF"), null, "°C"], ["LR inner / middle / outer", tr("LR"), null, "°C"], ["RR inner / middle / outer", tr("RR"), null, "°C"], ["Tread used per lap front / rear (%)", r=>r.wearF, 2, "", "lo", null, r=>r.wearR]]]];
@@ -8062,7 +8128,7 @@ function stintPairHTML(run){
     ${G.map(([h,rows])=>{ const body=rows.map(([k,fn,d,u,rule,kind,fn2])=>{ const x=fn(a), y=fn(b), x2=fn2?fn2(a):undefined, y2=fn2?fn2(b):undefined; if ((x==null||Number.isNaN(x))&&(y==null||Number.isNaN(y))) return "";
         const two=fn2!==undefined; return `<tr><td class="muted">${k}</td><td class="${better(x,y,rule)}"><b>${f(x,d,kind)}${two?" / "+f(x2,d):""}</b> ${u}</td><td>${f(y,d,kind)}${two?" / "+f(y2,d):""} ${u}</td><td>${[diff(x,y,d), two?diff(x2,y2,d):""].filter(Boolean).join(" / ")}</td></tr>`; }).join("");
       return body ? `<h3 style="margin:10px 0 4px;font-size:14px">${h}</h3><div class="tablewrap"><table style="font-size:12.5px"><tr><th></th><th>A · ${esc(dt(a.date))}</th><th>B · ${esc(dt(b.date))}</th><th>A − B</th></tr>${body}</table></div>` : ""; }).join("")}
-    <p class="muted" style="font-size:12px;margin:6px 0 0">Green / orange on A: better / worse than B for that line (balance: nearer a touch of understeer, 0.3°). "–": that stint didn't store it (older stints have fewer aero numbers; a live stint gets its ride heights from the full-data file iRacing saves when you get out of the car).</p></section>`; }
+    <p class="muted" style="font-size:12px;margin:6px 0 0">Green / orange on A: better / worse than B for that line (balance: nearer your preferred balance, set on the Balance page). "–": that stint didn't store it (older stints have fewer aero numbers; a live stint gets its ride heights from the full-data file iRacing saves when you get out of the car).</p></section>`; }
 function wirePair(){
   const a=$("#pairA"), b=$("#pairB"), s=$("#pairSwap"); if (!a) return;
   a.onchange=()=>{ PAIR.a=a.value; render(); }; b.onchange=()=>{ PAIR.b=b.value; render(); }; if (s) s.onclick=()=>{ PAIR={a:PAIR.b, b:PAIR.a}; render(); }; }
