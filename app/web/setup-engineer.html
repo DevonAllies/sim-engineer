@@ -1205,17 +1205,17 @@ function suggest(run, A){
 
   // Aero platform. The manual says the 40/55 mm targets are telemetry ride heights (mean of LF/RF and LR/RR).
   if (A.rh && S.frontRH && A.rh.nFast>30){
-    const df=A.rh.front-S.frontRH, dr=A.rh.rear-S.rearRH, tol=S.rhTol;
+    const AW=P.aeroWin&&P.aeroWin.df, outW=(v,w)=>v<w[0]?v-w[0]:v>w[1]?v-w[1]:0, df=AW?outW(A.rh.front,AW.f):A.rh.front-S.frontRH, dr=AW?outW(A.rh.rear,AW.r):A.rh.rear-S.rearRH, tol=AW?0.5:S.rhTol, tgtF=AW?`window ${AW.f[0]}–${AW.f[1]}`:`target ${S.frontRH} ±${tol}`, tgtR=AW?`window ${AW.r[0]}–${AW.r[1]}`:`target ${S.rearRH} ±${tol}`;
     const cap = x => Math.max(-3, Math.min(3, -Math.round(x*2)/2));
     if (Math.abs(df)>tol){ const d=cap(df);
-      add(Math.abs(df)>2*tol?3:2,"Aero platform",`Front ride height at speed is ${fmt(A.rh.front)} mm (target ${S.frontRH} ±${tol})`,
+      add(Math.abs(df)>2*tol?3:2,"Aero platform",`Front ride height at speed is ${fmt(A.rh.front)} mm (${tgtF})`,
         d<0 ? [O(`Front ride height ${d} mm`, front(SET.rh,d)), O(`Front springs −1 step (sits lower at speed${P.springsKeepRH?", static splitter unchanged":""})`, front(SET.spring,-20))]
             : [O(`Front ride height +${d} mm`, front(SET.rh,d)), O(`Front springs +1 step (sits higher at speed)`, front(SET.spring,+20))],
         `The car makes the most grip from its floor when it runs at ${S.frontRH} mm front / ${S.rearRH} mm rear on the straights. Lower nose = more grip at the front (and more overall). Higher nose = less. Changed 3 mm at most per run so you can feel the difference.${P.springsKeepRH?"":" After a spring change, reset the perch offsets so the static ride height stays where it was."} ${P.rhHow||""}`,
         `Mean of LF/RF ride height on straights above 200 km/h (${(A.rh.nFast/run.tick).toFixed(0)} s of data).`,"high"); }
     const loose = A.osExit>OS || A.osEntry>OS || A.lowSpeed.med<US_LOOSE || A.highSpeed.med<US_LOOSE;
     if (Math.abs(dr)>tol){ const d=cap(dr), lbl2=`Rear ride height ${d>0?"+":"−"}${Math.abs(d)} mm`;
-      add(d>0&&loose ? 2 : Math.abs(dr)>2*tol?3:2,"Aero platform",`Rear ride height at speed is ${fmt(A.rh.rear)} mm (target ${S.rearRH} ±${tol})${d>0&&loose?" – but the car is already loose":""}`,
+      add(d>0&&loose ? 2 : Math.abs(dr)>2*tol?3:2,"Aero platform",`Rear ride height at speed is ${fmt(A.rh.rear)} mm (${tgtR})${d>0&&loose?" – but the car is already loose":""}`,
         d>0 ? [ ...(loose?[O(`${lbl2} and wing +1`, rear(SET.rh,d), C(w,+1))]:[]), O(lbl2, rear(SET.rh,d)),
                 O(`Rear springs +1 step (sits higher at speed${P.springsKeepRH?", static splitter unchanged":""})`, rear(SET.spring,+20)) ]
             : [O(lbl2, rear(SET.rh,d)), O("Rear springs −1 step (sits lower at speed)", rear(SET.spring,-20))],
@@ -3010,7 +3010,7 @@ function render(){
   const areaCards = k => `<section><h2>What to change <small>switch these on or off here or in Changes</small></h2>${sugCardsHTML(run, s=>AREAS[k].includes(s.area), "Nothing to change in this area.")}</section>`;
   const safe = (f, name) => { try { return f(); } catch(e){ console.error(name, e); return ""; } };
   const W = {
-    home: () => homeHTML(run, A) + safeBalanceFeel(run, A) + rotationHTML(run, A) + safe(()=>carFitHTML(run, A),"carFit") + safe(()=>similarSetupHTML(run, A),"similar"),
+    home: () => homeHTML(run, A) + safe(()=>setupOrderHTML(run, A),"setupOrder") + safeBalanceFeel(run, A) + rotationHTML(run, A) + safe(()=>carFitHTML(run, A),"carFit") + safe(()=>similarSetupHTML(run, A),"similar"),
     graphs: () => { try { return graphsHTML(run, A, S); } catch(e){ console.error(e); return `<section><h2>Graphs</h2><p class="muted">Couldn't draw the graphs for this stint (${esc(e.message)}).</p></section>`; } },
     tyres: () => `<section><h2>Tyres <small>temperatures, pressures, camber and wear</small></h2><div class="two"><div>${tiresHTML(A,S,run)}</div><div>${wearHTML(A)}
         <div class="grid" style="margin-top:10px"><div class="stat"><div class="k">Rear wheelspin</div><div class="v">${fmt((A.spin||0)*100,0)}%</div><div class="s">of throttle &gt;60% samples</div></div>
@@ -3068,6 +3068,7 @@ function render(){
     runs.forEach(r=>{ if (r.A) r.A.tw=null; }); rerender(); });   // the measured tyre window follows the range too
   wireProg(view==="programme" && PROG_RUN ? PROG_RUN : run);
   for (const [id,key] of [["lctarget","lcTarget"],["tyreloss","tyreLoss"],["racestart","startH"]]){ const el=$("#"+id); if (el) el.onchange=()=>{ RACE[key]=el.value===""?"":+el.value; PREFS.set("race", RACE); rerender(); }; }
+  document.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>{ view=b.dataset.go; render(); });
   if (view==="aero" || view==="dampers"){ const ob=$("#openFull"); if (ob) ob.onclick=()=>{ current=+ob.dataset.i; LIVE.follow=false; render(); }; }
   if (view==="aero" && A.rh){ drawRH(run,A,S); try { drawRake(run,A,S); } catch(e){ console.error("rake",e); } { const rs=$("#rakeCmpSel"); if (rs) rs.onchange=()=>{ RAKE_CMP=rs.value||null; render(); }; } try { drawWinMap(run,A); } catch(e){ console.error("winmap",e); } try { wirePlat(run,A,S); } catch(e){ console.error("plat",e); } { const sel=$("#aeroCmpSel"); if (sel) sel.onchange=()=>{ AERO_CMP=sel.value; render(); }; } try { wireRHC(run,A,S); } catch(e){ console.error("rhc",e); } }
   if (view==="laps") drawTrace(run,A);
@@ -3114,6 +3115,24 @@ function drawHist(cv, hist){
 }
 let view = "home";
 const lc = s => s ? s[0].toLowerCase()+s.slice(1) : s;
+function setupOrderHTML(run, A){
+  const S=settingsFor(run), items=[], first=k=>{ const s=areaSug(run,k).filter(x=>x.pr>=1)[0]; if (!s) return null; const o=s.opts&&s.opts[0]; return `${s.title}${o&&o.label?`: <b>${esc(o.label)}</b>`:""}`; };
+  // 1. aero platform: the window check and the change that gets it in
+  { const W=(PROFILES[run.carPath]||{}).aeroWin, ar=A.rh ? run : [...runs].reverse().find(r=>r.carPath===run.carPath && r.A && r.A.rh && !r.live), AA=ar&&ar.A;
+    if (W && AA){ const FC=fastCorners(ar,AA), f=FC.length?median(FC.map(c=>c.F)):AA.rh.front, r=FC.length?median(FC.map(c=>c.R)):AA.rh.rear, RW=rakeWindow(ar,S), off=(v,w)=>v>w[1]+1.5?v-w[1]:v<w[0]-1.5?v-w[0]:0, oF=off(f,W.df.f), oR=off(r,W.df.r), rk=r-f, rOut=RW&&(rk<RW.lo-1.5||rk>RW.hi+1.5);
+      let how=""; if (oF>0){ const FP=frontPlatform(ar,AA,S), o=FP&&[...FP.opts].filter(x=>x.fc<FP.fc0-0.5).sort((a,b)=>a.fc-b.fc)[0]; if (FP && !o) how=" Softer front springs don't bring it down here: the bump rubbers would have to hold the front up at top speed to keep the splitter clear. The front can't get much lower in these corners without losing that."; if (o) how=` Try <b>front springs ${fmt(FP.kF,0)} → ${fmt(o.k2,0)}${o.g2!==FP.g0?` with the bump gap ${fmt(FP.g0,0)} → ${fmt(o.g2,0)} mm`:""}</b>: fast corners front about ${fmt(o.fc,1)} mm (now ${fmt(FP.fc0,1)}).`; }
+      const ok=!oF && !oR && !rOut;
+      items.push({n:"Aero platform", ok, t: ok ? "front, rear and rake in (or within 1.5 mm of) the window in the fast corners." : `fast corners: front ${oF?`${fmt(Math.abs(oF),0)} mm ${oF>0?"high":"low"}`:"in"}, rear ${oR?`${fmt(Math.abs(oR),0)} mm ${oR>0?"high":"low"}`:"in"}, rake ${rOut?"out":"in"}${ar!==run?" (last full-data stint)":""}.${how}`, go:"aero"}); }
+    else if (W && !A.rh) items.push({n:"Aero platform", ok:null, t:"ride heights come with the full-data stint, after you get out of the car.", go:"aero"}); }
+  // 2. mechanical balance against your preference
+  { const P=(()=>{ try { return balPref(run).total||0; } catch(e){ return 0; } })(), lo=US_BASE.loose+P, hi=US_BASE.push+P, b=["entry","mid","exit"].map(k=>[k,learnPhase(A,k)]).filter(([,v])=>Number.isFinite(v)), bad=b.filter(([,v])=>v>hi||v<lo);
+    const want=bad.some(([,v])=>v>hi) ? /understeer|push/i : /oversteer|loose|slide|wheelspin/i, sb=areaSug(run,"balance").filter(x=>x.pr>=1 && want.test(x.title))[0], s=sb ? `${sb.title}${sb.opts&&sb.opts[0]&&sb.opts[0].label?`: <b>${esc(sb.opts[0].label)}</b>`:""}` : (bad.length?"The bar steps (or the Balance page) set it":"");
+    items.push({n:"Mechanical balance", ok:!bad.length, t:(bad.length?`${bad.map(([k,v])=>`${k} ${v>hi?"pushes":"loose"} (${fmt(v,1)}°)`).join(", ")}.`:"entry, mid and exit as you like it.")+(s&&bad.length?` ${s}.`:""), go:"balance"}); }
+  // 3. tyres, dampers, brakes: the top suggestion each, if there is one
+  for (const [k,n] of [["tyres","Tyres"],["dampers","Dampers"],["brakes","Brakes"]]){ const s=first(k); items.push({n, ok:!s, t:s?s+".":"nothing to change.", go:k}); }
+  return `<section><h2>Setup, in order <small>the aero platform first, then the mechanical balance, then the rest: one thing at a time</small></h2>
+    <div class="tablewrap"><table style="font-size:13px">${items.map((it,i)=>`<tr><td style="width:24px"><b>${i+1}</b></td><td style="white-space:nowrap"><b>${it.n}</b></td><td><span class="${it.ok===true?"ok":it.ok===false?"warn":"muted"}">${it.ok===true?"✓ ":""}</span>${it.t}</td><td><button class="ghost" data-go="${it.go}" style="padding:2px 10px">Open</button></td></tr>`).join("")}</table></div>
+    <p class="muted" style="font-size:12px;margin:6px 0 0">Work down the list: change the first thing that isn't ticked, drive 5 clean laps, then look again. The platform changes the balance, so the bars come after it.</p></section>`; }
 function homeHTML(run, A){
   const plan=[...buildPlan(run).values()].filter(p=>!/fuellevel/i.test(p.e.key));
   const issues=run.sug.filter(s=>s.pr>=2 && s.area!=="Fuel").slice(0,2).map(s=>s.title.replace(/\s*\([^)]*\)\s*$/,""));
@@ -3436,7 +3455,7 @@ function frontPlatform(run, A, S){
     let pick=null;
     for (let g2=Math.max(2,g0-8); g2<=g0+12; g2+=1){ const P=platState(run,A,S,Object.assign({},d,{kF:k2, gF:g2})), s=spl(P);
       if (P.top.f>=W.df.f[0]-0.25 && !(s<3)) pick={k2, g2, fc:P.fc.f, fcR:P.fc.r, top:P.top.f, brk:P.brk.f, spl:s, contact:P.contactF}; }
-    if (!pick){ const P=platState(run,A,S,Object.assign({},d,{kF:k2})); pick={k2, g2:g0, fc:P.fc.f, fcR:P.fc.r, top:P.top.f, brk:P.brk.f, spl:spl(P), contact:P.contactF, low:true}; }
+    if (!pick) continue;   // no gap keeps it in the window at top speed with the splitter clear: not an option
     pick.f=pick.fc; pick.reach=pick.fc<=W.df.f[1]+0.5; out.push(pick); }
   return {kF, g0, f0:now.fc.f, fc0:now.fc.f, top0:now.top.f, brk0:now.brk.f, tgt:W.df.f[1], win:W.df.f, opts:out}; }
 // what gets the fast corners into the window: each option worked out from this stint (springs from the suspension model)
@@ -4176,7 +4195,7 @@ function setupBrief(run){
   try { const RC=A.rh?rollCal(run,A):null; if (RC){ const out=RC.per.length?Math.min(...RC.per.map(p=>p.outF)):NaN; L.push({k:"Roll", v:`${fmt((RC.gradF+RC.gradR)/2,2)}°/g${Number.isFinite(out)?` · outside front edge ${fmt(out,0)} mm`:""}`, c: Number.isFinite(out)&&out<15?"warn":""}); } } catch(e){}
   { const tw=A.tw; if (tw && Number.isFinite(tw.front) && Number.isFinite(tw.rear)){ const o=v=>v<tw.lo?"cold":v>tw.hi?"hot":"in"; L.push({k:"Tyres", v:`front ${fmt(tw.front,0)} °C ${o(tw.front)}, rear ${fmt(tw.rear,0)} °C ${o(tw.rear)} (window ${fmt(tw.lo,0)}–${fmt(tw.hi,0)})`, c: o(tw.front)==="in"&&o(tw.rear)==="in"?"ok":"warn"}); } }
   { const n=A.events?A.events.length/A.rep.length:NaN; if (Number.isFinite(n)) L.push({k:"Slides", v:`${fmt(n,1)} a lap`, c:n>2?"warn":"ok"}); }
-  let next=""; try { const s=(run.sug||[])[0]; if (s){ const o=s.opts&&s.opts[0]; next=`${s.title}${o&&o.label?`: ${o.label}`:""}`; } } catch(e){}
+  let next=""; try { const d=document.createElement("div"); d.innerHTML=setupOrderHTML(run, A); const row=[...d.querySelectorAll("tr")].find(tr=>tr.querySelector(".warn")); if (row){ const td=row.querySelectorAll("td"); next=`${td[1].innerText.trim()}: ${td[2].innerText.trim()}`; } } catch(e){}
   return {when:`${A.rep.length} clean lap${A.rep.length===1?"":"s"}`, lines:L.slice(0,5), next:next.length>110?next.slice(0,108)+"…":next}; }
 function publishPlan(run){
   if (!window.se || !window.se.publishPlan) return;
