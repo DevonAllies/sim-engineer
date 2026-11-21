@@ -6656,6 +6656,8 @@ function tpStatus(run, P){
     const m0=(P.manual||{})[s.id], mv=m0&&typeof m0==="object"?m0.v:m0, mAt=m0&&typeof m0==="object"?m0.at||0:0;
     const m = mv===false && s.stints.some(r=>r.date>mAt) && s.stints.filter(r=>r.date>mAt).reduce((a,r)=>a+(r.laps||0),0)>=s.laps ? undefined : mv;
     s.complete = m===true || (m!==false && s.done>=s.laps); s.manual=m;
+    if (s.kind==="between" && !s.complete && m!==false && s.combo && s.combo.done && !s.combo.any){ s.complete=true; s.auto=true;
+      s.how=`Nothing to drive: the sweeps say the baseline is right (${s.combo.items.map(c=>esc(c.why)).join("; ")}), so it stays as it is and the programme moves on.`; }
     if (s.cond && !s.complete){ const sw=steps.filter(q=>s.cond.test(q.id)), tS=tpTrackT(sw.flatMap(q=>q.stints||[])), tR=tpTrackT(lastRef), ok2=Number.isFinite(tS) && Number.isFinite(tR);
       if (sw.length && sw.every(q=>q.complete) && lastRef.length && ok2 && Math.abs(tS-tR)<=TP_COND && m!==false){ s.complete=true; s.auto=true; s.how=`Not needed: the steps above ran at ${fmt(tS,0)} °C track and the baseline at ${fmt(tR,0)} °C, close enough to compare.`; }
       else if (ok2 && Math.abs(tS-tR)>TP_COND) s.how=`The track was ${fmt(Math.abs(tS-tR),0)} °C ${tS>tR?"warmer":"cooler"} for the steps above (${fmt(tS,0)} °C) than when the baseline was driven (${fmt(tR,0)} °C), so they can't be compared fairly. Drive <b>3 laps on the baseline as it is now</b> in conditions like the steps above, nothing changed: the app then compares like with like.`; }
