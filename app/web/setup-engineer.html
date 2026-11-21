@@ -6750,13 +6750,15 @@ function tpSheetRows(run, P, steps){
   const noSugg = s.kind==="between" && !set.length;
   return {s, rows, lcs, src, isSpr, set, keepN, off, offRH, noSugg};
 }
+function tpWay(from, to, key){ const a=learnNum(from), b=learnNum(to), u=String(to).replace(/^[-+\d.\s]+/,"").trim(); if (!Number.isFinite(a)||!Number.isFinite(b)||a===b||!/\d/.test(String(to))) return "";
+  const d=Math.round(Math.abs(b-a)*100)/100, n=String(d); return /RideHeight/i.test(key) ? `${n} mm ${b<a?"lower":"higher"}` : `${b<a?"down":"up"} ${n}${u?" "+u:""}`; }
 function tpSheetHTML(run, P, steps){
   const R=tpSheetRows(run, P, steps); if (!R) return ""; const {s, rows, lcs, src, isSpr, set, keepN, off, offRH, noSugg}=R;
   const groups=[], gm={};
   for (const r of rows){ const gk=r.parts[0]+"."+r.parts[1]; if (!gm[gk]){ gm[gk]={tab:r.parts[0], name:r.parts.length>2?r.parts[1]:r.parts[0], rows:[]}; groups.push(gm[gk]); } gm[gk].rows.push(r); }
   groups.sort((a,b)=>{ const i=x=>{ const j=GROUP_ORDER.indexOf(x.tab); return j<0?99:j; }; return i(a)-i(b); });
   const card=g=>{ const n=g.rows.filter(r=>r.st==="set"||r.st==="back"||r.st==="adjust").length; return `<div class="gcard ${n?"has":""}"><div class="gtitle">${pretty(g.name)}${n?` <span class="badge">${n}</span>`:""}</div><table>${g.rows.map(r=>`<tr class="${r.st==="set"||r.st==="back"||r.st==="adjust"?"chg":""}"><td>${pretty(r.key)}${r.note?`<div class="muted" style="font-size:11px">${esc(r.note)}</div>`:""}</td><td>${
-      r.st==="set"?`<span class="old">${esc(r.raw)}</span> <span class="new">${esc(r.to)}</span>`:r.st==="free"?`<span class="muted">${esc(r.raw)}</span>`:esc(r.raw)}${r.off?`<div class="warn" style="font-size:11px">${src}: ${esc(r.now)}</div>`:""}${!r.off && r.st==="set" && r.now!=null && r.now!==r.to ? `<div class="ok" style="font-size:11px">${src}: ${esc(r.now)}</div>`:""}</td></tr>`).join("")}</table></div>`; };
+      r.st==="set"?`<span class="old">${esc(r.raw)}</span> <span class="${r.now!=null && !r.off?"ok":"new"}" style="font-weight:700">${r.now!=null && !r.off?"✓ ":""}${esc(r.to)}</span>${tpWay(r.raw,r.to,r.key)?`<div class="${r.now!=null && !r.off?"ok":"muted"}" style="font-size:11px">${esc(tpWay(r.raw,r.to,r.key))}</div>`:""}`:r.st==="free"?`<span class="muted">${esc(r.raw)}</span>`:esc(r.raw)}${r.off?`<div class="warn" style="font-size:11px">${src}: ${esc(r.now)}</div>`:""}${!r.off && r.st==="set" && r.now!=null && r.now!==r.to ? `<div class="ok" style="font-size:11px">${src}: ${esc(r.now)}</div>`:""}</td></tr>`).join("")}</table></div>`; };
   const pos=n=>/LeftFront/i.test(n)?"lf":/RightFront/i.test(n)?"rf":/LeftRear/i.test(n)?"lr":/RightRear/i.test(n)?"rr":/Front/i.test(n)?"f":/Rear/i.test(n)?"r":"o";
   const tabs=[]; for (const g of groups){ let T=tabs.find(x=>x.tab===g.tab); if (!T){ T={tab:g.tab, c:{lf:[],f:[],rf:[],lr:[],r:[],rr:[],o:[]}}; tabs.push(T); } T.c[pos(g.name)].push(card(g)); }
   const col=a=>`<div style="display:flex;flex-direction:column;gap:10px;min-width:0">${a.join("")}</div>`;

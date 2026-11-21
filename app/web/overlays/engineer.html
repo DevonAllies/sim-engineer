@@ -40,6 +40,8 @@ body.drive #drive, body.report #report{display:flex}
 .chip b{display:block;font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .line{font-size:10.5px;color:var(--muted);background:rgba(255,255,255,.05);border-radius:6px;padding:3px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .line b{color:var(--ink)}
+.line.test{color:var(--ink);white-space:normal;box-shadow:0 0 0 1px var(--warn,#ffb347) inset}
+.line.test .ok{font-weight:700}
 .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-top:auto}
 .stat{background:rgba(255,255,255,.05);border-radius:6px;padding:3px 6px}
 .stat b{display:block;font-size:12px}
@@ -62,6 +64,7 @@ body.drive #drive, body.report #report{display:flex}
   <div class="top"><span class="brand"><img id="logo" alt=""><span class="bt" id="brand"></span><b id="title">BONO</b></span><span class="k" id="info">waiting for iRacing</span></div>
 
   <div class="view" id="drive">
+    <div class="line test" id="test" style="display:none"></div>
     <div class="big" id="big">–</div>
     <div class="scale" id="scale"><i></i><i></i><i></i><i></i><i></i></div>
     <div class="coach" id="coach"><span class="k">Vs your best</span> <span class="muted">–</span></div>
@@ -309,7 +312,8 @@ function endLap(){
   { const s0=ST.last, t=(s0 && ST.lapT0!==null) ? s0.SessionTime-ST.lapT0 : NaN;
     if (ST.cur.valid && Number.isFinite(t) && t>20 && Number.isFinite(ST.best) && t>ST.best*1.03) ST.cur.slowLap=true; }
   if (ST.stint && ST.cur.valid && !ST.cur.slowLap && ST.cur.mid.length+ST.cur.exit.length>40){
-    ST.stint.laps++; ST.lapsClean=(ST.lapsClean||0)+1; for (const p of ["entry","mid","exit"]) ST.stint[p].push(...ST.cur[p]);
+    ST.stint.laps++; ST.lapsClean=(ST.lapsClean||0)+1;
+    { const T=testLaps(); if (T && T.setUp) addLog(T.total>=T.P.laps ? `Test step done: ${T.total} of ${T.P.laps} laps. Back to the garage for the next step` : `Test lap ${T.total} of ${T.P.laps} counted`); } for (const p of ["entry","mid","exit"]) ST.stint[p].push(...ST.cur[p]);
     if (ST.cur.tyre.n>300){ ST.stint.lastLapTyres = ST.cur.tyre;   // add this lap to the stint's tyre average
       // each lap's own average (all its corners) is added; the report divides by the number of laps, so every lap counts the same
       const S=ST.stint.tyreSum || (ST.stint.tyreSum={n:0, laps:0}), T=ST.cur.tyre; S.laps++; S.n=S.laps;
@@ -446,8 +450,17 @@ function drawReport(){
 }
 
 // test programmes running (car|track), from the main app: while one runs here, bias / TC / ABS stay put so the stints compare
-let TESTS=[]; try { if (window.se && window.se.onPlan){ window.se.onPlan(p=>{ TESTS=(p&&p.tests)||[]; }); window.se.getPlan().then(p=>{ TESTS=(p&&p.tests)||[]; }).catch(()=>{}); } } catch(e){}
+let TESTS=[], PROG=null; try { if (window.se && window.se.onPlan){ window.se.onPlan(p=>{ TESTS=(p&&p.tests)||[]; PROG=(p&&p.prog)||null; }); window.se.getPlan().then(p=>{ TESTS=(p&&p.tests)||[]; PROG=(p&&p.prog)||null; }).catch(()=>{}); } } catch(e){}
 const testingHere = () => !!(ST.meta && ST.meta.car && TESTS.includes(ST.meta.car+"|"+ST.meta.trackId));
+const escT=s=>String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+// the step you're on and its laps: the ones already counted (finished stints) plus this stint's clean laps, when the car is set up for the step
+function testLaps(){ const P=PROG; if (!testingHere() || !P || P.none!==undefined || !P.label) return null;
+  const setUp = P.live && !(P.off||[]).length && !P.nothing, here = setUp && ST.stint && !ST.stint.closed ? (ST.stint.laps||0) : 0;
+  return {P, setUp, here, total:Math.min(P.laps, (P.lapsDone||0)+here)}; }
+function drawTest(){ const el=$("test"); if (!el) return; const T=testLaps(); if (!T){ el.style.display="none"; return; } el.style.display="";
+  const {P, setUp, here, total}=T, done=total>=P.laps;
+  el.innerHTML = `<b>Testing</b> · step ${P.n} of ${P.total}: <b>${escT(P.label)}</b> · ${done?`<span class="ok">${total} of ${P.laps} laps: done, back to the garage for the next step</span>`:`<span class="ok">${total} of ${P.laps} laps</span>`}`
+    + (!setUp ? ` <span class="warn">· the car isn't set up for this step: these laps don't count</span>` : here && P.lapsDone ? ` <span class="tgt">(${P.lapsDone} before, ${here} this stint)</span>` : ""); }
 // ---------- in-car adjustments: brake bias, TC, ABS (things you can change from the cockpit) ----------
 function drawInCar(s, car){
   // you changed bias / TC / ABS: forget what was measured on the old value, so the advice doesn't keep asking for more
@@ -561,7 +574,7 @@ function drawDrive(){
   if (!s) return;
   $("info").textContent = `lap ${s.Lap}${ST.cur.slides?` · ${ST.cur.slides} slide${ST.cur.slides>1?"s":""}`:""}${L===ST.prev?" · last lap":""}`;
   const sp = Number.isFinite(ST.cur.spl) ? ST.cur.spl : (ST.prev? ST.prev.spl : NaN);
-  drawInCar(s, car);
+  drawInCar(s, car); drawTest();
 }
 
 function draw(){
