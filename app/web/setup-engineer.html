@@ -3015,7 +3015,7 @@ function render(){
     tyres: () => `<section><h2>Tyres <small>temperatures, pressures, camber and wear</small></h2><div class="two"><div>${tiresHTML(A,S,run)}</div><div>${wearHTML(A)}
         <div class="grid" style="margin-top:10px"><div class="stat"><div class="k">Rear wheelspin</div><div class="v">${fmt((A.spin||0)*100,0)}%</div><div class="s">of throttle &gt;60% samples</div></div>
         <div class="stat"><div class="k">Inside rear spin</div><div class="v">${fmt((A.inSpin||0)*100,0)}%</div><div class="s">while cornering on power</div></div></div></div></div></section>` + tyreModelHTML(run, A, S) + racePressureHTML(run, A, S) + safe(()=>modelRangeHTML(run, "Tyre models"),"range") + safe(()=>tyreThermalHTML(run, A, S),"thermal") + safe(()=>gripTempHTML(run, A, S),"griptemp") + safe(()=>tyreHeatHTML(run, A, S),"heat") + areaCards("tyres"),
-    aero: () => aeroHTML(run, A, S) + optimalRakeHTML(run, A, S) + rakeChartsHTML(run, A, S) + fastCornersHTML(run, A, S) + platSimHTML(run, A, S) + rhcHTML(run, A, S) + rakePhasesHTML(run, A, S) + aeroMapHTML(run, A) + aeroOptionsHTML(run, A, S) + bumpHTML(run, A) + bottomHTML(run, A) + downforceHTML(run, A) + areaCards("aero"),
+    aero: () => aeroHTML(run, A, S) + optimalRakeHTML(run, A, S) + rakeChartsHTML(run, A, S) + fastCornersHTML(run, A, S) + platSimHTML(run, A, S) + aeroCmpHTML(run, A, S) + rhcHTML(run, A, S) + rakePhasesHTML(run, A, S) + aeroMapHTML(run, A) + aeroOptionsHTML(run, A, S) + bumpHTML(run, A) + bottomHTML(run, A) + downforceHTML(run, A) + areaCards("aero"),
     balance: () => safeBalanceFeel(run, A) + `<section><h2>Balance <small>understeer angle in degrees (front wheel): higher = more understeer</small></h2>
    ${balanceReady(run,A)?"":`<div class="sugg p2" style="margin:0 0 10px"><h3>First read only</h3><p style="margin:4px 0 0">${balanceWait(run,A)}</p></div>`}
    <div class="grid" style="margin-bottom:10px">
@@ -3068,7 +3068,8 @@ function render(){
     runs.forEach(r=>{ if (r.A) r.A.tw=null; }); rerender(); });   // the measured tyre window follows the range too
   wireProg(view==="programme" && PROG_RUN ? PROG_RUN : run);
   for (const [id,key] of [["lctarget","lcTarget"],["tyreloss","tyreLoss"],["racestart","startH"]]){ const el=$("#"+id); if (el) el.onchange=()=>{ RACE[key]=el.value===""?"":+el.value; PREFS.set("race", RACE); rerender(); }; }
-  if (view==="aero" && A.rh){ drawRH(run,A,S); try { drawRake(run,A,S); } catch(e){ console.error("rake",e); } try { wirePlat(run,A,S); } catch(e){ console.error("plat",e); } try { wireRHC(run,A,S); } catch(e){ console.error("rhc",e); } }
+  if (view==="aero"){ const ob=$("#openFull"); if (ob) ob.onclick=()=>{ current=+ob.dataset.i; LIVE.follow=false; render(); }; }
+  if (view==="aero" && A.rh){ drawRH(run,A,S); try { drawRake(run,A,S); } catch(e){ console.error("rake",e); } try { wirePlat(run,A,S); } catch(e){ console.error("plat",e); } { const sel=$("#aeroCmpSel"); if (sel) sel.onchange=()=>{ AERO_CMP=sel.value; render(); }; } try { wireRHC(run,A,S); } catch(e){ console.error("rhc",e); } }
   if (view==="laps") drawTrace(run,A);
   if (view==="dampers") for (const c of Object.keys(A.damp||{})) drawHist($("#dh"+c), A.damp[c].hist);
   wireSugInputs(run); wireRace(run); wireFfb(); wireTabs(); if (view==="learn") wireLearn(run);
@@ -3671,6 +3672,40 @@ function downforceHTML(run, A){
    <p class="muted" style="font-size:12px"><b>How to read it:</b> this is an estimate. Each spring works through suspension linkages the app can't see, and they differ front to rear, so the front/rear split is not the true aero balance (for that, type your at-speed ride heights into the garage aero calculator). Use these numbers to <b>compare</b>: corner to corner, lap to lap and run to run. More total = more grip; a front share that rises in a corner = the car will want to rotate more there. Once a corner sits on its bump rubber, the rubber's extra stiffness is included (measured from how the squash slows once it's on, else assumed 4× the spring).</p>
   </section>`;
 }
+// ---------- drag: from full-throttle acceleration on the straights ----------
+// a = P/(m·v) − k·v² − c (v in m/s): power over speed, minus aero drag (k) and rolling resistance (c). k is the drag index: it goes up with
+// more wing, more rake or a higher car. Top two gears only, no cornering, no braking; needs LongAccel. Compares stints of the same car.
+function dragIndex(run, A){
+  if (A._drag!==undefined) return A._drag; const ch=run.ch; if (!ch.LongAccel || !ch.Throttle) return A._drag=null;
+  const gs=ch.Gear ? A.idx.map(j=>ch.Gear[j]).filter(Number.isFinite) : [], top=gs.length?Math.max(...gs):null;
+  const X=[], y=[]; for (const j of A.idx){ const v=ch.Speed[j]; if (v<33 || ch.Throttle[j]<0.98 || ch.Brake[j]>0.01 || Math.abs(ch.LatAccel[j])>2) continue; if (top!=null && ch.Gear[j]<top-1) continue; X.push([1/v, v*v]); y.push(ch.LongAccel[j]); }
+  if (X.length<150) return A._drag=null; const c=fitLS(X,y); if (!c || !(c[2]<0)) return A._drag=null;
+  return A._drag={k:-c[2], idx:+(-c[2]*1e4).toFixed(2), n:X.length}; }
+// ---------- compare this stint's aero with another (the baseline, the last one…) ----------
+let AERO_CMP=null;
+function aeroCmpHTML(run, A, S){
+  const me=aeroPoint(run,A); if (!me) return ""; const trk=learnTrackOf(run), K=tpTempK(run).k;
+  const recs=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===trk && r.aero && r.id!==run.learnedId && !r.wet).sort((a,b)=>b.date-a.date); if (!recs.length) return "";
+  const progBase=(()=>{ const P=PREFS.get(tpKeyOf(run,"car")); if (!P) return null; try { const b=tpStatus(run,P).find(s=>s.id==="base"); return b && b.stints[0] ? b.stints[0].id : null; } catch(e){ return null; } })();
+  if (!AERO_CMP || !recs.some(r=>r.id===AERO_CMP)) AERO_CMP=progBase || recs[0].id; const o=recs.find(r=>r.id===AERO_CMP), oa=o.aero;
+  const wi=run.info.WeekendInfo||{}, tNow=parseFloat(wi.TrackSurfaceTemp), medNow=A.rep&&A.rep.length?median(A.rep.map(l=>l.time)):NaN, corr=(m,T)=>Number.isFinite(T)?m-K*(T-30):m;
+  const dt=d=>new Date(d).toLocaleString([], {weekday:"short", day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit"});
+  const W=(PROFILES[run.carPath]||{}).aeroWin, RW=rakeWindow(run,S);
+  const rows=[["Track temperature", tNow, o.trackT, "°C", 0], ["Typical lap (temperature taken out)", corr(medNow,tNow), corr(o.med,o.trackT), "s", 2, "time"],
+    ["Wing", me.w, oa.w, "°", 1], ["Front / rear springs", me.kF, oa.kF, "N/mm", 0, null, me.kR, oa.kR], ["Front / rear bump gap", me.gF, oa.gF, "mm", 0, null, me.gR, oa.gR],
+    ["Static ride height F / R (garage)", me.sF, oa.sF, "mm", 1, null, me.sR, oa.sR],
+    ["Fast corners: front / rear", me.fcF, oa.fcF, "mm", 1, null, me.fcR, oa.fcR], ["Fast corners: rake", me.fcRake, oa.fcRake, "mm", 1], ["Fast corners: time in the rake window", me.fcIn, oa.fcIn, "%", 0],
+    ["At speed (straights): front / rear", me.fA, oa.fA, "mm", 1, null, me.rA, oa.rA], ["End of the straight: front / rear", me.topF, oa.topF, "mm", 1, null, me.topR, oa.topR],
+    ["Braking from top speed: front / rear", me.brkF, oa.brkF, "mm", 1, null, me.brkR, oa.brkR], ["Splitter's lowest point", me.splMin, oa.splMin, "mm", 1],
+    ["Top speed", me.vmax, oa.vmax, "km/h", 1], ["Drag index (lower = less drag)", me.drag, oa.drag, "", 2],
+    ["Balance in fast corners (+ understeer)", A.highSpeed&&A.highSpeed.med, o.bal&&o.bal.fast, "°", 2]];
+  const f=(v,d)=>v==null||!Number.isFinite(+v)?"–":fmt(+v,d), dd=(a,b,d)=>Number.isFinite(+a)&&Number.isFinite(+b)&&a!=null&&b!=null&&Math.abs(a-b)>=Math.pow(10,-d)/2?`${a-b>0?"+":""}${fmt(a-b,d)}`:"";
+  return `<section><h2>Compare with another stint <small>your aero numbers side by side: what a change did to the platform</small></h2>
+    <div class="row" style="gap:10px;align-items:center;font-size:13px;margin-bottom:8px">This stint against <select id="aeroCmpSel">${recs.slice(0,40).map(r=>`<option value="${esc(r.id)}"${r.id===AERO_CMP?" selected":""}>${esc(dt(r.date))} · ${esc(r.setupName||"setup")} · ${r.laps} laps${r.id===progBase?" · programme baseline":""}</option>`).join("")}</select></div>
+    <div class="tablewrap"><table style="font-size:12.5px"><tr><th></th><th>This stint</th><th>${esc(dt(o.date))}</th><th>Difference</th></tr>
+    ${rows.map(([k,a,b,u,d,kind,a2,b2])=>{ if (a==null && b==null) return ""; const two=a2!==undefined; return `<tr><td class="muted">${k}</td><td><b>${two?`${f(a,d)} / ${f(a2,d)}`:kind==="time"?(Number.isFinite(a)?fmtTime(a):"–"):f(a,d)}</b> ${u}</td><td>${two?`${f(b,d)} / ${f(b2,d)}`:kind==="time"?(Number.isFinite(b)?fmtTime(b):"–"):f(b,d)} ${u}</td><td>${two?[dd(a,b,d),dd(a2,b2,d)].filter(Boolean).join(" / "):dd(a,b,d)}</td></tr>`; }).join("")}
+    </table></div>
+    <p class="muted" style="font-size:12px;margin:6px 0 0">${W&&RW?`Windows: front ${W.df.f[0]}–${W.df.f[1]}, rear ${W.df.r[0]}–${W.df.r[1]}, rake ${fmt(RW.lo,0)} to ${fmt(RW.hi,0)} mm. `:""}The lap time is taken to 30 °C track (${fmt(K,2)} s per °C${tpTempK(run).own?", measured from your stints":""}). Stints from before this version don't have the fast-corner, end-of-straight, braking and drag numbers ("–"): every stint from now on does. Drag index: from full-throttle acceleration on the straights; more wing, more rake or a higher car raise it.</p></section>`; }
 // one aero data point per stint: wing, garage ride heights, ride heights measured at speed, top speed, downforce estimate, balance
 function aeroPoint(run, A){
   if (!A || !A.rh || !Number.isFinite(A.rh.front)) return null;
@@ -3681,7 +3716,12 @@ function aeroPoint(run, A){
     // springs, bump-rubber gaps and how much of the straights each axle spends on its rubbers (so the model can learn their effect)
     ...(()=>{ const B=A.bump||{}, k=c=>{ const e=SET.spring(run,CORNERS[c]); return e?parseFloat(e.raw):NaN; }, av=(a,b)=>r2((a+b)/2);
       return {kF:av(k("LF"),k("RF")), kR:av(k("LR"),k("RR")), gF: B.LF&&B.RF ? av(B.LF.gap,B.RF.gap) : null, gR: B.LR&&B.RR ? av(B.LR.gap,B.RR.gap) : null,
-        onF: B.LF&&B.RF ? av(B.LF.straight,B.RF.straight) : null, onR: B.LR&&B.RR ? av(B.LR.straight,B.RR.straight) : null}; })()};
+        onF: B.LF&&B.RF ? av(B.LF.straight,B.RF.straight) : null, onR: B.LR&&B.RR ? av(B.LR.straight,B.RR.straight) : null}; })(),
+    ...(()=>{ try { const FC=fastCorners(run,A), C=platCal(run,A), D=dragIndex(run,A), RW=rakeWindow(run,settingsFor(run)), o={};
+      if (FC.length){ o.fcF=r2(median(FC.map(c=>c.F))); o.fcR=r2(median(FC.map(c=>c.R))); o.fcRake=r2(median(FC.map(c=>c.rake))); }
+      if (RW){ const ch=run.ch, fr=[]; for (const j of A.idx){ if (ch.Speed[j]*3.6>=140 && Math.abs(ch.LatAccel[j])>7.85 && ch.Brake[j]<0.05){ const r=rakeAt(ch,j); if (Number.isFinite(r)) fr.push(r); } } if (fr.length>50) o.fcIn=r2(fr.filter(r=>r>=RW.lo&&r<=RW.hi).length/fr.length*100); }
+      if (C){ o.topF=r2(C.F.a-C.F.c*C.vmax*C.vmax); o.topR=r2(C.R.a-C.R.c*C.vmax*C.vmax); o.brkF=r2(C.brkF); o.brkR=r2(C.brkR); o.splMin=r2(C.splMin); }
+      if (D) o.drag=D.idx; return o; } catch(e){ return {}; } })()};
 }
 // ride height at speed from wing, springs and bump-rubber gaps, per axle, calibrated on this stint:
 // the aero load is worked out from how far the shocks compress at speed (spring until the rubber engages, then spring + rubber),
@@ -3817,7 +3857,9 @@ function aeroOptionsHTML(run, A, S){
        <p class="muted" style="font-size:12px">From the spring + bump-rubber model: front now ${R.F.on?"on":"off"} its rubbers (gap ${fmt(R.F.g,0)} mm, ${fmt(R.F.delta,1)} mm of shock travel at speed), rear ${R.R.on?"on":"off"} (gap ${fmt(R.R.g,0)} mm, ${fmt(R.R.delta,1)} mm). Once a corner is on its rubber, spring changes barely move it at speed and the gap does the work. A spring change also moves the garage height unless you reset the perch offsets.</p>`; })() : ""}
   </section>`;
 }function aeroHTML(run, A, S){
-  if (!A.rh) return `<section><p class="muted">No ride-height data in this run.</p></section>`;
+  if (!A.rh){ const full=[...runs].reverse().find(r=>r!==run && r.carPath===run.carPath && !r.live && r.ch && r.ch.LFrideHeight);
+    return run.live ? `<section><p style="margin:0">This is the <b>live</b> stint: iRacing doesn't send ride heights live, only in the .ibt file it saves when you get out of the car. That stint then appears at the top as <b>"Stint … · full data"</b>, with everything on this page.</p>${full?`<p style="margin:8px 0 0"><button id="openFull" data-i="${runs.indexOf(full)}" style="padding:3px 12px">Open ${esc(full.short)}</button></p>`:""}</section>`
+      : `<section><p class="muted">No ride-height data in this run.</p></section>`; }
   const st = end => { const v=run.setupFlat.filter(e=>e.key.toLowerCase()==="rideheight" && e.path.toLowerCase().includes(end)).map(e=>parseFloat(e.raw)); return v.length? mean(v) : NaN; };
   const sF=st("front"), sR=st("rear"), L=A.lapRH||[], avg=k=>mean(L.filter(l=>l.rep).map(l=>l[k]).filter(Number.isFinite));
   const tgt=(v,t)=>!t||!Number.isFinite(v)?"":Math.abs(v-t)<=S.rhTol?"ok":"warn";
@@ -3988,7 +4030,7 @@ function whereOf(path){
 function publishPlan(run){
   if (!window.se || !window.se.publishPlan) return;
   const st=setupName(run), items=[...buildPlan(run).values()].map(p=>({where:whereOf(p.e.path), name:pretty(p.e.key), from:p.e.raw.trim(), to:p.to, done:!!(run.doneMap && run.doneMap[p.e.path+"="+p.to])}));
-  LAST_PLAN = {tests:Object.keys(PREFS.data||{}).filter(k=>k.startsWith("testprog|") && PREFS.data[k] && PREFS.data[k].created && !PREFS.data[k].state).map(k=>{ const v=PREFS.data[k], p=k.split("|"); return p[2]==="car" ? `${p[1]}|${v.track}` : `${p[1]}|${p[2]}`; }), car:run.carName, load:st.name, saveAs:saveAsName(st.name||"my setup.sto"), items, done:items.filter(i=>i.done).length};
+  LAST_PLAN = {tests:Object.keys(PREFS.data||{}).filter(k=>{ const v=PREFS.data[k]; if (!k.startsWith("testprog|") || !v || !v.created || v.state) return false; const p=k.split("|"); if (p[2]==="car") return true; const C=PREFS.data[`testprog|${p[1]}|car`]; return !(C && C.track===p[2] && C.state==="paused"); }).map(k=>{ const v=PREFS.data[k], p=k.split("|"); return p[2]==="car" ? `${p[1]}|${v.track}` : `${p[1]}|${p[2]}`; }), car:run.carName, load:st.name, saveAs:saveAsName(st.name||"my setup.sto"), items, done:items.filter(i=>i.done).length};
   publishProg();
 }
 // the Test step overlay's data rides along with the plan; sent again whenever the live garage changes
@@ -7095,7 +7137,7 @@ function tpOverlayData(){
   const w=liveWhere(); let run=runs[current];
   if (w && w.car){ const m=runs.filter(r=>liveMatches(r,w)); if (m.length){ if (!run || !m.includes(run)) run=m[m.length-1]; } else run=progRun(run); }
   if (!run || !run.setupFlat) return {none:"Open a stint in Setup Engineer."};
-  tpMigrate(run); const CPo=PREFS.get(tpKeyOf(run,"car")), kindO = CPo && CPo.track===learnTrackOf(run) && !CPo.state && !tpStatus(run,CPo).every(s=>s.complete) ? "car" : "track", P=PREFS.get(tpKeyOf(run,kindO));
+  tpMigrate(run); const CPo=PREFS.get(tpKeyOf(run,"car")), kindO = CPo && CPo.track===learnTrackOf(run) && (CPo.state==="paused" || (!CPo.state && !tpStatus(run,CPo).every(s=>s.complete))) ? "car" : "track", P=PREFS.get(tpKeyOf(run,kindO));
   if (!P) return {none:`No car programme or track check running for the ${run.carName} at ${((run.info.WeekendInfo||{}).TrackDisplayName)||"this track"}. Start one on the Test programme tab.`};
   const steps=tpStatus(run,P), st=tpStateOf(P,steps);
   if (st==="paused") return {none:"Test programme paused. Continue it on the Test programme tab."};
