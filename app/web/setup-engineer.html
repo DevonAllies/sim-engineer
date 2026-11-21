@@ -6519,11 +6519,13 @@ function tpSteps(run, base, kind){
     S.push({id:"rhApp", block:"Ride height", label:"Ride height: the best rake", re, kind:"between", how:"Drive both ride-height steps first: this step then sets the rear to the better height, on the springs you're running."}); }
   // then the anti-roll bars, the main balance tool, on the new springs: one step softer and one step stiffer on each axle
   const ARB_RE=ax=>new RegExp(`${ax}[A-Za-z]*\\.(Arb|ArbBlades|ArbSetting|ArbSize|AntiRollBar)|${ax}Brakes[A-Za-z]*\\.Arb`,"i");
-  for (const ax of ["Front","Rear"]){ const e=arbE(ax); if (!e) continue; const eb=Object.assign({}, e, {raw:bv(e)});
-    for (const [id,k,d,w] of [[`arb${ax}Soft`,"less",-1,"softer"],[`arb${ax}`,"more",1,"stiffer"]]){ const r=resolve(run,{e:eb, d}); if (r && r.same) continue;
-      S.push({id, block:"Anti-roll bars", label:`${ax} anti-roll bar${/Stiffness/i.test(e.key||"")?" stiffness":""} one step ${w}`, re:e.key?new RegExp(`${ax}[A-Za-z]*\\.${e.key}$`,"i"):ARB_RE(ax), kind:k, amount:1, e0:e, how:`${ax} bar one step ${w}${r?` (<b>${esc(r.raw)}</b>)`:""} (baseline ${esc(bv(e))}). Nothing else.`}); } }
+  for (const ax of ["Front","Rear"]){ const e=arbE(ax); if (!e) continue; const L=lim(e), dr=dirFor(run,e), b0=learnNum(bv(e)), sw=/Stiffness/i.test(e.key||"")?" stiffness":"";
+    for (const [id,end,w] of [[`arb${ax}Soft`, dr>0?"min":"max", "softest"],[`arb${ax}`, dr>0?"max":"min", "stiffest"]]){ const tgt=L?L[end]:null;
+      if (tgt!=null && Number.isFinite(learnNum(tgt)) && Math.abs(learnNum(tgt)-b0)<1e-6) continue;   // the baseline is already at that end
+      S.push({id, block:"Anti-roll bars", label:`${ax} anti-roll bar${sw} ${w}`, re:e.key?new RegExp(`${ax}[A-Za-z]*\\.${e.key}$`,"i"):ARB_RE(ax), kind:end, lim:tgt, e0:e,
+        how:`${ax} bar${sw} to its ${w}${tgt!=null?` (<b>${esc(String(tgt))}</b>)`:` (the ${w} the garage allows)`} (baseline ${esc(bv(e))}). Nothing else. The car may be awkward at the end of the range: drive it as cleanly as you can; like the spring sweep, it measures what the whole range does.`}); } }
   if (S.some(s=>/^arb/.test(s.id))) S.push({id:"arbBase", block:"Anti-roll bars", label:"Baseline check (if the track changed)", kind:"base", cond:/^arb(Front|Rear)/, lapsN:3, how:tpCheckHow});
-  if (S.some(s=>/^arb(Front|Rear)/.test(s.id))) S.push({id:"arbApp", block:"Anti-roll bars", label:"Bars: the best side on these springs", how:"Drive the bar steps first: this step then sets each bar to its better side, on the springs you're running.", kind:"between", re:/Arb|AntiRollBar/i});
+  if (S.some(s=>/^arb(Front|Rear)/.test(s.id))) S.push({id:"arbApp", block:"Anti-roll bars", label:"Bars: the best setting from both ends", how:"Drive the bar steps first: this step then sets each bar from what both ends did (halfway towards the better end), on the springs you're running.", kind:"between", re:/Arb|AntiRollBar/i});
   const DN=[["highspeedcompression","high-speed bump","HighSpeedComp|HsComp|HSComp|HighSpeedBump"],["highspeedrebound","high-speed rebound","HighSpeedReb|HsReb|HSReb"],["lowspeedcompression","low-speed bump","LowSpeedComp|LsComp|LSComp|LowSpeedBump"],["lowspeedrebound","low-speed rebound","LowSpeedReb|LsReb|LSReb"]];
   let anyD=false; for (const [kind,label,pat] of DN) for (const [end,End] of [["front","Front"],["rear","Rear"]]){ const e=findDamp(run,end,kind); if (!e) continue; anyD=true;
     S.push({id:`d${end}${kind}`, block:"Dampers", label:`${End} ${label} +3`, re:new RegExp(`${End}.*(${pat})`,"i"), kind:"more", amount:3, e0:e[0],
@@ -6703,7 +6705,12 @@ function tpCombo(run, steps, P, what){
           if (spr>TP_COND){ done=false; why=`${ax.toLowerCase()} ${nm}: the track temperature differs by ${fmt(spr,0)} °C between these stints: drive the baseline check (3–5 laps) in the same conditions first: baseline ${braw}`; }
           else if (!best) why=`${ax.toLowerCase()} ${nm}: not enough data: baseline ${braw}`;
           else if (best.w==="baseline" || !base || base.S.total-best.S.total<0.1) why=`${ax.toLowerCase()} ${nm}: ${best.w==="baseline"?"the baseline scores best":`${best.w} is within 0.1 s of the baseline overall`} (pace, balance, slides and tyres together): stays at ${braw}`;
-          else { raw=best.raw; const gap=hrsApart(best.L, base.L); why=`${ax.toLowerCase()} ${nm}: ${best.w} (${best.raw}) scores best: ${tpScoreWhy(best.S, base.S)} against the baseline${gap>=1?` (driven ${gap.toFixed(1)} h apart)`:""}`; } }
+          else { raw=best.raw; let half="";
+            if (what==="bars"){ const en=enumFor(run,{path:"CarSetup."+bk, key:bk.split(".").pop()});
+              if (en){ const i0=en.values.indexOf(braw), i1=en.values.indexOf(best.raw); if (i0>=0 && i1>=0 && i1!==i0){ let j=i0+Math.round((i1-i0)/2); if (j===i0) j=i0+Math.sign(i1-i0); raw=en.values[j]; } }
+              else { const a=learnNum(braw), b=learnNum(best.raw); if (Number.isFinite(a) && Number.isFinite(b) && a!==b){ let v=a+Math.round((b-a)/2); if (v===a) v=a+Math.sign(b-a); raw=braw.replace(/-?\d+(\.\d+)?/, String(v)); } }
+              if (raw!==best.raw) half=`; so halfway: ${raw}`; }
+            const gap=hrsApart(best.L, base.L); why=`${ax.toLowerCase()} ${nm}: the ${best.w} end (${best.raw}) scores best: ${tpScoreWhy(best.S, base.S)} against the baseline${gap>=1?` (driven ${gap.toFixed(1)} h apart)`:""}${half}`; } }
         const ok2=ax+(what==="heave"?"Heave":"Arb"); out[ok2]={raw, baseRaw:braw, why, done, key:learnNorm(bk), label:`${ax} ${nm}`}; out.items.push(out[ok2]); if (done) out.done++; if (raw!==braw) out.any=true; } } }
   if (!out.items.length || !out.items.every(i=>i.done)) out.done=0;
   return out; }
