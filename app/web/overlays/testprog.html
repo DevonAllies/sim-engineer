@@ -22,7 +22,9 @@ body.edit #editbar{display:block}
 .box.ok{box-shadow:0 0 0 1px var(--ok) inset}
 .box.off{box-shadow:0 0 0 1px var(--warn) inset}
 .it{font-size:12px;line-height:1.3;margin-top:2px}
-.to{color:var(--accent);font-weight:700}
+.to{color:var(--warn);font-weight:700}
+.done{color:var(--ok);font-weight:700}
+.base div.this{background:rgba(255,179,71,.12);border-radius:3px;padding:1px 3px}
 .okt{color:var(--ok);font-weight:700}
 .warnt{color:var(--warn);font-weight:700}
 .muted{color:var(--muted)}
@@ -55,19 +57,20 @@ function draw(){
   const P=plan && plan.prog;
   if (!P || P.none!==undefined){ $("info").textContent=""; $("body").innerHTML=`<div class="none">${esc((P&&P.none)||"Open Setup Engineer: the test programme step shows here.")}</div>`; return; }
   $("info").textContent = `step ${P.n} of ${P.total} · ${P.doneN} done`;
-  const change = P.change.length
-    ? P.change.map(c=>{ const i=c.indexOf(": "); return `<div class="it">${esc(short(c.slice(0,i)))}: <span class="to">${esc(c.slice(i+2))}</span></div>`; }).join("")
+  const C = P.chg || [];
+  const change = C.length
+    ? C.map(c=>`<div class="it">${c.done?"✓ ":""}${esc(short(c.label))}${c.both?", both sides":""}: <span class="muted">${esc(c.from)}</span> → <span class="${c.done?"done":"to"}">${esc(c.to)}</span>${c.way?` <span class="${c.done?"done":"to"}">(${esc(c.way)})</span>`:""}</div>`).join("")
     : `<div class="it">${P.nothing?esc(P.nothing):"Change nothing: drive the baseline as it is."}</div>`;
   const check = P.nothing ? "" : !P.live ? `<div class="box"><div class="k">Garage check</div><div class="it muted">Starts when you're in the car at this track.</div></div>`
     : P.off.length ? `<div class="box off"><div class="k">Garage now: not set up yet</div>${P.off.slice(0,8).map(o=>`<div class="it warnt">${esc(short(o))}</div>`).join("")}${P.off.length>8?`<div class="it muted">and ${P.off.length-8} more</div>`:""}</div>`
-    : `<div class="box ok"><div class="k">Garage now</div><div class="it okt">Matches this step. Drive ${P.laps} clean laps.</div></div>`;
+    : `<div class="box ok"><div class="k">Garage now</div>${C.filter(c=>c.now).map(c=>`<div class="it">${esc(short(c.label))}: <b>${esc(c.now)}</b></div>`).join("")}<div class="it okt">✓ Set up for this step. Drive ${P.laps} clean laps.</div></div>`;
   const rh = P.live && P.offRH.length ? `<div class="it muted">Ride heights more than 2 mm out (fine for counting): ${esc(P.offRH.map(short).join(", "))}</div>` : "";
   $("body").innerHTML = `
     <div class="step">${esc(P.label)} <small>${esc(P.block)} · ${P.lapsDone} of ${P.laps} laps${P.complete?" · done":""}</small></div>
-    <div class="box"><div class="k">Change from the baseline</div>${change}${P.spr?`<div class="it muted">Then put the ride heights back near the baseline (within 2 mm).</div>`:""}</div>
+    <div class="box"><div class="k">Change</div>${change}${P.spr?`<div class="it muted">Then put the ride heights back near the baseline (within 2 mm).</div>`:""}</div>
     ${check}${rh}
-    <div><div class="k" style="margin-bottom:3px">Baseline${P.moved?" now":""}${P.baseName?`: ${esc(P.baseName)}`:""}${P.moved?" + the combination steps you drove":""} · everything else stays at this</div>
-      <div class="base">${P.base.map(b=>`<div><span class="muted">${esc(short(b.label))}</span><b>${esc(b.val)}</b></div>`).join("")}</div></div>`;
+    <div><div class="k" style="margin-bottom:3px">Everything else stays as it is${P.baseName?` (${esc(P.baseName)}${P.moved?" with the combinations you drove":""})`:""}</div>
+      <div class="base">${P.base.map(b=>b.to!==undefined ? `<div class="this"><span>${esc(short(b.label))}</span><b>${esc(b.val)} → <span class="to">${esc(b.to)}</span></b></div>` : `<div><span class="muted">${esc(short(b.label))}</span><b>${esc(b.val)}</b></div>`).join("")}</div></div>`;
 }
 // where is the car? (garage / pit stall = show, driving = hide)
 const TYPES={0:"getUint8",1:"getUint8",2:"getInt32",3:"getUint32",4:"getFloat32",5:"getFloat64"};

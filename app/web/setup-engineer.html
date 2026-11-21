@@ -6720,7 +6720,13 @@ function tpOverlayData(){
     nothing: R.noSugg ? (s.combo && s.combo.done ? "The sweeps say the baseline settings are right: nothing to test. Tick this step by hand to skip it." : "The app doesn't suggest a spring change right now: nothing to test. Tick this step by hand on the Test programme tab to skip it.") : "",
     spr:R.isSpr&&!R.noSugg, change:uniq(R.set.map(r=>`${learnLabel(r.path)}: ${r.raw} → ${r.to}${R.lcs && r.now!=null && r.now!==r.to ? ` (garage now ${r.now}${r.off?"":", close enough"})` : ""}`)), live:!!R.lcs && !R.noSugg,
     off:uniq(R.off.map(r=>`${r.label}: ${r.now} (should be ${r.st==="set"?r.to:r.raw})`)), offRH:uniq(R.offRH.map(r=>`${r.label}: ${r.now} (baseline ${r.raw})`)),
-    base:tpBaseKey(P, s.base), moved: s.base!==P.base }; }
+    chg: (()=>{ const g=new Map(); for (const r of R.set){ const k=learnLabel(r.path); if (!g.has(k)) g.set(k, {label:k, from:[], to:[], now:[], sides:new Set(), off:false}); const x=g.get(k);
+        if (!x.from.includes(r.raw)) x.from.push(r.raw); if (!x.to.includes(r.to)) x.to.push(r.to); if (r.now!=null) x.now.push(r.now); const sd=r.path.match(/(Left|Right)(Front|Rear)/); if (sd) x.sides.add(sd[1]); if (r.off) x.off=true; }
+      const way=x=>{ if (x.from.length!==1 || x.to.length!==1) return ""; const a=learnNum(x.from[0]), b=learnNum(x.to[0]), u=String(x.to[0]).replace(/^[-+\d.\s]+/,"").trim(); if (!Number.isFinite(a)||!Number.isFinite(b)||a===b||!/\d/.test(x.to[0])) return "";
+        const d=Math.abs(b-a), n=d%1?d.toFixed(1):String(d); return /ride ?height/i.test(x.label) ? `${n} mm ${b<a?"lower":"higher"}` : `${b<a?"down":"up"} ${n}${u?" "+u:""}`; };
+      return [...g.values()].map(x=>({label:x.label, both:x.sides.size===2, way:way(x), from:x.from.join(" / "), to:x.to.join(" / "), now:uniq(x.now).join(" / "), done:!!R.lcs && !R.noSugg && x.now.length>0 && !x.off})); })(),
+    base:(()=>{ const B=tpBaseKey(P, s.base), m=new Map(); for (const r of R.set){ const k=learnLabel(r.path); if (!m.has(k)) m.set(k, []); if (!m.get(k).includes(r.to)) m.get(k).push(r.to); }
+      return B.map(b=>m.has(b.label) ? Object.assign({}, b, {to:m.get(b.label).join(" / ")}) : b); })(), moved: s.base!==P.base }; }
 // one step against the baseline and the garage (live when you're in the car here, else the open stint): what to set, put back, keep, and what's off
 function tpSheetRows(run, P, steps){
   const s=steps.find(x=>x.id===TP_SHOW) || steps.find(x=>!x.complete) || steps[steps.length-1]; if (!s || !P.base) return null;
