@@ -3015,7 +3015,7 @@ function render(){
     tyres: () => `<section><h2>Tyres <small>temperatures, pressures, camber and wear</small></h2><div class="two"><div>${tiresHTML(A,S,run)}</div><div>${wearHTML(A)}
         <div class="grid" style="margin-top:10px"><div class="stat"><div class="k">Rear wheelspin</div><div class="v">${fmt((A.spin||0)*100,0)}%</div><div class="s">of throttle &gt;60% samples</div></div>
         <div class="stat"><div class="k">Inside rear spin</div><div class="v">${fmt((A.inSpin||0)*100,0)}%</div><div class="s">while cornering on power</div></div></div></div></div></section>` + tyreModelHTML(run, A, S) + racePressureHTML(run, A, S) + safe(()=>modelRangeHTML(run, "Tyre models"),"range") + safe(()=>tyreThermalHTML(run, A, S),"thermal") + safe(()=>gripTempHTML(run, A, S),"griptemp") + safe(()=>tyreHeatHTML(run, A, S),"heat") + areaCards("tyres"),
-    aero: () => aeroHTML(run, A, S) + optimalRakeHTML(run, A, S) + rakeChartsHTML(run, A, S) + fastCornersHTML(run, A, S) + platSimHTML(run, A, S) + aeroCmpHTML(run, A, S) + rhcHTML(run, A, S) + rakePhasesHTML(run, A, S) + aeroMapHTML(run, A) + aeroOptionsHTML(run, A, S) + bumpHTML(run, A) + bottomHTML(run, A) + downforceHTML(run, A) + areaCards("aero"),
+    aero: () => (()=>{ try { return platStatusHTML(run, A, S); } catch(e){ console.error("platstatus", e); return ""; } })() + aeroHTML(run, A, S) + optimalRakeHTML(run, A, S) + rakeChartsHTML(run, A, S) + fastCornersHTML(run, A, S) + platSimHTML(run, A, S) + aeroCmpHTML(run, A, S) + rhcHTML(run, A, S) + rakePhasesHTML(run, A, S) + aeroMapHTML(run, A) + aeroOptionsHTML(run, A, S) + bumpHTML(run, A) + bottomHTML(run, A) + downforceHTML(run, A) + areaCards("aero"),
     balance: () => safeBalanceFeel(run, A) + `<section><h2>Balance <small>understeer angle in degrees (front wheel): higher = more understeer</small></h2>
    ${balanceReady(run,A)?"":`<div class="sugg p2" style="margin:0 0 10px"><h3>First read only</h3><p style="margin:4px 0 0">${balanceWait(run,A)}</p></div>`}
    <div class="grid" style="margin-bottom:10px">
@@ -3069,7 +3069,7 @@ function render(){
   wireProg(view==="programme" && PROG_RUN ? PROG_RUN : run);
   for (const [id,key] of [["lctarget","lcTarget"],["tyreloss","tyreLoss"],["racestart","startH"]]){ const el=$("#"+id); if (el) el.onchange=()=>{ RACE[key]=el.value===""?"":+el.value; PREFS.set("race", RACE); rerender(); }; }
   if (view==="aero"){ const ob=$("#openFull"); if (ob) ob.onclick=()=>{ current=+ob.dataset.i; LIVE.follow=false; render(); }; }
-  if (view==="aero" && A.rh){ drawRH(run,A,S); try { drawRake(run,A,S); } catch(e){ console.error("rake",e); } try { wirePlat(run,A,S); } catch(e){ console.error("plat",e); } { const sel=$("#aeroCmpSel"); if (sel) sel.onchange=()=>{ AERO_CMP=sel.value; render(); }; } try { wireRHC(run,A,S); } catch(e){ console.error("rhc",e); } }
+  if (view==="aero" && A.rh){ drawRH(run,A,S); try { drawRake(run,A,S); } catch(e){ console.error("rake",e); } try { drawWinMap(run,A); } catch(e){ console.error("winmap",e); } try { wirePlat(run,A,S); } catch(e){ console.error("plat",e); } { const sel=$("#aeroCmpSel"); if (sel) sel.onchange=()=>{ AERO_CMP=sel.value; render(); }; } try { wireRHC(run,A,S); } catch(e){ console.error("rhc",e); } }
   if (view==="laps") drawTrace(run,A);
   if (view==="dampers") for (const c of Object.keys(A.damp||{})) drawHist($("#dh"+c), A.damp[c].hist);
   wireSugInputs(run); wireRace(run); wireFfb(); wireTabs(); if (view==="learn") wireLearn(run);
@@ -3416,15 +3416,17 @@ function fastCornersHTML(run, A, S){
 // softer front springs with a bump rubber gap that catches the front at the top of the downforce window at speed:
 // the springs let the front sink as downforce builds, the rubber stops it there and holds it up under braking (the bump-rubber model from this stint)
 function frontPlatform(run, A, S){
-  const W=(PROFILES[run.carPath]||{}).aeroWin, M=rhModel(run,A); if (!W || !M || !M.F || !A.rh || !Number.isFinite(A.rh.front)) return null;
-  const spE=SET.spring(run,"front"), kF=spE?parseFloat(spE.raw):NaN, gE=SET.bump(run,"front"), g0=gE?parseFloat(gE.raw):NaN; if (!(kF>0) || !Number.isFinite(g0)) return null;
-  const f=A.rh.front, tgt=W.df.f[1]-0.5, at=(k2,g2)=>f-(M.F.squash(1,k2,g2)-M.F.now), out=[];
-  for (const k2 of [kF-40,kF-60,kF-80].map(k=>Math.round(k/20)*20).filter((k,i,a)=>k>0 && k<kF && a.indexOf(k)===i)){
-    const nat=at(k2,999);
-    if (nat>tgt){ let g2=g0; while (g2<g0+25 && at(k2,g2)>nat+0.2) g2+=1; out.push({k2, g2, f:at(k2,g2), reach:false}); continue; }
-    let best=null; for (let g2=Math.max(2,Math.round(g0-6)); g2<=g0+20; g2+=1){ const v=at(k2,g2); if (!best || Math.abs(v-tgt)<Math.abs(best.f-tgt)) best={g2, f:v}; }
-    out.push({k2, g2:best.g2, f:best.f, reach:true}); }
-  return {kF, g0, f0:f, tgt, win:W.df.f, opts:out}; }
+  const W=(PROFILES[run.carPath]||{}).aeroWin, C=platCal(run,A); if (!W || !C || !A.rh || !Number.isFinite(A.rh.front)) return null;
+  const d=platDefault(run,A), kF=d.kF, g0=d.gF; if (!(kF>0) || !Number.isFinite(g0)) return null;
+  const now=platState(run,A,S,d), fit=(A.splFit&&A.splFit.a)||1.3, spl=P=>Number.isFinite(C.splMin)&&Number.isFinite(P.brk.f)&&Number.isFinite(now.brk.f) ? C.splMin+(P.brk.f-now.brk.f)*fit : NaN, out=[];
+  const step=kF>=150?20:10;
+  for (const k2 of [kF-step, kF-2*step, kF-3*step, kF-4*step].filter(k=>k>0)){
+    let pick=null;
+    for (let g2=Math.max(2,g0-8); g2<=g0+12; g2+=1){ const P=platState(run,A,S,Object.assign({},d,{kF:k2, gF:g2})), s=spl(P);
+      if (P.top.f>=W.df.f[0]-0.25 && !(s<3)) pick={k2, g2, fc:P.fc.f, fcR:P.fc.r, top:P.top.f, brk:P.brk.f, spl:s, contact:P.contactF}; }
+    if (!pick){ const P=platState(run,A,S,Object.assign({},d,{kF:k2})); pick={k2, g2:g0, fc:P.fc.f, fcR:P.fc.r, top:P.top.f, brk:P.brk.f, spl:spl(P), contact:P.contactF, low:true}; }
+    pick.f=pick.fc; pick.reach=pick.fc<=W.df.f[1]+0.5; out.push(pick); }
+  return {kF, g0, f0:now.fc.f, fc0:now.fc.f, top0:now.top.f, brk0:now.brk.f, tgt:W.df.f[1], win:W.df.f, opts:out}; }
 // what gets the fast corners into the window: each option worked out from this stint (springs from the suspension model)
 function frontFixHTML(run, A, S, FC){
   const W=(PROFILES[run.carPath]||{}).aeroWin; if (!W || !FC.length) return "";
@@ -3434,10 +3436,9 @@ function frontFixHTML(run, A, S, FC){
   const spl=findSet(run,(p,k)=>k==="centerfrontsplitterheight"), splNow=spl?parseFloat(spl.raw):NaN, fit=A.splFit||{a:1.32,b:-0.24}, splMin=+S.minSplitter||0, minFS=+S.minFrontStatic||0;
   const add=(what,dF,dR,note)=>opts.push({what, F:f0+dF, R:r0+dR, note});
   if (Number.isFinite(kF) && !frontPlatform(run,A,S)) for (const k2 of [kF-30, kF-60].filter(k=>k>0)){ const d=dSq(k2); if (Number.isFinite(d)) add(`Front springs ${fmt(kF,0)} → ${fmt(k2,0)} N/mm`, -d, 0, "softer: the front sinks more at speed, the static height stays. Less front support: more roll and dive, and your spring sweep preferred stiffer. Worth one test step."); }
-  { const FP=frontPlatform(run,A,S); if (FP) for (const o of FP.opts){ const sh=o.f-FP.f0;
+  { const FP=frontPlatform(run,A,S); if (FP) for (const o of FP.opts){ const sh=o.fc-FP.fc0;
       add(`Front springs ${fmt(FP.kF,0)} → ${fmt(o.k2,0)} N/mm${o.g2!==FP.g0?` + bump rubber gap ${fmt(FP.g0,0)} → ${fmt(o.g2,0)} mm`:""}`, sh, 0,
-        o.reach ? `the softer springs let the front sink to about ${mm(o.f)} mm on the straights (window ${FP.win[0]}–${FP.win[1]}); the bump rubbers catch it there, so it doesn't stall the floor and still has support on the brakes and kerbs. One test step (in the programme).`
-          : `the front gets to about ${mm(o.f)} mm on the straights (window ${FP.win[0]}–${FP.win[1]})${o.g2!==FP.g0?`; the gap opens so the rubbers don't hold it up first`:""}. Less front support on the brakes and in roll${o.f>FP.win[1]+0.5?"; softer still would be needed for the window":""}.`); } }
+        `end of the straight: front ${mm(o.top)} mm (now ${mm(FP.top0)}); on the brakes ${mm(o.brk)} mm (now ${mm(FP.brk0)})${Number.isFinite(o.spl)?`, splitter ${mm(o.spl)} mm clear`:""}. ${o.g2!==FP.g0?(o.g2>FP.g0?"The bigger gap lets the front go lower before the rubbers hold it.":"The smaller gap catches the front sooner, so it doesn't go under the window at top speed or ground on the brakes."):""} Less front support in roll and on the brakes: one test step.`); } }
   if (Number.isFinite(splNow) && splMin){ const room=Math.max(0,(splNow-splMin)/fit.a); if (room>=0.3) add(`Front static −${mm(room)} mm (to the splitter minimum)`, -room, 0, `all the static drop the ${splMin} mm splitter rule leaves`); else opts.push({what:"Front static lower", F:NaN, R:NaN, note:`no room: the splitter is at ${mm(splNow)} mm against the ${splMin} mm minimum`}); }
   if (minFS && Number.isFinite(sF0)){ const room=Math.max(0,sF0-minFS); add(`Front static −${mm(room)} mm (to the ${mm(minFS)} mm tech minimum)`, -room, 0, "all the static drop the tech minimum leaves"); }
   if (r0<W.df.r[1]-0.5){ const d=Math.min(W.df.r[1]-0.5-r0, 4); add(`Rear static +${mm(d)} mm`, 0, d, "more rake: more of the downforce moves to the front (balance forward, sharper at speed); the rear stays in its window"); }
@@ -3554,6 +3555,56 @@ function wirePlat(run, A, S){
   $("#pltReset").onclick=()=>set(platDefault(run,A));
   const plan=PREFS.get("platplan|"+run.carPath+"|"+learnTrackOf(run)); document.querySelectorAll("[data-plt]").forEach(b=>b.onclick=()=>{ const o=plan.opts[+b.dataset.plt]; set(Object.assign(platDefault(run,A), {kF:o.k2, gF:o.g2, dR:plan.dR})); });
   drawPlat(run,A,S); }
+// ---------- the platform at a glance: front, rear and rake against their windows, and what would get them in ----------
+// "about in": within 1.5 mm of the window. Checked where it matters: the fast corners, the straights at speed, the end of the straight.
+function platStatusHTML(run, A, S){
+  if (!A.rh || !Number.isFinite(A.rh.front)) return ""; const W=(PROFILES[run.carPath]||{}).aeroWin; if (!W) return "";
+  const RW=rakeWindow(run,S), FC=fastCorners(run,A), C=platCal(run,A), med=a=>a.length?median(a):NaN;
+  const P={fc:{f:med(FC.map(c=>c.F)), r:med(FC.map(c=>c.R))}, st:{f:A.rh.front, r:A.rh.rear}, top:C?{f:C.F.a-C.F.c*C.vmax*C.vmax, r:C.R.a-C.R.c*C.vmax*C.vmax}:null};
+  const st=(v,w)=>{ if (!Number.isFinite(v)) return null; const d=v<w[0]?v-w[0]:v>w[1]?v-w[1]:0; return {v, d, k:d===0?"in":Math.abs(d)<=1.5?"near":"out"}; };
+  const cell=(x,unit)=>{ if (!x) return '<td class="muted">–</td>'; const col=x.k==="in"?"var(--good)":x.k==="near"?"#e0a030":"var(--os)";
+    return `<td><span style="display:inline-block;min-width:74px;padding:2px 8px;border-radius:10px;background:${col}22;color:${col};font-weight:700">${fmt(x.v,1)} ${unit}</span> <span class="muted" style="font-size:11.5px">${x.k==="in"?"in":x.k==="near"?`about in (${x.d>0?"+":""}${fmt(x.d,1)})`:`${fmt(Math.abs(x.d),1)} mm ${x.d>0?"high":"low"}`}</span></td>`; };
+  const rows=[["Fast corners", P.fc], ["Straights at speed", P.st], ["End of the straight", P.top]].filter(([,p])=>p && Number.isFinite(p.f));
+  const S1=rows.map(([k,p])=>({k, f:st(p.f,W.df.f), r:st(p.r,W.df.r), rk:RW?st(p.r-p.f,[RW.lo,RW.hi]):null}));
+  A._winPts={W, RW, fc:FC.map(c=>({n:c.name, f:c.F, r:c.R})), st:P.st, top:P.top, sug:null};
+  // the suggestion: the smallest static change (front only as low as the splitter / tech allows) that puts the straights in the middle of the windows
+  let sug=""; try { const x=rhcSolve(run,A,S,0);
+    // the front held up by the splitter / tech minimum: then the rake comes first, the rear up to 1.5 mm over its window
+    if (x && RW){ const c0=rhcCalc(run,A,S,x.dF,0,0); if (c0 && c0.fA>W.df.f[1]+0.25){ const rk=c0.rA-c0.fA, need=RW.lo+1.5-rk, mx=W.df.r[1]+1.5-c0.rA; if (need>0) x.dR=Math.round(Math.max(Math.min(need,mx), Math.min(x.dR,mx))*2)/2; } }
+    if (x && (Math.abs(x.dF)>=0.5 || Math.abs(x.dR)>=0.5)){ const c=rhcCalc(run,A,S,x.dF,x.dR,0), fcF=P.fc.f+x.dF, fcR=P.fc.r+x.dR; A._winPts.sug={dF:x.dF, dR:x.dR};
+      const lim = c.fA>W.df.f[1]+0.25 ? ` The front can't come down far enough statically (${c.splMin?`splitter ${c.splMin} mm minimum`:"tech minimum"}): softer front springs are the next lever (see Aero platform as a system).` : "";
+      sug=`<b>Suggested:</b> front static ${x.dF>0?"+":""}${fmt(x.dF,1)} mm, rear static ${x.dR>0?"+":""}${fmt(x.dR,1)} mm (both sides). Expected: on the straights front ${fmt(c.fA,1)} / rear ${fmt(c.rA,1)} mm, rake ${fmt(c.rA-c.fA,1)} mm; in the fast corners front ${fmt(fcF,1)} / rear ${fmt(fcR,1)} mm, rake ${fmt(fcR-fcF,1)} mm.${lim} Try it in the calculator below first.`; }
+    else sug="<b>The platform is about where it should be</b>: no static change needed for the straights."; } catch(e){}
+  const allIn=S1.every(s=>[s.f,s.r,s.rk].every(x=>!x || x.k!=="out"));
+  return `<section><h2>Aero platform at a glance <small>front, rear and rake against iRacing's max-downforce windows (front ${W.df.f[0]}–${W.df.f[1]}, rear ${W.df.r[0]}–${W.df.r[1]}${RW?`, rake ${fmt(RW.lo,0)} to ${fmt(RW.hi,0)}`:""} mm)</small></h2>
+    <div class="tablewrap"><table style="font-size:13px"><tr><th></th><th>Front</th><th>Rear</th><th>Rake (rear − front)</th></tr>
+    ${S1.map(s=>`<tr><td class="muted">${s.k}</td>${cell(s.f,"mm")}${cell(s.r,"mm")}${cell(s.rk,"mm")}</tr>`).join("")}</table></div>
+    <canvas id="winMap" style="margin-top:10px;max-width:640px"></canvas>
+    <div class="legend" style="font-size:12px"><span><i style="background:var(--good)"></i>max-downforce window (front × rear)</span><span><i style="background:var(--good);opacity:.35"></i>rake window</span><span>● fast corners (T#) · ■ straights · ▲ end of the straight${""} · hollow: with the suggestion</span></div>
+    <p style="margin:8px 0 0;font-size:13px">${allIn?"Everything's in or within 1.5 mm of its window. ":""}${sug}</p>
+    <p class="muted" style="font-size:12px;margin:4px 0 0">Green: in the window · amber: within 1.5 mm · orange: out. The fast corners are where the window earns lap time; at the end of the straight the car is at its lowest (in or a little under is fine, as long as the splitter stays clear). In slower fast corners (about 150 km/h) a GT3 sits higher than the window: there's much less downforce there.</p></section>`; }
+function drawWinMap(run, A){
+  const cv=$("#winMap"), Pt=A._winPts; if (!cv || !Pt) return; const {W, RW}=Pt;
+  const pts=[...Pt.fc.map(p=>({...p, s:"o"})), Pt.st&&{f:Pt.st.f, r:Pt.st.r, s:"s", n:"straights"}, Pt.top&&{f:Pt.top.f, r:Pt.top.r, s:"t", n:"end of straight"}].filter(p=>p && Number.isFinite(p.f) && Number.isFinite(p.r));
+  const sh=Pt.sug ? pts.map(p=>({...p, f:p.f+Pt.sug.dF, r:p.r+Pt.sug.dR, hollow:true})) : [];
+  const all=[...pts,...sh], fx=[...all.map(p=>p.f), W.df.f[0], W.df.f[1]], ry=[...all.map(p=>p.r), W.df.r[0], W.df.r[1]];
+  const xr=[Math.floor(Math.min(...fx)-3), Math.ceil(Math.max(...fx)+3)], yr=[Math.floor(Math.min(...ry)-3), Math.ceil(Math.max(...ry)+3)];
+  const [c,w,h]=canvasCtx(cv, 320), m={l:44,r:12,t:12,b:30}, X=x=>m.l+(x-xr[0])/(xr[1]-xr[0])*(w-m.l-m.r), Y=y=>h-m.b-(y-yr[0])/(yr[1]-yr[0])*(h-m.t-m.b);
+  c.font="11px system-ui"; c.lineWidth=1;
+  // the rake window: the band between rear = front + lo and rear = front + hi
+  if (RW){ c.fillStyle=css("--good")+"18"; c.beginPath(); c.moveTo(X(xr[0]),Y(xr[0]+RW.lo)); c.lineTo(X(xr[1]),Y(xr[1]+RW.lo)); c.lineTo(X(xr[1]),Y(xr[1]+RW.hi)); c.lineTo(X(xr[0]),Y(xr[0]+RW.hi)); c.closePath(); c.save(); c.beginPath(); c.rect(m.l,m.t,w-m.l-m.r,h-m.t-m.b); c.clip(); c.beginPath(); c.moveTo(X(xr[0]),Y(xr[0]+RW.lo)); c.lineTo(X(xr[1]),Y(xr[1]+RW.lo)); c.lineTo(X(xr[1]),Y(xr[1]+RW.hi)); c.lineTo(X(xr[0]),Y(xr[0]+RW.hi)); c.closePath(); c.fill(); c.restore(); }
+  // the max-downforce window: front and rear both in
+  c.fillStyle=css("--good")+"40"; c.fillRect(X(W.df.f[0]), Y(W.df.r[1]), X(W.df.f[1])-X(W.df.f[0]), Y(W.df.r[0])-Y(W.df.r[1])); c.strokeStyle=css("--good"); c.strokeRect(X(W.df.f[0]), Y(W.df.r[1]), X(W.df.f[1])-X(W.df.f[0]), Y(W.df.r[0])-Y(W.df.r[1]));
+  c.fillStyle=css("--good"); c.fillText("max downforce", X(W.df.f[0])+3, Y(W.df.r[1])-4);
+  c.strokeStyle=css("--grid"); c.fillStyle=css("--muted");
+  for (let i=0;i<=5;i++){ const x=xr[0]+(xr[1]-xr[0])*i/5, y=yr[0]+(yr[1]-yr[0])*i/5; c.fillText(x.toFixed(0), X(x)-6, h-12); c.fillText(y.toFixed(0), 6, Y(y)+4); }
+  c.fillText("front ride height at speed (mm) →", m.l+4, h-1); c.save(); c.translate(11, m.t+120); c.rotate(-Math.PI/2); c.fillText("rear (mm) →", 0, 0); c.restore();
+  // arrows from now to the suggestion
+  if (sh.length){ c.strokeStyle=css("--muted")+"99"; c.setLineDash([3,3]); pts.forEach((p,i)=>{ c.beginPath(); c.moveTo(X(p.f),Y(p.r)); c.lineTo(X(sh[i].f),Y(sh[i].r)); c.stroke(); }); c.setLineDash([]); }
+  const mark=p=>{ const x=X(p.f), y=Y(p.r), col=p.s==="o"?css("--os"):p.s==="s"?css("--us"):css("--ink"); c.strokeStyle=c.fillStyle=col; c.lineWidth=1.6; c.beginPath();
+    if (p.s==="o") c.arc(x,y,4,0,7); else if (p.s==="s") c.rect(x-4,y-4,8,8); else { c.moveTo(x,y-5); c.lineTo(x+5,y+4); c.lineTo(x-5,y+4); c.closePath(); }
+    p.hollow ? c.stroke() : c.fill(); if (!p.hollow && p.n && p.s==="o"){ c.fillStyle=css("--muted"); c.fillText(p.n, x+6, y-4); } };
+  pts.forEach(mark); sh.forEach(mark); }
 function rhcHTML(run, A, S){
   if (!A.rh || !Number.isFinite(A.rh.front)) return "";
   const W=(PROFILES[run.carPath]||{}).aeroWin;
@@ -6860,13 +6911,13 @@ function tpSteps(run, base, kind){
   // driven and scored on the lap like everything else; the best becomes the baseline. Worked out once from a stint (kept for the programme).
   if (kind!=="track"){ try { const sp=first(spring("Front")), gp=first(ent(/(Left|Right)Front\.BumpRubberGap$/i));
     if (sp && gp && !/TorsionBar/i.test(sp.path) && (PROFILES[run.carPath]||{}).aeroWin){
-      const pk="platplan|"+run.carPath+"|"+learnTrackOf(run); let plan=PREFS.get(pk);
+      const pk="platplan|"+run.carPath+"|"+learnTrackOf(run); let plan=PREFS.get(pk); if (plan && plan.v!==2) { const started=Object.values(LEARN||{}).some(r=>r.car===run.carPath && r.track===learnTrackOf(run) && r.date>plan.made && r.setup && Object.entries(r.setup).some(([k,v])=>/Front[A-Za-z]*\.SpringRate$/.test(k.replace(/(Left|Right)(Front|Rear)/,"$2")) && plan.opts.some(o=>Math.abs(learnNum(v)-o.k2)<1e-6))); if (!started){ plan=null; PREFS.set(pk, undefined); } }
       if (!plan && run.A && run.A.rh){ const S0=settingsFor(run), FP=frontPlatform(run, run.A, S0), W=(PROFILES[run.carPath]||{}).aeroWin;
         if (FP && FP.opts.length){ const dR=Math.max(-4, Math.min(4, Math.round(((W.df.r[0]+W.df.r[1])/2 - run.A.rh.rear)*2)/2));
-          plan={made:Date.now(), k0:FP.kF, g0:FP.g0, f0:FP.f0, win:FP.win, rWin:W.df.r, r0:run.A.rh.rear, dR, opts:FP.opts.map(o=>({k2:o.k2, g2:o.g2!=null?o.g2:FP.g0, f:o.f, reach:o.reach}))}; PREFS.set(pk, plan); } }
+          plan={made:Date.now(), v:2, k0:FP.kF, g0:FP.g0, f0:FP.f0, win:FP.win, rWin:W.df.r, r0:run.A.rh.rear, dR, opts:FP.opts.slice(0,3).map(o=>({k2:o.k2, g2:o.g2!=null?o.g2:FP.g0, f:o.fc, top:o.top, reach:o.reach}))}; PREFS.set(pk, plan); } }
       if (plan){ plan.opts.forEach((o,i)=>S.push({id:`plat${i+1}`, block:"Aero platform", label:`Platform ${i+1}: front springs ${o.k2}${o.g2!==plan.g0?`, bump gap ${o.g2} mm`:""}${plan.dR?`, rear ${plan.dR>0?"+":""}${plan.dR} mm`:""}`,
           re:/Front[A-Za-z]*\.(SpringRate|BumpRubberGap)$|Rear[A-Za-z]*\.RideHeight$/i, kind:"platform", tSpring:o.k2, tGap:o.g2, g0:plan.g0, dR:plan.dR, allow:/Camber|Toe|PerchOffset|SpringPerch/i,
-          how:`One aero platform, everything together: front springs to <b>${o.k2} N/mm</b>${o.g2!==plan.g0?` and the front bump rubber gap to <b>${o.g2} mm</b>`:` (bump rubber gap stays ${plan.g0} mm)`}, front static ride height back to the baseline with the perch offsets${plan.dR?`, and the rear static ride height <b>${plan.dR>0?"+":""}${plan.dR} mm</b> on both sides (for the rake: the rear to the middle of its window at speed)`:""}. Nothing else. Expected at speed: front about ${fmt(o.f,1)} mm (window ${plan.win[0]}–${plan.win[1]}${o.reach?"":"; as close as these springs get"}), rear about ${fmt(plan.r0+plan.dR,1)} mm (window ${plan.rWin[0]}–${plan.rWin[1]}). Shows whether the floor working is worth more than the stiffer springs' support.`}));
+          how:`One aero platform, everything together: front springs to <b>${o.k2} N/mm</b>${o.g2!==plan.g0?` and the front bump rubber gap to <b>${o.g2} mm</b>`:` (bump rubber gap stays ${plan.g0} mm)`}, front static ride height back to the baseline with the perch offsets${plan.dR?`, and the rear static ride height <b>${plan.dR>0?"+":""}${plan.dR} mm</b> on both sides (for the rake: the rear to the middle of its window at speed)`:""}. Nothing else. Expected: front about ${fmt(o.f,1)} mm in the fast corners${o.top!=null?` and ${fmt(o.top,1)} mm at the end of the straight`:""} (window ${plan.win[0]}–${plan.win[1]}${o.reach?"":"; as close as these springs get"}), rear about ${fmt(plan.r0+plan.dR,1)} mm (window ${plan.rWin[0]}–${plan.rWin[1]}). Shows whether the floor working is worth more than the stiffer springs' support.`}));
         S.push({id:"platBase", block:"Aero platform", label:"Baseline check (if the track changed)", kind:"base", cond:/^plat\d/, lapsN:3, how:tpCheckHow});
         S.push({id:"platApp", block:"Aero platform", label:"Aero platform: the best one", kind:"between", re:/Front[A-Za-z]*\.(SpringRate|BumpRubberGap)$|Rear[A-Za-z]*\.RideHeight$/i,
           how:"Drive the platform steps first: this step then sets the platform that scored best (lap time with the track temperature taken out, balance, slides, tyres, ride height at speed against the window), or keeps the current one. It becomes the baseline for the ride height, bars and dampers."}); } } } catch(e){ console.error("platform steps", e); } }
