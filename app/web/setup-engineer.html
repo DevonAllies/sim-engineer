@@ -237,6 +237,8 @@ const PROFILES = {
       {test:(p,k)=>isDamp(p), min:1, max:16},
       {test:(p,k)=>isTC(k)||isABS(k), min:2, max:7},
       {test:(p,k)=>k==="frictionfaces", min:6, max:12},            // Acura: 6 is the minimum
+      {test:(p,k)=>k==="springrate"&&p.includes("front"), min:160, max:320},   // the garage's range (spring sweeps)
+      {test:(p,k)=>k==="springrate"&&p.includes("rear"), min:120, max:280},
       {test:(p,k)=>k==="startingpressure", min:159, max:400},
     ] },
   mercedesamgevogt3: { name:"Mercedes-AMG GT3 2020", manual:"Mercedes-AMG GT3 2020 user manual",
@@ -3166,9 +3168,9 @@ function setupOrderHTML(run, A){
   // 1. aero platform: the window check and the change that gets it in
   { const W=(PROFILES[run.carPath]||{}).aeroWin, ar=A.rh ? run : [...runs].reverse().find(r=>r.carPath===run.carPath && r.A && r.A.rh && !r.live), AA=ar&&ar.A;
     if (W && AA){ const FC=fastCorners(ar,AA), f=FC.length?median(FC.map(c=>c.F)):AA.rh.front, r=FC.length?median(FC.map(c=>c.R)):AA.rh.rear, RW=rakeWindow(ar,S), off=(v,w)=>v>w[1]+1.5?v-w[1]:v<w[0]-1.5?v-w[0]:0, oF=off(f,W.df.f), oR=off(r,W.df.r), rk=r-f, rOut=RW&&(rk<RW.lo-1.5||rk>RW.hi+1.5);
-      let how=""; if (oF>0){ const FP=frontPlatform(ar,AA,S), o=FP&&[...FP.opts].filter(x=>x.fc<FP.fc0-0.5).sort((a,b)=>a.fc-b.fc)[0]; if (FP && !o) how=" Softer front springs don't bring it down here: the bump rubbers would have to hold the front up at top speed to keep the splitter clear. The front can't get much lower in these corners without losing that."; if (o) how=` Try <b>front springs ${fmt(FP.kF,0)} → ${fmt(o.k2,0)}${o.g2!==FP.g0?` with the bump gap ${fmt(FP.g0,0)} → ${fmt(o.g2,0)} mm`:""}</b>: fast corners front about ${fmt(o.fc,1)} mm (now ${fmt(FP.fc0,1)}).`; }
+      let how=""; if (oF>0){ const FP=frontPlatform(ar,AA,S), o=FP&&[...FP.opts].filter(x=>x.fc<FP.fc0-0.5).sort((a,b)=>a.fc-b.fc)[0]; if (FP && FP.atMin) how=` The front springs are already at the garage's softest (${fmt(FP.kMin,0)} N/mm) and the static front at the splitter limit: on this car that's as low as the front goes in these corners. Work on the rake (rear) and the balance from here.`; else if (FP && !o) how=" Softer front springs don't bring it down here: the bump rubbers would have to hold the front up at top speed to keep the splitter clear. The front can't get much lower in these corners without losing that."; if (o) how=` Try <b>front springs ${fmt(FP.kF,0)} → ${fmt(o.k2,0)}${o.g2!==FP.g0?` with the bump gap ${fmt(FP.g0,0)} → ${fmt(o.g2,0)} mm`:""}</b>: fast corners front about ${fmt(o.fc,1)} mm (now ${fmt(FP.fc0,1)}).`; }
       const ok=!oF && !oR && !rOut;
-      items.push({n:"Aero platform", ok, t: ok ? "front, rear and rake in (or within 1.5 mm of) the window in the fast corners." : `fast corners: front ${oF?`${fmt(Math.abs(oF),0)} mm ${oF>0?"high":"low"}`:"in"}, rear ${oR?`${fmt(Math.abs(oR),0)} mm ${oR>0?"high":"low"}`:"in"}, rake ${rOut?"out":"in"}${ar!==run?" (last full-data stint)":""}.${how}`, go:"aero"}); }
+      items.push({n:"Aero platform", ok: ok ? true : (/already at the garage's softest/.test(how) && !oR && !rOut ? null : false), t: ok ? "front, rear and rake in (or within 1.5 mm of) the window in the fast corners." : `fast corners: front ${oF?`${fmt(Math.abs(oF),0)} mm ${oF>0?"high":"low"}`:"in"}, rear ${oR?`${fmt(Math.abs(oR),0)} mm ${oR>0?"high":"low"}`:"in"}, rake ${rOut?"out":"in"}${ar!==run?" (last full-data stint)":""}.${how}`, go:"aero"}); }
     else if (W && !A.rh) items.push({n:"Aero platform", ok:null, t:"ride heights come with the full-data stint, after you get out of the car.", go:"aero"}); }
   // 2. mechanical balance against your preference
   { const P=(()=>{ try { return balPref(run).total||0; } catch(e){ return 0; } })(), lo=US_BASE.loose+P, hi=US_BASE.push+P, b=["entry","mid","exit"].map(k=>[k,learnPhase(A,k)]).filter(([,v])=>Number.isFinite(v)), bad=b.filter(([,v])=>v>hi||v<lo);
@@ -3511,13 +3513,14 @@ function frontPlatform(run, A, S){
   const d=platDefault(run,A), kF=d.kF, g0=d.gF; if (!(kF>0) || !Number.isFinite(g0)) return null;
   const now=platState(run,A,S,d), fit=(A.splFit&&A.splFit.a)||1.3, spl=P=>Number.isFinite(C.splMin)&&Number.isFinite(P.brk.f)&&Number.isFinite(now.brk.f) ? C.splMin+(P.brk.f-now.brk.f)*fit : NaN, out=[];
   const step=kF>=150?20:10;
-  for (const k2 of [kF-step, kF-2*step, kF-3*step, kF-4*step].filter(k=>k>0)){
+  const spE=SET.spring(run,"front"), Lk=spE?limitsFor(run,spE):null, kMin=Lk&&Number.isFinite(Lk.min)?Lk.min:0;
+  for (const k2 of [kF-step, kF-2*step, kF-3*step, kF-4*step].filter(k=>k>0 && k>=kMin)){
     let pick=null;
     for (let g2=Math.max(2,g0-8); g2<=g0+12; g2+=1){ const P=platState(run,A,S,Object.assign({},d,{kF:k2, gF:g2})), s=spl(P);
       if (P.top.f>=W.df.f[0]-0.25 && !(s<3)) pick={k2, g2, fc:P.fc.f, fcR:P.fc.r, top:P.top.f, brk:P.brk.f, spl:s, contact:P.contactF}; }
     if (!pick) continue;   // no gap keeps it in the window at top speed with the splitter clear: not an option
     pick.f=pick.fc; pick.reach=pick.fc<=W.df.f[1]+0.5; out.push(pick); }
-  return {kF, g0, f0:now.fc.f, fc0:now.fc.f, top0:now.top.f, brk0:now.brk.f, tgt:W.df.f[1], win:W.df.f, opts:out}; }
+  return {kF, g0, f0:now.fc.f, fc0:now.fc.f, top0:now.top.f, brk0:now.brk.f, tgt:W.df.f[1], win:W.df.f, opts:out, kMin, atMin:kMin>0 && kF<=kMin}; }
 // what gets the fast corners into the window: each option worked out from this stint (springs from the suspension model)
 function frontFixHTML(run, A, S, FC){
   const W=(PROFILES[run.carPath]||{}).aeroWin; if (!W || !FC.length) return "";
@@ -3527,6 +3530,7 @@ function frontFixHTML(run, A, S, FC){
   const spl=findSet(run,(p,k)=>k==="centerfrontsplitterheight"), splNow=spl?parseFloat(spl.raw):NaN, fit=A.splFit||{a:1.32,b:-0.24}, splMin=+S.minSplitter||0, minFS=+S.minFrontStatic||0;
   const add=(what,dF,dR,note)=>opts.push({what, F:f0+dF, R:r0+dR, note});
   if (Number.isFinite(kF) && !frontPlatform(run,A,S)) for (const k2 of [kF-30, kF-60].filter(k=>k>0)){ const d=dSq(k2); if (Number.isFinite(d)) add(`Front springs ${fmt(kF,0)} → ${fmt(k2,0)} N/mm`, -d, 0, "softer: the front sinks more at speed, the static height stays. Less front support: more roll and dive, and your spring sweep preferred stiffer. Worth one test step."); }
+  { const FP0=frontPlatform(run,A,S); if (FP0 && FP0.atMin) opts.push({what:"Front springs softer", F:NaN, R:NaN, note:`not possible: already at the garage's softest (${fmt(FP0.kMin,0)} N/mm)`}); }
   { const FP=frontPlatform(run,A,S); if (FP) for (const o of FP.opts){ const sh=o.fc-FP.fc0;
       add(`Front springs ${fmt(FP.kF,0)} → ${fmt(o.k2,0)} N/mm${o.g2!==FP.g0?` + bump rubber gap ${fmt(FP.g0,0)} → ${fmt(o.g2,0)} mm`:""}`, sh, 0,
         `end of the straight: front ${mm(o.top)} mm (now ${mm(FP.top0)}); on the brakes ${mm(o.brk)} mm (now ${mm(FP.brk0)})${Number.isFinite(o.spl)?`, splitter ${mm(o.spl)} mm clear`:""}. ${o.g2!==FP.g0?(o.g2>FP.g0?"The bigger gap lets the front go lower before the rubbers hold it.":"The smaller gap catches the front sooner, so it doesn't go under the window at top speed or ground on the brakes."):""} Less front support in roll and on the brakes: one test step.`); } }
