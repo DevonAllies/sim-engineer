@@ -6779,7 +6779,7 @@ function tpSheetRows(run, P, steps){
     const off = lowF || now!=null && st!=="free" && st!=="adjust" && !(isSpr && /Camber|Toe/i.test(key)) && (st==="set" ? (/RideHeight$/i.test(key) && Number.isFinite(learnNum(now)) && Number.isFinite(learnNum(to)) ? Math.abs(learnNum(now)-learnNum(to))>1 : /^-?\d/.test(to) ? now!==to : /min$/.test(s.kind) ? !(learnNum(now)<learnNum(raw)) : /max$/.test(s.kind) ? !(learnNum(now)>learnNum(raw)) : now===raw) : (/RideHeight$/i.test(key) && Number.isFinite(learnNum(now)) ? Math.abs(learnNum(now)-learnNum(raw))>2 : now!==raw));
     const sd=path.match(/(Left|Right)(Front|Rear)/), label=sd?`${sd[1][0]}${sd[2][0]} ${pretty(key).toLowerCase()}`:learnLabel(path);
     return {label, path, parts:path.split("."), key, raw, to, st, note, now, off}; });
-  const set=rows.filter(r=>r.st==="set"), keepN=rows.filter(r=>r.st==="keep").length, off=rows.filter(r=>r.off && !/RideHeight$/i.test(r.key)), offRH=rows.filter(r=>r.off && /RideHeight$/i.test(r.key));
+  const set=rows.filter(r=>r.st==="set"), keepN=rows.filter(r=>r.st==="keep").length, rhNeed=s.kind==="base" && !!s.after, off=rows.filter(r=>r.off && (rhNeed || !/RideHeight$/i.test(r.key))), offRH=rhNeed ? [] : rows.filter(r=>r.off && /RideHeight$/i.test(r.key));
   const noSugg = s.kind==="between" && !set.length;
   return {s, rows, lcs, src, isSpr, set, keepN, off, offRH, noSugg};
 }
