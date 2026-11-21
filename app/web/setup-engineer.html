@@ -3071,6 +3071,7 @@ function render(){
   wireProg(view==="programme" && PROG_RUN ? PROG_RUN : run);
   for (const [id,key] of [["lctarget","lcTarget"],["tyreloss","tyreLoss"],["racestart","startH"]]){ const el=$("#"+id); if (el) el.onchange=()=>{ RACE[key]=el.value===""?"":+el.value; PREFS.set("race", RACE); rerender(); }; }
   document.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>{ view=b.dataset.go; render(); });
+  { const lf=$("#loadFullNow"); if (lf) lf.onclick=()=>{ lf.disabled=true; lf.textContent="Loading…"; loadStintIbt(run, 0, -1, true); }; }
   if (view==="aero" || view==="dampers"){ const ob=$("#openFull"); if (ob) ob.onclick=()=>{ current=+ob.dataset.i; LIVE.follow=false; render(); }; }
   if (view==="aero" && A.rh){ drawRH(run,A,S); try { drawRake(run,A,S); } catch(e){ console.error("rake",e); } { const rs=$("#rakeCmpSel"); if (rs) rs.onchange=()=>{ RAKE_CMP=rs.value||null; render(); }; } try { drawWinMap(run,A); } catch(e){ console.error("winmap",e); } try { wirePlat(run,A,S); } catch(e){ console.error("plat",e); } { const sel=$("#aeroCmpSel"); if (sel) sel.onchange=()=>{ AERO_CMP=sel.value; render(); }; } try { wireRHC(run,A,S); } catch(e){ console.error("rhc",e); } }
   if (view==="laps") drawTrace(run,A);
@@ -4067,7 +4068,7 @@ function aeroOptionsHTML(run, A, S){
   </section>`;
 }function aeroHTML(run, A, S){
   if (!A.rh){ const full=[...runs].reverse().find(r=>r!==run && r.carPath===run.carPath && !r.live && r.ch && r.ch.LFrideHeight);
-    return run.live ? `<section><p style="margin:0">This is the <b>live</b> stint: iRacing doesn't send ride heights live, only in the .ibt file it saves when you get out of the car. That stint then appears at the top as <b>"Stint … · full data"</b>, with everything on this page.</p>${full?`<p style="margin:8px 0 0"><button id="openFull" data-i="${runs.indexOf(full)}" style="padding:3px 12px">Open ${esc(full.short)}</button></p>`:""}</section>`
+    return run.live ? `<section><p style="margin:0">This is the <b>live</b> stint: iRacing doesn't send ride heights live, only in the .ibt file it saves when you get out of the car. That stint then appears at the top as <b>"Stint … · full data"</b>, with everything on this page.${run.ended?(run.ibtWaiting?" <b>Waiting for iRacing to finish the file</b>: get out of the car (to the garage) and it loads by itself.":""):" It loads when this stint ends and you get out of the car."}</p>${run.ended?`<p style="margin:8px 0 0"><button id="loadFullNow" style="padding:3px 12px">Load the full data now</button> <span class="muted" style="font-size:12px">what iRacing has written so far</span></p>`:""}${full?`<p style="margin:8px 0 0"><button id="openFull" data-i="${runs.indexOf(full)}" style="padding:3px 12px">Open ${esc(full.short)}</button></p>`:""}</section>`
       : `<section><p class="muted">No ride-height data in this run.</p></section>`; }
   const st = end => { const v=run.setupFlat.filter(e=>e.key.toLowerCase()==="rideheight" && e.path.toLowerCase().includes(end)).map(e=>parseFloat(e.raw)); return v.length? mean(v) : NaN; };
   const sF=st("front"), sR=st("rear"), L=A.lapRH||[], avg=k=>mean(L.filter(l=>l.rep).map(l=>l[k]).filter(Number.isFinite));
@@ -4707,17 +4708,19 @@ function learnLive(run){
     learnRecord(run, A); try { trShare(run).catch(()=>{}); } catch(e){} } catch(e){}
 }
 // the .ibt iRacing saved for a live stint: same car, written in the last few minutes, not loaded yet
-async function loadStintIbt(run, tries, lastSize){
-  const again = sz => { if (tries<40) setTimeout(()=>loadStintIbt(run, tries+1, sz), 15000); };
+async function loadStintIbt(run, tries, lastSize, force){
+  if (run.fullLoaded) return; run.ibtWaiting=true;
+  const again = sz => { if (tries<720 && !run.fullLoaded) setTimeout(()=>loadStintIbt(run, tries+1, sz), 15000); else run.ibtWaiting=false; };
   try {
     const d=await (await fetch("/api/files",{cache:"no-store"})).json(), now=Date.now();
-    const f=(d.files||[]).find(x=>x.name.startsWith(run.carPath+"_") && x.size>1e6 && !runs.some(r=>r.name===x.name) && now-new Date(x.time.replace(" ","T")).getTime() < 15*60000);
+    const endT=run.endedAt||now, ts=x=>new Date(x.time.replace(" ","T")).getTime(), f=(d.files||[]).filter(x=>x.name.startsWith(run.carPath+"_") && x.size>1e6 && !runs.some(r=>r.name===x.name) && (force || ts(x)>=endT-2*60000)).sort((a,b)=>ts(b)-ts(a))[0];
     // iRacing finishes the file when you leave the car: wait until it has stopped growing
-    if (!f || f.size!==lastSize || (LIVE.latest && LIVE.latest.IsOnTrack)) return again(f ? f.size : 0);
+    if (!f) return again(0);
+    if (!force && (f.size!==lastSize || (LIVE.latest && LIVE.latest.IsOnTrack))) return again(f.size);
     const r0=await fetch("/api/file?name="+encodeURIComponent(f.name)); if (!r0.ok) return;
     const r=finishRun(parseIBT(await r0.arrayBuffer(), f.name), f.name);
     r.short = run.short.replace(/^Live/,"Stint").replace(" ✓","") + " · full data";
-    runs.push(r);
+    runs.push(r); run.fullLoaded=true; run.ibtWaiting=false;
     if (runs[current]===run) current=runs.length-1;   // you were looking at that stint: show the full-data version
     learnLive(r);
     try { const done=JSON.parse(localStorage.getItem(SCAN_KEY)||"{}"); done[f.name+"|"+f.size]=1; localStorage.setItem(SCAN_KEY, JSON.stringify(done)); } catch(e){}
@@ -4726,7 +4729,7 @@ async function loadStintIbt(run, tries, lastSize){
 }
 function endStint(reason){
   const run=LIVE.run; if (!run || run.ended) return;
-  run.ended = true; run.endReason = reason; run.A = null;
+  run.ended = true; run.endReason = reason; run.A = null; run.endedAt = Date.now();
   if (run.lapsDone<1){ const i=runs.indexOf(run); runs.splice(i,1); if (current>=runs.length) current=Math.max(0,runs.length-1); LIVE.run=null; }
   else { run.short += " ✓";
     // back in the garage after driving: every tab shows this stint, even if you'd opened a recording before (and later stints follow again)
