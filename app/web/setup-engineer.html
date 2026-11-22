@@ -47,6 +47,11 @@ th{color:var(--muted);font-weight:500;font-size:12px}
 .sugg{border:1px solid var(--line);border-left:4px solid var(--muted);border-radius:8px;padding:12px 14px;margin:10px 0}
 .sugg.p3{border-left-color:var(--bad)}.sugg.p2{border-left-color:var(--warn)}.sugg.p1{border-left-color:var(--good)}
 .sugg h3{margin:0 0 4px;font-size:15px}
+details.info{margin:8px 0 0;font-size:13px}
+details.info>summary{cursor:pointer;color:var(--muted);font-size:12px;list-style:none;display:inline-block;padding:2px 10px;border:1px solid var(--line);border-radius:12px;user-select:none}
+details.info>summary::-webkit-details-marker{display:none}
+details.info[open]>summary{color:var(--ink);margin-bottom:6px}
+details.info>p,details.info>div{margin:6px 0}
 .sugg .chg{font-family:ui-monospace,Consolas,monospace;background:var(--chip);padding:6px 8px;border-radius:6px;margin:6px 0;white-space:pre-wrap}
 .sugg .why{color:var(--muted)}
 .tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;background:var(--chip);color:var(--muted);margin-right:6px;text-transform:uppercase;letter-spacing:.04em}
@@ -876,11 +881,11 @@ function analyze(run){
       A.dfCal = cf!==1 ? {cf, bTrue} : null;
       const est = j => { let F=0,R=0; for (const [c] of C4){ const d=base[c]-RH[c][j]*1000; const f=load(c,d); if (c[1]==="F") F+=f; else R+=f; } return [F,R]; };
       const fast=[], all=[]; for (const j of idx){ const s=ch.Speed[j]*3.6; if (Math.abs(ch.LongAccel[j])>2) continue;
-        if (s>140){ const [F,R]=est(j); all.push([F,R,s,j]); if (s>200 && Math.abs(ch.LatAccel[j])<3) fast.push([F,R]); } }
+        if (s>140){ const [F,R]=est(j); all.push([F,R,s,j]); if (s>200 && Math.abs(ch.LatAccel[j])<3) fast.push([F,R,s]); } }
       if (fast.length>30 && Number.isFinite(base.LF)){
         const mF=median(fast.map(x=>x[0])), mR=median(fast.map(x=>x[1]));
         const aF=median(all.map(x=>x[0])), aR=median(all.map(x=>x[1]));
-        A.aero = {fastF:mF, fastR:mR, fastPct:mF/(mF+mR), lapF:aF, lapR:aR, lapPct:aF/(aF+aR), base, keff, load, n:fast.length};
+        A.aero = {fastF:mF, fastR:mR, fastPct:mF/(mF+mR), lapF:aF, lapR:aR, lapPct:aF/(aF+aR), base, keff, load, n:fast.length, df200:median(fast.map(x=>(x[0]+x[1])*40000/(x[2]*x[2])))};
       }
     }
   }
@@ -2062,8 +2067,8 @@ const TABS = [
 // the session windows in groups, in the order you'd use them: what to do, how you drove, the car area by area, the race, the data
 const TAB_GROUPS = [
   ["This stint", ["home","changes","compare"]],
+  ["Car",        ["aero","balance","tyres","brakes","dampers"]],
   ["Driver",     ["gp","graphs"]],
-  ["Car",        ["balance","tyres","aero","brakes","dampers"]],
   ["Race",       ["hanna"]],
   ["Data & help",["laps","ffb","guide"]],
   ["Testing",    ["programme"]],
@@ -2991,6 +2996,13 @@ function showPanels(){
   { const p=$("#p-drills"); if (p){ const was=!p.classList.contains("hidden"); p.classList.toggle("hidden", view!=="drills"); if (view==="drills" && !was) renderDrills(); } }
   $("#sessbar").classList.toggle("hidden", !isA || runs.length<2);
 }
+// visual first: each section shows its charts, tiles and tables; the long text folds into an "ⓘ Explain" drop-down at the bottom of it
+const infoBox = (title, html) => `<details class="info"><summary>ⓘ ${title}</summary><p>${html}</p></details>`;
+function infoize(root){
+  if (PREFS.get("explainOpen")) return;
+  [...root.querySelectorAll("section")].slice(1).forEach(sec=>{
+    const cand=[...sec.querySelectorAll("p, .note")].filter(p=>!p.closest(".sugg, .stat, table, details, .legend, [data-keep], .areas") && !p.matches("[data-keep]") && !p.querySelector("button, select, input, canvas, svg, textarea") && p.innerText.trim().length>50);
+    if (!cand.length) return; const d=document.createElement("details"); d.className="info"; d.innerHTML="<summary>ⓘ Explain</summary>"; cand.forEach(p=>d.appendChild(p)); sec.appendChild(d); }); }
 function render(){
   const out=$("#out"); out.innerHTML="";
   const isA = TABS.some(t=>t[0]===view);
@@ -3013,7 +3025,7 @@ function render(){
   renderNav(); showPanels();
   const badge = k => { const n=AREAS[k]? areaSug(run,k).filter(s=>s.pr>=2).length : 0; return n? ` <span class="badge">${n}</span>` : ""; };
   setTimeout(fillPdfOpen, 0);   // the "open with" choice next to the export button
-  const head = `<section><span style="float:right;display:flex;gap:6px;align-items:center"><button id="pdfbtn" class="ghost" style="padding:5px 12px">Export PDF report</button><label class="muted" style="font-size:12px" title="Adds the lap-by-lap ride heights and tyre temperatures to the report (the app shows the averages)"><input type="checkbox" id="pdflaps" ${PREFS.get("pdfLaps")?"checked":""}> lap-by-lap tables</label>${window.se&&window.se.pdfApps?`<label class="muted" style="font-size:12px">open with <select id="pdfopen" style="padding:3px 6px"></select></label>`:""}</span><h2>${run.carName} <small>${wi.TrackDisplayName||""} ${typeof wi.TrackConfigName==="string"?wi.TrackConfigName:""} · ${run.sessionType} · best ${fmtTime(A.best.time)} · ${A.rep.length} laps used · track ${wi.TrackSurfaceTemp||"?"} / air ${wi.TrackAirTemp||"?"}</small></h2>
+  const head = `<section><span style="float:right;display:flex;gap:6px;align-items:center"><button id="pdfbtn" class="ghost" style="padding:5px 12px">Export PDF report</button><label class="muted" style="font-size:12px" title="Adds the lap-by-lap ride heights and tyre temperatures to the report (the app shows the averages)"><input type="checkbox" id="pdflaps" ${PREFS.get("pdfLaps")?"checked":""}> lap-by-lap tables</label><label class="muted" style="font-size:12px" title="Off: each section shows its pictures and numbers, with the explanations one click away under ⓘ Explain"><input type="checkbox" id="explainOpen" ${PREFS.get("explainOpen")?"checked":""}> show explanations</label>${window.se&&window.se.pdfApps?`<label class="muted" style="font-size:12px">open with <select id="pdfopen" style="padding:3px 6px"></select></label>`:""}</span><h2>${run.carName} <small>${wi.TrackDisplayName||""} ${typeof wi.TrackConfigName==="string"?wi.TrackConfigName:""} · ${run.sessionType} · best ${fmtTime(A.best.time)} · ${A.rep.length} laps used · track ${wi.TrackSurfaceTemp||"?"} / air ${wi.TrackAirTemp||"?"}</small></h2>
     </section>`;
   if (view==="changes"){ out.innerHTML = head + changesHTML(run, A); wireChanges(run); return; }
   if (view==="compare"){ let sh=""; try { sh=modelRangeHTML(run, "Setting history and models") + settingHistoryHTML(run); } catch(e){ console.error("history", e); }
@@ -3030,7 +3042,7 @@ function render(){
     tyres: () => `<section><h2>Tyres <small>temperatures, pressures, camber and wear</small></h2><div class="two"><div>${tiresHTML(A,S,run)}</div><div>${wearHTML(A)}
         <div class="grid" style="margin-top:10px"><div class="stat"><div class="k">Rear wheelspin</div><div class="v">${fmt((A.spin||0)*100,0)}%</div><div class="s">of throttle &gt;60% samples</div></div>
         <div class="stat"><div class="k">Inside rear spin</div><div class="v">${fmt((A.inSpin||0)*100,0)}%</div><div class="s">while cornering on power</div></div></div></div></div></section>` + tyreModelHTML(run, A, S) + racePressureHTML(run, A, S) + safe(()=>modelRangeHTML(run, "Tyre models"),"range") + safe(()=>tyreThermalHTML(run, A, S),"thermal") + safe(()=>gripTempHTML(run, A, S),"griptemp") + safe(()=>tyreHeatHTML(run, A, S),"heat") + areaCards("tyres"),
-    aero: () => (()=>{ try { return platStatusHTML(run, A, S); } catch(e){ console.error("platstatus", e); return ""; } })() + aeroHTML(run, A, S) + optimalRakeHTML(run, A, S) + rakeChartsHTML(run, A, S) + fastCornersHTML(run, A, S) + platSimHTML(run, A, S) + aeroCmpHTML(run, A, S) + rhcHTML(run, A, S) + rakePhasesHTML(run, A, S) + aeroMapHTML(run, A) + aeroOptionsHTML(run, A, S) + bumpHTML(run, A) + bottomHTML(run, A) + downforceHTML(run, A) + areaCards("aero"),
+    aero: () => safe(()=>pointsHTML(run, A),"points") + (()=>{ try { return platStatusHTML(run, A, S); } catch(e){ console.error("platstatus", e); return ""; } })() + aeroHTML(run, A, S) + rakeChartsHTML(run, A, S) + fastCornersHTML(run, A, S) + downforceHTML(run, A) + bumpHTML(run, A) + bottomHTML(run, A) + platSimHTML(run, A, S) + rhcHTML(run, A, S) + aeroCmpHTML(run, A, S) + optimalRakeHTML(run, A, S) + rakePhasesHTML(run, A, S) + aeroOptionsHTML(run, A, S) + aeroMapHTML(run, A) + areaCards("aero"),
     balance: () => safeBalanceFeel(run, A) + `<section><h2>Balance <small>understeer angle in degrees (front wheel): higher = more understeer</small></h2>
    ${balanceReady(run,A)?"":`<div class="sugg p2" style="margin:0 0 10px"><h3>First read only</h3><p style="margin:4px 0 0">${balanceWait(run,A)}</p></div>`}
    <div class="grid" style="margin-bottom:10px">
@@ -3074,7 +3086,7 @@ function render(){
     W.home=()=>{ const here=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===learnTrackOf(run) && r.laps>=MIN_LAPS && r.date>=LEARN_CUTOFF).length;
       return h() + (here<3 ? `<section><h2>New track: predictions from your other tracks <small>${here} stint${here===1?"":"s"} of ${MIN_LAPS}+ laps here so far</small></h2><p class="muted" style="margin:0">What this car does everywhere else, applied here: the ride heights to start from, how hard the dampers will work, and the setup from the most similar track.</p></section>`
         + safe(()=>aeroCrossHTML(run, A, S),"aeroCross") + safe(()=>dampCrossHTML(run, A),"dampCross") : ""); }; }
-  out.innerHTML = head + W[view]();
+  out.innerHTML = head + W[view](); try { infoize(out); } catch(e){ console.error("infoize", e); }
   if (view==="balance") drawMap($("#map"),run,A);
   if (view==="balance" || view==="home") wireBalanceFeel(run);
   { const ts=$("#teamshare"); if (ts) ts.onclick=async()=>{ ts.textContent="Sharing…"; const f=await teamShare(run, A, true); ts.textContent=f?"Shared ✓":"Couldn't share (set the team folder under Learning)"; }; }
@@ -3085,6 +3097,8 @@ function render(){
   for (const [id,key] of [["lctarget","lcTarget"],["tyreloss","tyreLoss"],["racestart","startH"]]){ const el=$("#"+id); if (el) el.onchange=()=>{ RACE[key]=el.value===""?"":+el.value; PREFS.set("race", RACE); rerender(); }; }
   document.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>{ view=b.dataset.go; render(); });
   { const lf=$("#loadFullNow"); if (lf) lf.onclick=()=>{ lf.disabled=true; lf.textContent="Loading…"; loadStintIbt(run, 0, -1, true); }; }
+  { const eo=$("#explainOpen"); if (eo) eo.onchange=()=>{ PREFS.set("explainOpen", eo.checked); render(); }; }
+  if (view==="aero"){ try { drawPoints(run,A); } catch(e){ console.error("points",e); } const ps=$("#ptsRefSet"); if (ps) ps.onclick=e=>{ e.preventDefault(); const me=aeroPoint(run,A); if (me && dfAt200(me)){ PREFS.set("dfref|"+run.carPath,{df:dfAt200(me), drag:me.drag||null, label:`${new Date().toLocaleDateString([], {day:"2-digit", month:"short"})} · ${run.short||"this stint"}`}); render(); } }; }
   if (view==="aero" || view==="dampers"){ const ob=$("#openFull"); if (ob) ob.onclick=()=>{ current=+ob.dataset.i; LIVE.follow=false; render(); }; }
   if (view==="aero" && A.rh){ drawRH(run,A,S); try { drawRake(run,A,S); } catch(e){ console.error("rake",e); } { const rs=$("#rakeCmpSel"); if (rs) rs.onchange=()=>{ RAKE_CMP=rs.value||null; render(); }; } try { drawWinMap(run,A); } catch(e){ console.error("winmap",e); } try { wirePlat(run,A,S); } catch(e){ console.error("plat",e); } { const sel=$("#aeroCmpSel"); if (sel) sel.onchange=()=>{ AERO_CMP=sel.value; render(); }; } try { wireRHC(run,A,S); } catch(e){ console.error("rhc",e); } }
   if (view==="laps") drawTrace(run,A);
@@ -3695,7 +3709,7 @@ function platStatusHTML(run, A, S){
     ${S1.map(s=>`<tr><td class="muted">${s.k}</td>${cell(s.f,"mm")}${cell(s.r,"mm")}${cell(s.rk,"mm")}</tr>`).join("")}</table></div>
     <canvas id="winMap" style="margin-top:10px;max-width:640px"></canvas>
     <div class="legend" style="font-size:12px"><span><i style="background:var(--good)"></i>max-downforce window (front × rear)</span><span><i style="background:var(--good);opacity:.35"></i>rake window</span><span>● fast corners (T#) · ■ straights · ▲ end of the straight${""} · hollow: with the suggestion</span></div>
-    <p style="margin:8px 0 0;font-size:13px">${allIn?"Everything's in or within 1.5 mm of its window. ":""}${sug}</p>
+    <p data-keep style="margin:8px 0 0;font-size:13px">${allIn?"Everything's in or within 1.5 mm of its window. ":""}${sug}</p>
     <p class="muted" style="font-size:12px;margin:4px 0 0">Green: in the window · amber: within 1.5 mm · orange: out. The fast corners are where the window earns lap time; at the end of the straight the car is at its lowest (in or a little under is fine, as long as the splitter stays clear). In slower fast corners (about 150 km/h) a GT3 sits higher than the window: there's much less downforce there.</p></section>`; }
 function drawWinMap(run, A){
   const cv=$("#winMap"), Pt=A._winPts; if (!cv || !Pt) return; const {W, RW}=Pt;
@@ -3712,7 +3726,7 @@ function drawWinMap(run, A){
   c.fillStyle=css("--good"); c.fillText("max downforce", X(W.df.f[0])+3, Y(W.df.r[1])-4);
   c.strokeStyle=css("--grid"); c.fillStyle=css("--muted");
   for (let i=0;i<=5;i++){ const x=xr[0]+(xr[1]-xr[0])*i/5, y=yr[0]+(yr[1]-yr[0])*i/5; c.fillText(x.toFixed(0), X(x)-6, h-12); c.fillText(y.toFixed(0), 6, Y(y)+4); }
-  c.fillText("front ride height at speed (mm) →", m.l+4, h-1); c.save(); c.translate(11, m.t+120); c.rotate(-Math.PI/2); c.fillText("rear (mm) →", 0, 0); c.restore();
+  c.fillText("front ride height at speed (mm) →", m.l+4, h-1); c.fillText("↑ rear ride height at speed (mm)", m.l+4, m.t+10);
   // arrows from now to the suggestion
   if (sh.length){ c.strokeStyle=css("--muted")+"99"; c.setLineDash([3,3]); pts.forEach((p,i)=>{ c.beginPath(); c.moveTo(X(p.f),Y(p.r)); c.lineTo(X(sh[i].f),Y(sh[i].r)); c.stroke(); }); c.setLineDash([]); }
   const mark=p=>{ const x=X(p.f), y=Y(p.r), col=p.s==="o"?css("--os"):p.s==="s"?css("--us"):css("--ink"); c.strokeStyle=c.fillStyle=col; c.lineWidth=1.6; c.beginPath();
@@ -3893,6 +3907,57 @@ function downforceHTML(run, A){
    <p class="muted" style="font-size:12px"><b>How to read it:</b> this is an estimate. Each spring works through suspension linkages the app can't see, and they differ front to rear, so the front/rear split is not the true aero balance (for that, type your at-speed ride heights into the garage aero calculator). Use these numbers to <b>compare</b>: corner to corner, lap to lap and run to run. More total = more grip; a front share that rises in a corner = the car will want to rotate more there. Once a corner sits on its bump rubber, the rubber's extra stiffness is included (measured from how the squash slows once it's on, else assumed 4× the spring).</p>
   </section>`;
 }
+// ---------- downforce and drag points: like F1's "points", relative to a reference stint of this car (= 100) ----------
+// downforce: the estimate from the suspension at speed, taken to 200 km/h (∝ v²); drag: the drag index from full-throttle acceleration
+const dfAt200 = a => !a ? null : Number.isFinite(a.df200) ? a.df200 : (Number.isFinite(a.df) && Number.isFinite(a.vF) && a.vF>150 ? a.df*Math.pow(200/a.vF,2) : null);
+function ptsRef(run, A){
+  const key="dfref|"+run.carPath, P=PREFS.get(key); if (P && Number.isFinite(P.df)) return P;
+  // first time: the programme baseline's stint if there is one, else the earliest stint of this car with a downforce number, else this stint
+  const recs=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.aero && dfAt200(r.aero)).sort((a,b)=>a.date-b.date);
+  let base=null; try { const PB=PREFS.get(tpKeyOf(run,"car")); if (PB){ const b=tpStatus(run,PB).find(s=>s.id==="base"); const id=b&&b.stints[0]&&b.stints[0].id; base=recs.find(r=>r.id===id)||null; } } catch(e){}
+  const r=base||recs[0]; if (r){ const o={df:dfAt200(r.aero), drag:r.aero.drag||null, label:`${new Date(r.date).toLocaleDateString([], {day:"2-digit", month:"short"})} · ${r.setupName||"setup"}`}; PREFS.set(key,o); return o; }
+  const me=A?aeroPoint(run,A):null; if (me && dfAt200(me)) return {df:dfAt200(me), drag:me.drag||null, label:"this stint"}; return null; }
+function ptsOf(a, ref){ if (!a || !ref) return null; const d=dfAt200(a); const o={df: d&&ref.df ? 100*d/ref.df : null, drag: a.drag&&ref.drag ? 100*a.drag/ref.drag : null}; o.eff = o.df&&o.drag ? 100*o.df/o.drag : null; return o; }
+// how much the track asks for downforce: time in fast corners against time flat out on the straights
+function trackNeed(run, A){ const ch=run.ch; let fc=0, ff=0; for (const j of A.idx){ const v=ch.Speed[j]*3.6; if (v>=140 && Math.abs(ch.LatAccel[j])>7.85) fc++; else if (v>180 && ch.Throttle[j]>0.98 && Math.abs(ch.LatAccel[j])<3) ff++; }
+  const r=ff?fc/ff:NaN; return {r, kind: !Number.isFinite(r) ? null : r>0.55 ? "high" : r<0.25 ? "low" : "mid"}; }
+// the target: from your own stints at this track when there are 3+ downforce levels, else a rough guide from the track
+function ptsTarget(run, A, ref){
+  const trk=learnTrackOf(run), K=tpTempK(run).k, corr=(m,T)=>Number.isFinite(T)?m-K*(T-30):m;
+  const pts=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===trk && r.aero && !r.wet && Number.isFinite(r.med) && (r.laps||0)>=3).map(r=>({r, p:ptsOf(r.aero,ref), t:corr(r.med,r.trackT)})).filter(x=>x.p && Number.isFinite(x.p.df));
+  const lv=[...new Set(pts.map(x=>Math.round(x.p.df/2)*2))];
+  if (lv.length>=3 && Math.max(...lv)-Math.min(...lv)>=6){ const c=fitLS(pts.map(x=>[1,x.p.df,x.p.df*x.p.df]), pts.map(x=>x.t)); const lo=Math.min(...lv), hi=Math.max(...lv);
+    if (c && c[2]>0){ const o=-c[1]/(2*c[2]); if (o>lo-5 && o<hi+5) return {v:Math.round(o), how:`From your ${pts.length} stints here: lap time (temperature taken out) is quickest around this level`, pts}; }
+    const best=pts.slice().sort((a,b)=>a.t-b.t)[0]; return {v:Math.round(best.p.df), how:`From your ${pts.length} stints here: your quickest so far (no clear peak yet, try ${best.p.df>=hi-1?"a little more":"a little less"})`, pts}; }
+  const N=trackNeed(run,A), d=N.kind==="high"?6:N.kind==="low"?-6:0;
+  return {v:100+d, guide:true, how:N.kind==="high"?"Rough guide until you've run 3 downforce levels here: a lot of time in fast corners, so more downforce pays":N.kind==="low"?"Rough guide until you've run 3 downforce levels here: long flat-out stretches, so less drag pays":"Rough guide until you've run 3 downforce levels here: a balanced track (fast corners and straights)", pts}; }
+function pointsHTML(run, A){
+  if (!A.aero) return ""; const ref=ptsRef(run,A); const me=aeroPoint(run,A), p=ptsOf(me,ref); if (!p || !Number.isFinite(p.df)) return "";
+  const T=ptsTarget(run,A,ref), d=p.df-T.v, tile=(k,v,s,col)=>`<div class="stat"><div class="k">${k}</div><div class="v" style="font-size:30px${col?`;color:${col}`:""}">${v}</div><div class="s">${s}</div></div>`;
+  const near=Math.abs(d)<=2, col=near?"var(--good)":"#e0a030";
+  return `<section><h2>Downforce points <small>100 = ${esc(ref.label)} · <a href="#" id="ptsRefSet" style="color:var(--ink);text-decoration:underline">make this stint 100</a></small></h2>
+    <div class="grid" style="margin-bottom:8px">
+      ${tile("Downforce", fmt(p.df,0), `${fmt(dfAt200(me)/9.81,0)} kg at 200 km/h`)}
+      ${tile("Drag", p.drag?fmt(p.drag,0):"–", p.drag?"from the full-throttle pull":"needs flat-out straights")}
+      ${tile("Efficiency", p.eff?fmt(p.eff,0):"–", "downforce ÷ drag")}
+      ${tile("Aim for", `${T.guide?"~":""}${T.v}`, near?"✓ you're there":`${d>0?"−":"+"}${fmt(Math.abs(d),0)} points`, col)}
+    </div>
+    <canvas id="ptsChart"></canvas>
+    ${infoBox("How the points work", `${esc(T.how)}. A point is 1% of the reference stint's downforce (or drag). Downforce is estimated from how far the springs and bump rubbers are squashed at speed, taken to 200 km/h; drag from how hard the car still pulls flat out. Use them to compare setups of this car: wing, rake and ride height move them, softer springs alone mostly don't. More downforce for a smaller rise in drag is a good trade (efficiency up).`)}</section>`; }
+function drawPoints(run, A){
+  const cv=$("#ptsChart"); if (!cv) return; const ref=ptsRef(run,A), T=ptsTarget(run,A,ref), me=ptsOf(aeroPoint(run,A),ref); if (!me) return;
+  const pts=T.pts.filter(x=>Number.isFinite(x.p.drag)), xs=[...pts.map(x=>x.p.drag), me.drag||100, 100], ys=[...pts.map(x=>x.p.df), me.df, 100, T.v];
+  const xr=[Math.floor(Math.min(...xs)-4), Math.ceil(Math.max(...xs)+4)], yr=[Math.floor(Math.min(...ys)-4), Math.ceil(Math.max(...ys)+4)];
+  const [c,w,h]=canvasCtx(cv,240), m={l:36,r:10,t:12,b:28}, X=x=>m.l+(x-xr[0])/(xr[1]-xr[0])*(w-m.l-m.r), Y=y=>h-m.b-(y-yr[0])/(yr[1]-yr[0])*(h-m.t-m.b);
+  c.font="11px system-ui"; c.lineWidth=1; c.strokeStyle=css("--grid"); c.fillStyle=css("--muted");
+  for (let i=0;i<=4;i++){ const y=yr[0]+(yr[1]-yr[0])*i/4, x=xr[0]+(xr[1]-xr[0])*i/4; c.beginPath(); c.moveTo(m.l,Y(y)); c.lineTo(w-m.r,Y(y)); c.stroke(); c.fillText(y.toFixed(0),4,Y(y)+4); c.fillText(x.toFixed(0),X(x)-8,h-12); }
+  c.fillText("downforce points",m.l+4,m.t+10); c.textAlign="right"; c.fillText("drag points →",w-m.r,h-26); c.textAlign="left";
+  c.fillStyle=css("--good")+"22"; c.fillRect(m.l,Y(T.v+2),w-m.l-m.r,Y(T.v-2)-Y(T.v+2)); c.fillStyle=css("--good"); c.textAlign="right"; c.fillText(`aim ${T.guide?"~":""}${T.v}`,w-m.r-4,Y(T.v)-4); c.textAlign="left";
+  c.strokeStyle=css("--muted"); c.beginPath(); c.moveTo(X(100)-6,Y(100)); c.lineTo(X(100)+6,Y(100)); c.moveTo(X(100),Y(100)-6); c.lineTo(X(100),Y(100)+6); c.stroke(); c.fillStyle=css("--muted"); if (Math.abs(me.df-100)>1.5 || Math.abs((me.drag||100)-100)>1.5) c.fillText("100",X(100)+8,Y(100)+12);
+  const ts=pts.map(x=>x.t), t0=Math.min(...ts), t1=Math.max(...ts);
+  for (const x of pts){ const f=t1>t0?(x.t-t0)/(t1-t0):0; c.fillStyle=`hsl(${120-120*f},60%,50%)`; c.beginPath(); c.arc(X(x.p.drag),Y(x.p.df),4.5,0,7); c.fill(); }
+  const mx=X(me.drag||100); c.strokeStyle=css("--ink"); c.lineWidth=2.5; c.beginPath(); c.arc(mx,Y(me.df),8,0,7); c.stroke(); c.fillStyle=css("--ink"); c.fillText("this stint",mx+11,Y(me.df)+4);
+  if (pts.length>1){ c.fillStyle=css("--muted"); c.fillText("dots: your stints here, green = quickest lap",m.l+4,h-m.b-6); } }
 // ---------- drag: from full-throttle acceleration on the straights ----------
 // a = P/(m·v) − k·v² − c (v in m/s): power over speed, minus aero drag (k) and rolling resistance (c). k is the drag index: it goes up with
 // more wing, more rake or a higher car. Top two gears only, no cornering, no braking; needs LongAccel. Compares stints of the same car.
@@ -3918,7 +3983,7 @@ function aeroCmpHTML(run, A, S){
     ["Fast corners: front / rear", me.fcF, oa.fcF, "mm", 1, null, me.fcR, oa.fcR], ["Fast corners: rake", me.fcRake, oa.fcRake, "mm", 1], ["Fast corners: time in the rake window", me.fcIn, oa.fcIn, "%", 0],
     ["At speed (straights): front / rear", me.fA, oa.fA, "mm", 1, null, me.rA, oa.rA], ["End of the straight: front / rear", me.topF, oa.topF, "mm", 1, null, me.topR, oa.topR],
     ["Braking from top speed: front / rear", me.brkF, oa.brkF, "mm", 1, null, me.brkR, oa.brkR], ["Splitter's lowest point", me.splMin, oa.splMin, "mm", 1],
-    ["Top speed", me.vmax, oa.vmax, "km/h", 1], ["Drag index (lower = less drag)", me.drag, oa.drag, "", 2],
+    ["Top speed", me.vmax, oa.vmax, "km/h", 1], ["Drag index (lower = less drag)", me.drag, oa.drag, "", 2], ...(()=>{ const ref=ptsRef(run,A), a=ptsOf(me,ref), b=ptsOf(oa,ref); return a&&b ? [["Downforce points", a.df, b.df, "", 0], ["Drag points", a.drag, b.drag, "", 0]] : []; })(),
     ["Balance in fast corners (+ understeer)", A.highSpeed&&A.highSpeed.med, o.bal&&o.bal.fast, "°", 2]];
   const f=(v,d)=>v==null||!Number.isFinite(+v)?"–":fmt(+v,d), dd=(a,b,d)=>Number.isFinite(+a)&&Number.isFinite(+b)&&a!=null&&b!=null&&Math.abs(a-b)>=Math.pow(10,-d)/2?`${a-b>0?"+":""}${fmt(a-b,d)}`:"";
   return `<section><h2>Compare with another stint <small>your aero numbers side by side: what a change did to the platform</small></h2>
@@ -3940,7 +4005,7 @@ function aeroPoint(run, A){
   const wE=SET.wing(run), st=end=>{ const v=run.setupFlat.filter(e=>e.key.toLowerCase()==="rideheight" && e.path.toLowerCase().includes(end)).map(e=>parseFloat(e.raw)); return v.length? mean(v) : NaN; };
   const r2=v=>Number.isFinite(v)?+v.toFixed(2):null;
   return {w:wE?parseFloat(wE.raw):null, sF:r2(st("front")), sR:r2(st("rear")), fA:r2(A.rh.front), rA:r2(A.rh.rear), vmax:r2(A.vmax), vF:r2(A.rh.vFast),
-    df: A.aero ? r2(A.aero.fastF+A.aero.fastR) : null, fpct: A.aero ? r2(A.aero.fastPct*100) : null,
+    df: A.aero ? r2(A.aero.fastF+A.aero.fastR) : null, df200: A.aero && Number.isFinite(A.aero.df200) ? r2(A.aero.df200) : null, fpct: A.aero ? r2(A.aero.fastPct*100) : null,
     // springs, bump-rubber gaps and how much of the straights each axle spends on its rubbers (so the model can learn their effect)
     ...(()=>{ const B=A.bump||{}, k=c=>{ const e=SET.spring(run,CORNERS[c]); return e?parseFloat(e.raw):NaN; }, av=(a,b)=>r2((a+b)/2);
       return {kF:av(k("LF"),k("RF")), kR:av(k("LR"),k("RR")), gF: B.LF&&B.RF ? av(B.LF.gap,B.RF.gap) : null, gR: B.LR&&B.RR ? av(B.LR.gap,B.RR.gap) : null,
