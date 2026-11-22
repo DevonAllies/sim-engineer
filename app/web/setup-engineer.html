@@ -3002,6 +3002,9 @@ function infoize(root){
   if (PREFS.get("explainOpen")) return;
   [...root.querySelectorAll("section")].slice(1).forEach(sec=>{
     const cand=[...sec.querySelectorAll("p, .note")].filter(p=>!p.closest(".sugg, .stat, table, details, .legend, [data-keep], .areas") && !p.matches("[data-keep]") && !p.querySelector("button, select, input, canvas, svg, textarea") && p.innerText.trim().length>50);
+    const free=el=>!el.closest(".sugg, .stat, table, details, .legend, [data-keep], .areas") && !el.matches("[data-keep]") && !el.querySelector("button, select, input, canvas, svg, textarea");
+    for (const l of sec.querySelectorAll("ul, ol")) if (free(l) && l.innerText.trim().length>150){ const hh=l.previousElementSibling; if (hh && /^H[34]$/.test(hh.tagName) && free(hh)) cand.push(hh); cand.push(l); }
+    cand.sort((a,b)=>a.compareDocumentPosition(b)&Node.DOCUMENT_POSITION_FOLLOWING?-1:1);
     if (!cand.length) return; const d=document.createElement("details"); d.className="info"; d.innerHTML="<summary>ⓘ Explain</summary>"; cand.forEach(p=>d.appendChild(p)); sec.appendChild(d); }); }
 function render(){
   const out=$("#out"); out.innerHTML="";
@@ -3808,7 +3811,9 @@ function wireRHC(run, A, S){
 function optimalRakeHTML(run, A, S){
   const O=optimalRake(run,A,S); if (!O) return "";
   const {R,W}=O, mm=v=>`${fmt(v,1)} mm`, sg=v=>(v>0?"+":"")+fmt(v,1);
-  const where = O.inF&&O.inR ? `inside iRacing's max-downforce window on both axles` : `${O.inF?"":`front ${O.f0<(W?W.df.f[0]:O.fT)?"below":"above"} the window`}${!O.inF&&!O.inR?", ":""}${O.inR?"":`rear ${O.r0<(W?W.df.r[0]:O.rT)?"below":"above"} the window`}`;
+  // within 1.5 mm of the window counts as in (the same rule as the platform at a glance)
+  const nr=(v,w)=>Number.isFinite(v)&&v>=w[0]-1.5&&v<=w[1]+1.5, nF=O.inF||(W&&nr(O.f0,W.df.f)), nR=O.inR||(W&&nr(O.r0,W.df.r)), keep=nF&&nR&&(Number.isFinite(O.rakeLo)?O.rake0>=O.rakeLo-0.5&&O.rake0<=O.rakeHi+0.5:Math.abs(O.rake0-O.rakeT)<1.5);
+  const where = keep ? `inside (or within 1.5 mm of) iRacing's max-downforce window on both axles, with the rake in its window` : O.inF&&O.inR ? `inside iRacing's max-downforce window on both axles` : `${O.inF?"":`front ${O.f0<(W?W.df.f[0]:O.fT)?"below":"above"} the window`}${!O.inF&&!O.inR?", ":""}${O.inR?"":`rear ${O.r0<(W?W.df.r[0]:O.rT)?"below":"above"} the window`}`;
   const how = O.splOK
     ? `At speed: front ${mm(O.f0)} → <b>${mm(O.fT)}</b> (${sg(O.dF)}), rear ${mm(O.r0)} → <b>${mm(O.rT)}</b> (${sg(O.dR)}). In the garage that's roughly the same change on the static ride heights${Number.isFinite(O.splAfter)?`; the splitter goes ${fmt(O.splNow,1)} → ${fmt(O.splAfter,1)} mm (minimum ${O.splMin})`:""}.`
     : `Lowering the front to ${mm(O.fT)} would take the splitter to ${fmt(O.splAfter,1)} mm, under the ${O.splMin} mm minimum. So keep the front and set the rake with the rear: rear at speed ${mm(O.r0)} → <b>${mm(O.altR)}</b> (rake ${fmt(O.altR-O.f0,1)} mm)${Number.isFinite(O.altSpl)?`, splitter ${fmt(O.altSpl,1)} mm`:""}. The other way to lower the front at speed without touching the splitter is a step softer front springs (in Changes): the nose sinks more under downforce, though it's limited once the front sits on its bump rubbers.`;
@@ -3821,9 +3826,9 @@ function optimalRakeHTML(run, A, S){
     <div class="stat"><div class="k">Optimal (max downforce)</div><div class="v">${fmt(O.rakeT,1)} mm</div><div class="s">${W?`window ${fmt(O.rakeLo,0)} to ${fmt(O.rakeHi,0)} mm · F ${W.df.f[0]}–${W.df.f[1]}, R ${W.df.r[0]}–${W.df.r[1]}`:`at ${O.fT} / ${O.rT} mm`}</div></div>
     ${W&&W.drag?`<div class="stat"><div class="k">Least drag</div><div class="v">${fmt((W.drag.r[0]+W.drag.r[1])/2-(W.drag.f[0]+W.drag.f[1])/2,0)} mm</div><div class="s">F ${W.drag.f[0]}–${W.drag.f[1]}, R ${W.drag.r[0]}–${W.drag.r[1]} (a long-straight track only)</div></div>`:""}
    </div>
-   <div class="sugg p2" style="margin:0 0 10px"><h3>${O.inF&&O.inR&&Math.abs(O.rake0-O.rakeT)<1.5?`Keep it: ${fmt(O.rake0,1)} mm is already near optimal`:`Aim for about ${fmt(O.rakeT,0)} mm of rake at speed`}</h3>
-    <p style="margin:4px 0 0">You're ${where}. ${O.inF&&O.inR&&Math.abs(O.rake0-O.rakeT)<1.5?"":how}${bal}</p>
-    <p style="margin:6px 0 0">${data}</p></div>
+   <div class="sugg ${keep?"p1":"p2"}" style="margin:0 0 10px"><h3>${keep?`Keep it: ${fmt(O.rake0,1)} mm is already in the window`:`Aim for about ${fmt(O.rakeT,0)} mm of rake at speed`}</h3>
+    <p style="margin:4px 0 0">You're ${where}. ${keep?"":how}${keep?"":bal}</p>
+    ${O.st||O.data?`<p style="margin:6px 0 0">${data}</p>`:""}</div>
   </section>`;
 }
 function aeroMapHTML(run, A){
@@ -4166,7 +4171,7 @@ function aeroOptionsHTML(run, A, S){
   const calc = run.setupFlat.filter(e=>/aerobalancecalc|aerocalculator|aerospec/i.test(e.path)).map(e=>`${pretty(e.key)} ${esc(e.raw)}`).join(" · ");
   // what to do about it, in plain words (the matching change is in What to change and Changes)
   const todo=[];
-  if (S.frontRH && Number.isFinite(A.rh.front)){ const df=AW?outW(A.rh.front,AW.f):A.rh.front-S.frontRH, dr=AW?outW(A.rh.rear,AW.r):A.rh.rear-S.rearRH, rake=A.rh.rear-A.rh.front, rakeT=AW?(AW.r[0]+AW.r[1])/2-(AW.f[0]+AW.f[1])/2:S.rearRH-S.frontRH; S.rhTol=tolW;
+  if (S.frontRH && Number.isFinite(A.rh.front)){ const df=AW?outW(A.rh.front,AW.f):A.rh.front-S.frontRH, dr=AW?outW(A.rh.rear,AW.r):A.rh.rear-S.rearRH, rake=A.rh.rear-A.rh.front, rakeT=AW?(AW.r[0]+AW.r[1])/2-(AW.f[0]+AW.f[1])/2:S.rearRH-S.frontRH; S.rhTol=AW?1.5:tolW;   // within 1.5 mm of the window: nothing to do (the platform at a glance uses the same rule)
     if (dr<-S.rhTol) todo.push(`<b>Raise the rear</b> by about ${fmt(-dr,0)} mm at speed (more rake: ${fmt(rake,0)} mm now, ${fmt(rakeT,0)} mm at the targets). Do it in steps of 2–3 mm per run with the rear perch offsets${profileOf(run).springsKeepRH?" or a step stiffer rear springs":""}; more rake moves the aero balance forward, so the rear may need a click more wing.`);
     if (dr>S.rhTol) todo.push(`<b>Lower the rear</b> by about ${fmt(dr,0)} mm at speed (rake ${fmt(rake,0)} mm vs ${fmt(rakeT,0)} mm at the targets).`);
     if (df>S.rhTol){ let how="";
@@ -4180,7 +4185,7 @@ function aeroOptionsHTML(run, A, S){
           parts.push(`<b>Springs and bump rubbers</b>: softer front springs let the front sink further as downforce builds; the bump gap is set so it stops at the window at top speed and the splitter stays clear on the brakes. ${o2.join("; ")}. The cost: less front support in roll and on the brakes (bigger dive).`); }
         parts.push(`<b>Bump gap on its own</b> only moves the front where it's already resting on the rubbers (the end of the straight and the brakes), not in the fast corners.`);
         const stuck=rest>0.5 && (!FP || FP.atMin || !FP.opts.length), verdict=!stuck ? "" : rest<=1.5 ? `<b>So:</b> ${stat>0.05?`take the ${fmt(stat,1)} mm of static and `:""}leave the last ${fmt(rest,1)} mm. Nothing else on this car lowers the front without breaking ${lim}${FP&&FP.atMin?" or the spring minimum":""}, and ${fmt(rest,1)} mm over costs very little. The front is done: move on to ${Math.abs(dr)>S.rhTol?"the rear and ":""}the balance.` : `<b>So:</b> ${stat>0.05?`take the ${fmt(stat,1)} mm of static, but `:""}the front can't reach the window on this car (${fmt(rest,1)} mm over is the floor). Set the rear to keep the rake in the window around this front height, then work on the balance.`;
-        how=`<ul style="margin:4px 0 0 0;padding-left:18px">${parts.map(p=>`<li>${p}</li>`).join("")}</ul>${verdict?`<div style="margin:4px 0 0">${verdict}</div>`:`<span class="muted" style="font-size:12px">Try them in Aero platform as a system below, then test one as a step.</span>`}`; } catch(e){}
+        how=`${verdict?`<div style="margin:4px 0 0">${verdict}</div>`:""}<details class="info"><summary>ⓘ The options</summary><ul style="margin:4px 0 0 0;padding-left:18px">${parts.map(p=>`<li>${p}</li>`).join("")}</ul>${verdict?"":`<span class="muted" style="font-size:12px">Try them in Aero platform as a system below, then test one as a step.</span>`}</details>`; } catch(e){}
       todo.push(`<b>Lower the front</b> by about ${fmt(df,0)} mm at speed${S.minSplitter?` (the splitter has to stay at ${S.minSplitter} mm or more in the garage)`:""}. How:${how}`); }
     if (df<-S.rhTol) todo.push(`<b>Raise the front</b> by about ${fmt(-df,0)} mm at speed: it's below the target, so the floor can stall.`); }
   return `<section><h2>Aero & ride height <small>measured all lap long, averaged per lap</small></h2>
@@ -4292,7 +4297,7 @@ function sugCardsHTML(run, keep, empty="Nothing stands out."){
      <h3>${s.title}</h3>
      <div class="opts">${s.opts.map((o,oi)=>`<label class="opt ${o.limit?"lim":""}"><input type="radio" name="o${i}" data-s="${i}" data-o="${oi}" ${sel[i]===oi?"checked":""} ${o.limit?"disabled":""}>
         <b>${o.label}</b>${o.limit?" <span class='tag'>already at the limit</span>":""}<span class="muted"> · ${o.ch.filter(c=>!c.res.same).map(changeText).map(esc).join(" · ")}</span></label>`).join("")}</div>
-     <div class="why">${s.why}</div><div class="muted" style="font-size:12px;margin-top:4px">Evidence: ${s.evidence}</div></div>`).join("")
+     <details class="info"><summary>ⓘ Why</summary><div class="why">${s.why}</div><div class="muted" style="font-size:12px;margin-top:4px">Evidence: ${s.evidence}</div></details></div>`).join("")
     : `<p class="muted">${empty}</p>`;
 }
 // race type + length: changes fuel, how aggressive the balance can be, tyre pressure policy, camber, TC order
@@ -5013,10 +5018,10 @@ function balanceWhyHTML(run, A){
   const nDrv=R.reduce((a,r)=>a+PH.filter(([k])=>r.ph[k]&&r.ph[k].cause==="driving").length,0), nSet=R.reduce((a,r)=>a+PH.filter(([k])=>r.ph[k]&&(r.ph[k].cause==="setup"||r.ph[k].cause==="both")).length,0);
   const verdict = !nDrv && !nSet ? "Balanced: no corner pushes or slides enough to act on." : nSet>=nDrv*2 ? "Mostly the setup: it does this on your calmest laps too." : nDrv>=nSet*2 ? "Mostly your driving: on the laps you're calmer, it doesn't do it." : "Both: some corners are the setup, some are how you take them.";
   return `<section><h2>Where it pushes or slides, and why <small>each corner in three parts, near the grip limit, your clean laps compared with each other</small></h2>
-   <p class="summary">${verdict}</p>
+   <p class="summary" data-keep>${verdict}</p>
    <div class="tablewrap"><table style="margin-bottom:10px">${lines}</table></div>
-   ${drvTips.length?`<h3 style="font-size:14px;margin:10px 0 4px">Your driving</h3><ol style="margin:0 0 0 20px;line-height:1.7">${drvTips.join("")}</ol>`:""}
-   ${setTips.length?`<h3 style="font-size:14px;margin:10px 0 4px">The setup</h3><ul style="margin:0 0 0 20px;line-height:1.7">${setTips.join("")}</ul>`:""}
+   ${drvTips.length?`<h3 style="font-size:14px;margin:10px 0 4px">Your driving</h3><ol data-keep style="margin:0 0 0 20px;line-height:1.7">${drvTips.join("")}</ol>`:""}
+   ${setTips.length?`<h3 style="font-size:14px;margin:10px 0 4px">The setup</h3><ul data-keep style="margin:0 0 0 20px;line-height:1.7">${setTips.join("")}</ul>`:""}
    <div class="tablewrap" style="margin-top:10px"><table><tr><th>Corner</th><th>Apex speed</th>${PH.map(([,nm,sub])=>`<th>${nm}<br><span class="muted" style="font-weight:400;font-size:11px">${sub}</span></th>`).join("")}</tr>
     ${R.map(r=>`<tr><td>T${r.n}<div class="muted" style="font-size:11px">${fmt(r.at/1000,2)} km</div></td><td>${fmt(r.vmin,0)} km/h</td>${PH.map(([k])=>tag(r.ph[k])).join("")}</tr>`).join("")}</table></div>
    <p class="muted" style="font-size:12px">Understeer above ${US_PUSH.toFixed(1)}°, oversteer below ${US_LOOSE.toFixed(1)}° (or the rear stepping out on half the laps or more). <b>Driving</b> = it changes with how you take the corner: more push on the laps you turn in faster, or when you're off the brake before turning, or slides on the laps you get on the power earlier. <b>Setup</b> = it does it on your slowest, calmest laps too. <b>Driving + setup</b> = going in faster makes it worse, but it pushes even when you don't.</p></section>`;
@@ -5530,8 +5535,7 @@ function aimWhyHTML(run, A, X){
   return `<div class="sugg p3" style="margin:0 0 10px"><h3>Aim for about ${X.target.toFixed(1)}° mid-corner${near?` → ARB ${esc(near.fv)} / ${esc(near.rv)}`:""}</h3>
     <table style="font-size:12px;margin:4px 0">${why.map(([v,t])=>`<tr><td style="white-space:nowrap;font-weight:700;vertical-align:top">${v}</td><td>${t}</td></tr>`).join("")}<tr><td style="font-weight:700;border-top:1px solid var(--line)">${X.target.toFixed(1)}°</td><td style="border-top:1px solid var(--line)">your target in slow and medium corners</td></tr></table>
     <p style="margin:4px 0 0;font-size:13px">Now: <b>${fmt(X.us0,1)}°</b> on ARB ${esc(X.fE.raw.trim())} / ${esc(X.rE.raw.trim())}. ${near&&steps? `The green-edged cell (${esc(near.fv)} / ${esc(near.rv)}, predicted ${fmt(near.us,1)}°) is closest to your target${steps>2?"; the recommendation below gets there in steps of at most 2 clicks per run, so you can feel each change":""}.`:"You're already at the closest setting."}
-    ${near&&Math.abs(near.us-X.target)>0.4?`<b>The bars alone can't get there</b> (the closest is ${fmt(near.us,1)}°, ${fmt(Math.abs(near.us-X.target),1)}° short). The rest has to come from elsewhere: a step stiffer rear springs or a step softer front (see Springs below), less diff preload for rotation on entry and mid-corner, or a little more front rake.`:""}
-    Why the bars: in slow and medium corners there's little downforce, so grip comes from how the weight moves across the car. A softer front / stiffer rear bar puts more of that load on the rear tyres, so the front keeps grip and the car turns more. Fast corners don't follow this; they run on aero (wing, rake).</p></div>`;
+    ${near&&Math.abs(near.us-X.target)>0.4?`<b>The bars alone can't get there</b> (the closest is ${fmt(near.us,1)}°, ${fmt(Math.abs(near.us-X.target),1)}° short). The rest has to come from elsewhere: a step stiffer rear springs or a step softer front (see Springs below), less diff preload for rotation on entry and mid-corner, or a little more front rake.`:""}</p><details class="info"><summary>ⓘ Why the bars</summary><p style="font-size:13px">Why the bars: in slow and medium corners there's little downforce, so grip comes from how the weight moves across the car. A softer front / stiffer rear bar puts more of that load on the rear tyres, so the front keeps grip and the car turns more. Fast corners don't follow this; they run on aero (wing, rake).</p></details></div>`;
 }
 function arbHTML(run, A){
   const X=arbModel(run,A); if (!X) return "";
@@ -8378,7 +8382,7 @@ function midSplitHTML(run, A){
   return `<section><h2>Mid-corner, split <small>off both pedals against light throttle (5–40%), near the grip limit</small></h2>
     <div class="tablewrap"><table style="font-size:13px;max-width:520px"><tr><th></th><th style="text-align:center">Coasting</th><th style="text-align:center">Light throttle</th></tr>
     ${bands.map(([b,l])=>`<tr><td>${l}</td>${cell(M[b]&&M[b].coast)}${cell(M[b]&&M[b].maint)}</tr>`).join("")}</table></div>
-    ${lines.length?`<ul style="margin:8px 0 0 18px;line-height:1.6;font-size:13.5px">${lines.map(l=>`<li>${l}</li>`).join("")}</ul>`:""}
+    ${lines.length?`<ul data-keep style="margin:8px 0 0 18px;line-height:1.6;font-size:13.5px">${lines.map(l=>`<li>${l}</li>`).join("")}</ul>`:""}
     <p class="muted" style="font-size:12px;margin:6px 0 0">Mid in the table above is both of these together. Coasting = no brake, throttle under 5%; light throttle = 5–40%. Fewer than half a second in a box isn't enough to read.</p></section>`; }
 function stintPairHTML(run){
   PAIR_RUN=run;
