@@ -3711,12 +3711,12 @@ function platStatusHTML(run, A, S){
     <div class="tablewrap"><table style="font-size:13px"><tr><th></th><th>Front</th><th>Rear</th><th>Rake (rear − front)</th></tr>
     ${S1.map(s=>`<tr><td class="muted">${s.k}</td>${cell(s.f,"mm")}${cell(s.r,"mm")}${cell(s.rk,"mm")}</tr>`).join("")}</table></div>
     <canvas id="winMap" style="margin-top:10px;max-width:640px"></canvas>
-    <div class="legend" style="font-size:12px"><span><i style="background:var(--good)"></i>max-downforce window (front × rear)</span><span><i style="background:var(--good);opacity:.35"></i>rake window</span><span>● fast corners (T#) · ■ straights · ▲ end of the straight${""} · hollow: with the suggestion</span></div>
+    <div class="legend" style="font-size:12px"><span><i style="background:var(--good)"></i>max-downforce window (front × rear)</span><span><i style="background:var(--good);opacity:.35"></i>rake window</span><span>● fast corners (T#) · hollow: with the suggestion</span></div>
     <p data-keep style="margin:8px 0 0;font-size:13px">${allIn?"Everything's in or within 1.5 mm of its window. ":""}${sug}</p>
     <p class="muted" style="font-size:12px;margin:4px 0 0">Green: in the window · amber: within 1.5 mm · orange: out. The fast corners are where the window earns lap time; at the end of the straight the car is at its lowest (in or a little under is fine, as long as the splitter stays clear). In slower fast corners (about 150 km/h) a GT3 sits higher than the window: there's much less downforce there.</p></section>`; }
 function drawWinMap(run, A){
   const cv=$("#winMap"), Pt=A._winPts; if (!cv || !Pt) return; const {W, RW}=Pt;
-  const pts=[...Pt.fc.map(p=>({...p, s:"o"})), Pt.st&&{f:Pt.st.f, r:Pt.st.r, s:"s", n:"straights"}, Pt.top&&{f:Pt.top.f, r:Pt.top.r, s:"t", n:"end of straight"}].filter(p=>p && Number.isFinite(p.f) && Number.isFinite(p.r));
+  const pts=[...Pt.fc.map(p=>({...p, s:"o"})), Pt.st&&{f:Pt.st.f, r:Pt.st.r, s:"s", n:"straights"}, Pt.top&&{f:Pt.top.f, r:Pt.top.r, s:"t", n:"top speed"}].filter(p=>p && Number.isFinite(p.f) && Number.isFinite(p.r));
   const sh=Pt.sug ? pts.map(p=>({...p, f:p.f+Pt.sug.dF, r:p.r+Pt.sug.dR, hollow:true})) : [];
   const all=[...pts,...sh], fx=[...all.map(p=>p.f), W.df.f[0], W.df.f[1]], ry=[...all.map(p=>p.r), W.df.r[0], W.df.r[1]];
   const xr=[Math.floor(Math.min(...fx)-3), Math.ceil(Math.max(...fx)+3)], yr=[Math.floor(Math.min(...ry)-3), Math.ceil(Math.max(...ry)+3)];
@@ -3734,7 +3734,9 @@ function drawWinMap(run, A){
   if (sh.length){ c.strokeStyle=css("--muted")+"99"; c.setLineDash([3,3]); pts.forEach((p,i)=>{ c.beginPath(); c.moveTo(X(p.f),Y(p.r)); c.lineTo(X(sh[i].f),Y(sh[i].r)); c.stroke(); }); c.setLineDash([]); }
   const mark=p=>{ const x=X(p.f), y=Y(p.r), col=p.s==="o"?css("--os"):p.s==="s"?css("--us"):css("--ink"); c.strokeStyle=c.fillStyle=col; c.lineWidth=1.6; c.beginPath();
     if (p.s==="o") c.arc(x,y,4,0,7); else if (p.s==="s") c.rect(x-4,y-4,8,8); else { c.moveTo(x,y-5); c.lineTo(x+5,y+4); c.lineTo(x-5,y+4); c.closePath(); }
-    p.hollow ? c.stroke() : c.fill(); if (!p.hollow && p.n && p.s==="o"){ c.fillStyle=css("--muted"); c.fillText(p.n, x+6, y-4); } };
+    p.hollow ? c.stroke() : c.fill(); if (!p.hollow && p.n && p.s==="o"){ c.fillStyle=css("--muted"); c.fillText(p.n, x+6, y-4); }
+    // the straights and top-speed markers carry their names on the chart (left of the marker when it sits near the right edge)
+    if (!p.hollow && p.n && p.s!=="o"){ const left=x>w-m.r-80; c.font="bold 11px system-ui"; c.fillStyle=col; c.textAlign=left?"right":"left"; c.fillText(p.n, left?x-9:x+9, y+4); c.textAlign="left"; c.font="11px system-ui"; } };
   pts.forEach(mark); sh.forEach(mark); }
 // ---------- roll: how far the car leans in corners, front and rear, and how close the outside edge gets to the track ----------
 // roll angle on an axle = atan((left − right ride height) / track); against cornering g it gives the roll gradient (° per g)
