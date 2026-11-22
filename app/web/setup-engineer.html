@@ -3101,7 +3101,7 @@ function render(){
   document.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>{ view=b.dataset.go; render(); });
   { const lf=$("#loadFullNow"); if (lf) lf.onclick=()=>{ lf.disabled=true; lf.textContent="Loading…"; loadStintIbt(run, 0, -1, true); }; }
   { const eo=$("#explainOpen"); if (eo) eo.onchange=()=>{ PREFS.set("explainOpen", eo.checked); render(); }; }
-  if (view==="aero"){ try { drawPoints(run,A); } catch(e){ console.error("points",e); } const ps=$("#ptsRefSet"); if (ps) ps.onclick=e=>{ e.preventDefault(); const me=aeroPoint(run,A); if (me && dfAt200(me)){ PREFS.set("dfref|"+run.carPath,{df:dfAt200(me), drag:me.drag||null, label:`${new Date().toLocaleDateString([], {day:"2-digit", month:"short"})} · ${run.short||"this stint"}`}); render(); } }; }
+  if (view==="aero"){ try { drawPoints(run,A); } catch(e){ console.error("points",e); } const ps=$("#ptsRefSet"); if (ps) ps.onclick=e=>{ e.preventDefault(); const me=aeroPoint(run,A); if (me && dfAt200(me)){ PREFS.set("dfref2|"+run.carPath,{df:dfAt200(me), vmax:me.vmax||null, track:learnTrackOf(run), label:`${new Date().toLocaleDateString([], {day:"2-digit", month:"short"})} · ${run.short||"this stint"}`}); render(); } }; }
   if (view==="aero" || view==="dampers"){ const ob=$("#openFull"); if (ob) ob.onclick=()=>{ current=+ob.dataset.i; LIVE.follow=false; render(); }; }
   if (view==="aero" && A.rh){ drawRH(run,A,S); try { drawRake(run,A,S); } catch(e){ console.error("rake",e); } { const rs=$("#rakeCmpSel"); if (rs) rs.onchange=()=>{ RAKE_CMP=rs.value||null; render(); }; } try { drawWinMap(run,A); } catch(e){ console.error("winmap",e); } try { wirePlat(run,A,S); } catch(e){ console.error("plat",e); } { const sel=$("#aeroCmpSel"); if (sel) sel.onchange=()=>{ AERO_CMP=sel.value; render(); }; } try { wireRHC(run,A,S); } catch(e){ console.error("rhc",e); } }
   if (view==="laps") drawTrace(run,A);
@@ -3914,55 +3914,77 @@ function downforceHTML(run, A){
 }
 // ---------- downforce and drag points: like F1's "points", relative to a reference stint of this car (= 100) ----------
 // downforce: the estimate from the suspension at speed, taken to 200 km/h (∝ v²); drag: the drag index from full-throttle acceleration
-const dfAt200 = a => !a ? null : Number.isFinite(a.df200) ? a.df200 : (Number.isFinite(a.df) && Number.isFinite(a.vF) && a.vF>150 ? a.df*Math.pow(200/a.vF,2) : null);
+// downforce at 200 km/h: the median load at speed scaled by v² (every stint stores df and vF, so the reference and this stint are worked out the same way)
+const dfAt200 = a => !a ? null : (Number.isFinite(a.df) && Number.isFinite(a.vF) && a.vF>150) ? a.df*Math.pow(200/a.vF,2) : Number.isFinite(a.df200) ? a.df200 : null;
+// the same setup for downforce purposes: same wing, same spring rates
+const ptsSig = r => { const s=r&&r.setup; if (!s) return null; const k=Object.keys(s).filter(p=>/springrate|wingangle|rearwing/i.test(p)).sort(); return k.length ? k.map(p=>p+"="+s[p]).join("|") : null; };
+const ptsRecs = car => Object.values(LEARN||{}).filter(r=>r.car===car && r.aero && dfAt200(r.aero) && !r.wet).sort((a,b)=>a.date-b.date);
+// how much the estimate wobbles between stints of one setup, in points (pooled over every setup with 2+ stints)
+function ptsNoise(car){ const g={}; for (const r of ptsRecs(car)){ const s=ptsSig(r); if (s) (g[r.track+"#"+s]=g[r.track+"#"+s]||[]).push(dfAt200(r.aero)); }
+  const dev=[]; for (const v of Object.values(g)) if (v.length>=2){ const m=median(v); for (const x of v) dev.push(Math.abs(x/m-1)); }
+  return dev.length>=4 ? Math.min(20, Math.max(3, Math.round(1.4826*median(dev)*100))) : 10; }
 function ptsRef(run, A){
-  const key="dfref|"+run.carPath, P=PREFS.get(key); if (P && Number.isFinite(P.df)) return P;
-  // first time: the programme baseline's stint if there is one, else the earliest stint of this car with a downforce number, else this stint
-  const recs=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.aero && dfAt200(r.aero)).sort((a,b)=>a.date-b.date);
+  const key="dfref2|"+run.carPath, P=PREFS.get(key); if (P && Number.isFinite(P.df)) return P;
+  // first time: every stint run on the programme baseline's setup (same track, wing and springs), median, so one odd stint can't set the scale;
+  // without a baseline, the earliest setup of this car with a downforce number
+  const recs=ptsRecs(run.carPath);
   let base=null; try { const PB=PREFS.get(tpKeyOf(run,"car")); if (PB){ const b=tpStatus(run,PB).find(s=>s.id==="base"); const id=b&&b.stints[0]&&b.stints[0].id; base=recs.find(r=>r.id===id)||null; } } catch(e){}
-  const r=base||recs[0]; if (r){ const o={df:dfAt200(r.aero), drag:r.aero.drag||null, label:`${new Date(r.date).toLocaleDateString([], {day:"2-digit", month:"short"})} · ${r.setupName||"setup"}`}; PREFS.set(key,o); return o; }
-  const me=A?aeroPoint(run,A):null; if (me && dfAt200(me)) return {df:dfAt200(me), drag:me.drag||null, label:"this stint"}; return null; }
-function ptsOf(a, ref){ if (!a || !ref) return null; const d=dfAt200(a); const o={df: d&&ref.df ? 100*d/ref.df : null, drag: a.drag&&ref.drag ? 100*a.drag/ref.drag : null}; o.eff = o.df&&o.drag ? 100*o.df/o.drag : null; return o; }
+  const here=recs.filter(x=>x.track===learnTrackOf(run)), cnt={}; for (const x of here){ const s=ptsSig(x); if (s) cnt[s]=(cnt[s]||0)+1; }
+  const top=Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a])[0], r=base||(top&&here.find(x=>ptsSig(x)===top))||here[0]||recs[0];
+  if (r){ const sg=ptsSig(r), grp=recs.filter(x=>x.track===r.track && sg && ptsSig(x)===sg), G=grp.length?grp:[r], vm=G.map(x=>x.aero.vmax).filter(v=>v>100);
+    const o={df:median(G.map(x=>dfAt200(x.aero))), vmax:vm.length?median(vm):null, track:r.track, n:G.length,
+      label:`${G.length>1?`your ${G.length} stints on`:new Date(r.date).toLocaleDateString([], {day:"2-digit", month:"short"})+" ·"} ${r.setupName||"setup"}${G.length>1?" (same wing and springs)":""}`};
+    PREFS.set(key,o); return o; }
+  const me=A?aeroPoint(run,A):null; if (me && dfAt200(me)) return {df:dfAt200(me), vmax:me.vmax||null, track:learnTrackOf(run), label:"this stint"}; return null; }
+function ptsOf(a, ref, trk){ if (!a || !ref) return null; const d=dfAt200(a); const o={df: d&&ref.df ? 100*d/ref.df : null, drag: trk!=null && ref.track===trk && a.vmax>100 && ref.vmax>100 ? 100*Math.pow(ref.vmax/a.vmax,3) : null}; o.eff = o.df&&o.drag ? 100*o.df/o.drag : null; return o; }
 // how much the track asks for downforce: time in fast corners against time flat out on the straights
 function trackNeed(run, A){ const ch=run.ch; let fc=0, ff=0; for (const j of A.idx){ const v=ch.Speed[j]*3.6; if (v>=140 && Math.abs(ch.LatAccel[j])>7.85) fc++; else if (v>180 && ch.Throttle[j]>0.98 && Math.abs(ch.LatAccel[j])<3) ff++; }
   const r=ff?fc/ff:NaN; return {r, kind: !Number.isFinite(r) ? null : r>0.55 ? "high" : r<0.25 ? "low" : "mid"}; }
-// the target: from your own stints at this track when there are 3+ downforce levels, else a rough guide from the track
+// the target: from your own stints here once 3+ different setups sit clearly apart (more than the stint-to-stint wobble), else a rough guide from the track
 function ptsTarget(run, A, ref){
-  const trk=learnTrackOf(run), K=tpTempK(run).k, corr=(m,T)=>Number.isFinite(T)?m-K*(T-30):m;
-  const pts=Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===trk && r.aero && !r.wet && Number.isFinite(r.med) && (r.laps||0)>=3).map(r=>({r, p:ptsOf(r.aero,ref), t:corr(r.med,r.trackT)})).filter(x=>x.p && Number.isFinite(x.p.df));
-  const lv=[...new Set(pts.map(x=>Math.round(x.p.df/2)*2))];
-  if (lv.length>=3 && Math.max(...lv)-Math.min(...lv)>=6){ const c=fitLS(pts.map(x=>[1,x.p.df,x.p.df*x.p.df]), pts.map(x=>x.t)); const lo=Math.min(...lv), hi=Math.max(...lv);
-    if (c && c[2]>0){ const o=-c[1]/(2*c[2]); if (o>lo-5 && o<hi+5) return {v:Math.round(o), how:`From your ${pts.length} stints here: lap time (temperature taken out) is quickest around this level`, pts}; }
-    const best=pts.slice().sort((a,b)=>a.t-b.t)[0]; return {v:Math.round(best.p.df), how:`From your ${pts.length} stints here: your quickest so far (no clear peak yet, try ${best.p.df>=hi-1?"a little more":"a little less"})`, pts}; }
-  const N=trackNeed(run,A), d=N.kind==="high"?6:N.kind==="low"?-6:0;
-  return {v:100+d, guide:true, how:N.kind==="high"?"Rough guide until you've run 3 downforce levels here: a lot of time in fast corners, so more downforce pays":N.kind==="low"?"Rough guide until you've run 3 downforce levels here: long flat-out stretches, so less drag pays":"Rough guide until you've run 3 downforce levels here: a balanced track (fast corners and straights)", pts}; }
+  const trk=learnTrackOf(run), K=tpTempK(run).k, corr=(m,T)=>Number.isFinite(T)?m-K*(T-30):m, nz=ptsNoise(run.carPath);
+  const pts=ptsRecs(run.carPath).filter(r=>r.track===trk && Number.isFinite(r.med) && (r.laps||0)>=3).map(r=>({r, p:ptsOf(r.aero,ref,r.track), t:corr(r.med,r.trackT)})).filter(x=>x.p && Number.isFinite(x.p.df));
+  const lvKey=r=>{ const a=r.aero; return Number.isFinite(a.w)&&Number.isFinite(a.sF)&&Number.isFinite(a.sR) ? `${a.w}|${Math.round(a.sF/2)}|${Math.round(a.sR/2)}` : null; };
+  const g={}; for (const x of pts){ const s=lvKey(x.r); if (s) (g[s]=g[s]||[]).push(x); }
+  const lv=Object.values(g).filter(v=>v.length>=3).map(v=>({df:median(v.map(x=>x.p.df)), t:median(v.map(x=>x.t)), n:v.length}));
+  const span=lv.length ? Math.max(...lv.map(x=>x.df))-Math.min(...lv.map(x=>x.df)) : 0;
+  if (lv.length>=3 && span>=Math.max(6, 2*nz)){ const c=fitLS(lv.map(x=>[1,x.df,x.df*x.df]), lv.map(x=>x.t)); const lo=Math.min(...lv.map(x=>x.df)), hi=Math.max(...lv.map(x=>x.df));
+    if (c && c[2]>0){ const o=-c[1]/(2*c[2]); if (o>lo-5 && o<hi+5) return {v:Math.round(o), how:`From your ${lv.length} setups here: lap time (temperature taken out) is quickest around this level`, pts, nz}; }
+    const best=lv.slice().sort((a,b)=>a.t-b.t)[0]; return {v:Math.round(best.df), how:`From your ${lv.length} setups here: your quickest so far (no clear peak yet, try ${best.df>=hi-1?"a little more":"a little less"})`, pts, nz}; }
+  const N=trackNeed(run,A), d=N.kind==="high"?6:N.kind==="low"?-6:0, why=`Rough guide until 3 setups here differ by more than the ±${nz} wobble (wing or ride height, not just springs)`;
+  return {v:100+d, guide:true, how:N.kind==="high"?`${why}: a lot of time in fast corners, so more downforce pays`:N.kind==="low"?`${why}: long flat-out stretches, so less drag pays`:`${why}: a balanced track (fast corners and straights)`, pts, nz}; }
 function pointsHTML(run, A){
-  if (!A.aero) return ""; const ref=ptsRef(run,A); const me=aeroPoint(run,A), p=ptsOf(me,ref); if (!p || !Number.isFinite(p.df)) return "";
+  if (!A.aero) return ""; const ref=ptsRef(run,A); const me=aeroPoint(run,A), p=ptsOf(me,ref,learnTrackOf(run)); if (!p || !Number.isFinite(p.df)) return "";
   const T=ptsTarget(run,A,ref), d=p.df-T.v, tile=(k,v,s,col)=>`<div class="stat"><div class="k">${k}</div><div class="v" style="font-size:30px${col?`;color:${col}`:""}">${v}</div><div class="s">${s}</div></div>`;
-  const near=Math.abs(d)<=2, col=near?"var(--good)":"#e0a030";
+  const near=Math.abs(d)<=Math.max(2,T.nz), col=near?"var(--good)":"#e0a030";
   return `<section><h2>Downforce points <small>100 = ${esc(ref.label)} · <a href="#" id="ptsRefSet" style="color:var(--ink);text-decoration:underline">make this stint 100</a></small></h2>
     <div class="grid" style="margin-bottom:8px">
-      ${tile("Downforce", fmt(p.df,0), `${fmt(dfAt200(me)/9.81,0)} kg at 200 km/h`)}
-      ${tile("Drag", p.drag?fmt(p.drag,0):"–", p.drag?"from the full-throttle pull":"needs flat-out straights")}
+      ${tile("Downforce", `${fmt(p.df,0)}<span style="font-size:15px;color:var(--muted)"> ±${T.nz}</span>`, `${fmt(dfAt200(me)/9.81,0)} kg at 200 km/h`)}
+      ${tile("Drag", p.drag?fmt(p.drag,0):"–", p.drag?"from top speed":ref.track!==learnTrackOf(run)?"compares at the reference track only":"needs a top speed")}
       ${tile("Efficiency", p.eff?fmt(p.eff,0):"–", "downforce ÷ drag")}
-      ${tile("Aim for", `${T.guide?"~":""}${T.v}`, near?"✓ you're there":`${d>0?"−":"+"}${fmt(Math.abs(d),0)} points`, col)}
+      ${tile("Aim for", `${T.guide?"~":""}${T.v}`, near?(Math.abs(d)<=2?"✓ you're there":`✓ within the ±${T.nz} wobble`):`${d>0?"−":"+"}${fmt(Math.abs(d),0)} points`, col)}
     </div>
     <canvas id="ptsChart"></canvas>
-    ${infoBox("How the points work", `${esc(T.how)}. A point is 1% of the reference stint's downforce (or drag). Downforce is estimated from how far the springs and bump rubbers are squashed at speed, taken to 200 km/h; drag from how hard the car still pulls flat out. Use them to compare setups of this car: wing, rake and ride height move them, softer springs alone mostly don't. More downforce for a smaller rise in drag is a good trade (efficiency up).`)}</section>`; }
+    ${infoBox("How the points work", `${esc(T.how)}. A point is 1% of the reference downforce (or drag): the median of every stint on that setup, so one odd stint can't set the scale. Downforce is estimated from how far the springs and bump rubbers are squashed at speed, taken to 200 km/h; drag from top speed: at the same track and gearing, drag goes with 1 ÷ top speed³ (a tow from another car spoils it), so drag points only compare at the reference's track. The estimate wobbles about ±${T.nz} points between stints of the same setup, so only a bigger change is real. Use them to compare setups of this car: wing, rake and ride height move them, softer springs alone mostly don't. More downforce for a smaller rise in drag is a good trade (efficiency up).`)}</section>`; }
 function drawPoints(run, A){
-  const cv=$("#ptsChart"); if (!cv) return; const ref=ptsRef(run,A), T=ptsTarget(run,A,ref), me=ptsOf(aeroPoint(run,A),ref); if (!me) return;
-  const pts=T.pts.filter(x=>Number.isFinite(x.p.drag)), xs=[...pts.map(x=>x.p.drag), me.drag||100, 100], ys=[...pts.map(x=>x.p.df), me.df, 100, T.v];
-  const xr=[Math.floor(Math.min(...xs)-4), Math.ceil(Math.max(...xs)+4)], yr=[Math.floor(Math.min(...ys)-4), Math.ceil(Math.max(...ys)+4)];
+  const cv=$("#ptsChart"); if (!cv) return; const ref=ptsRef(run,A), T=ptsTarget(run,A,ref), me=ptsOf(aeroPoint(run,A),ref,learnTrackOf(run)); if (!me) return;
+  // against drag when both have it; otherwise stint by stint over time, which shows the wobble
+  const byDrag=Number.isFinite(me.drag) && T.pts.filter(x=>Number.isFinite(x.p.drag)).length>=1, nz=T.nz;
+  const pts=byDrag ? T.pts.filter(x=>Number.isFinite(x.p.drag)) : T.pts.filter(x=>Math.abs(x.p.df-me.df)>0.01).slice(-24), n=pts.length;
+  const xOf=(x,i)=>byDrag ? x.p.drag : i, meX=byDrag ? me.drag : n;
+  const xs=byDrag ? [...pts.map(x=>x.p.drag), me.drag, 100] : [-0.5, n+0.5], ys=[...pts.map(x=>x.p.df), me.df-nz, me.df+nz, 100, T.v];
+  const xr=byDrag ? [Math.floor(Math.min(...xs)-4), Math.ceil(Math.max(...xs)+4)] : xs, yr=[Math.floor(Math.min(...ys)-4), Math.ceil(Math.max(...ys)+4)];
   const [c,w,h]=canvasCtx(cv,240), m={l:36,r:10,t:12,b:28}, X=x=>m.l+(x-xr[0])/(xr[1]-xr[0])*(w-m.l-m.r), Y=y=>h-m.b-(y-yr[0])/(yr[1]-yr[0])*(h-m.t-m.b);
   c.font="11px system-ui"; c.lineWidth=1; c.strokeStyle=css("--grid"); c.fillStyle=css("--muted");
-  for (let i=0;i<=4;i++){ const y=yr[0]+(yr[1]-yr[0])*i/4, x=xr[0]+(xr[1]-xr[0])*i/4; c.beginPath(); c.moveTo(m.l,Y(y)); c.lineTo(w-m.r,Y(y)); c.stroke(); c.fillText(y.toFixed(0),4,Y(y)+4); c.fillText(x.toFixed(0),X(x)-8,h-12); }
-  c.fillText("downforce points",m.l+4,m.t+10); c.textAlign="right"; c.fillText("drag points →",w-m.r,h-26); c.textAlign="left";
+  for (let i=0;i<=4;i++){ const y=yr[0]+(yr[1]-yr[0])*i/4, x=xr[0]+(xr[1]-xr[0])*i/4; c.beginPath(); c.moveTo(m.l,Y(y)); c.lineTo(w-m.r,Y(y)); c.stroke(); c.fillText(y.toFixed(0),4,Y(y)+4); if (byDrag) c.fillText(x.toFixed(0),X(x)-8,h-12); }
+  c.fillText("downforce points",m.l+4,m.t+10); c.textAlign="right"; c.fillText(byDrag?"drag points →":"your stints here, oldest → this one",w-m.r,byDrag?h-26:h-10); c.textAlign="left";
   c.fillStyle=css("--good")+"22"; c.fillRect(m.l,Y(T.v+2),w-m.l-m.r,Y(T.v-2)-Y(T.v+2)); c.fillStyle=css("--good"); c.textAlign="right"; c.fillText(`aim ${T.guide?"~":""}${T.v}`,w-m.r-4,Y(T.v)-4); c.textAlign="left";
-  c.strokeStyle=css("--muted"); c.beginPath(); c.moveTo(X(100)-6,Y(100)); c.lineTo(X(100)+6,Y(100)); c.moveTo(X(100),Y(100)-6); c.lineTo(X(100),Y(100)+6); c.stroke(); c.fillStyle=css("--muted"); if (Math.abs(me.df-100)>1.5 || Math.abs((me.drag||100)-100)>1.5) c.fillText("100",X(100)+8,Y(100)+12);
+  c.strokeStyle=css("--muted"); c.setLineDash([4,4]); c.beginPath(); c.moveTo(m.l,Y(100)); c.lineTo(w-m.r,Y(100)); c.stroke(); c.setLineDash([]); c.fillStyle=css("--muted"); c.fillText("100",m.l+4,Y(100)-4);
   const ts=pts.map(x=>x.t), t0=Math.min(...ts), t1=Math.max(...ts);
-  for (const x of pts){ const f=t1>t0?(x.t-t0)/(t1-t0):0; c.fillStyle=`hsl(${120-120*f},60%,50%)`; c.beginPath(); c.arc(X(x.p.drag),Y(x.p.df),4.5,0,7); c.fill(); }
-  const mx=X(me.drag||100); c.strokeStyle=css("--ink"); c.lineWidth=2.5; c.beginPath(); c.arc(mx,Y(me.df),8,0,7); c.stroke(); c.fillStyle=css("--ink"); c.fillText("this stint",mx+11,Y(me.df)+4);
-  if (pts.length>1){ c.fillStyle=css("--muted"); c.fillText("dots: your stints here, green = quickest lap",m.l+4,h-m.b-6); } }
+  pts.forEach((x,i)=>{ const f=t1>t0?(x.t-t0)/(t1-t0):0; c.fillStyle=`hsl(${120-120*f},60%,50%)`; c.beginPath(); c.arc(X(xOf(x,i)),Y(x.p.df),4.5,0,7); c.fill(); });
+  const mx=X(meX); c.strokeStyle=css("--ink"); c.lineWidth=1.5; c.beginPath(); c.moveTo(mx,Y(me.df-nz)); c.lineTo(mx,Y(me.df+nz)); c.moveTo(mx-5,Y(me.df-nz)); c.lineTo(mx+5,Y(me.df-nz)); c.moveTo(mx-5,Y(me.df+nz)); c.lineTo(mx+5,Y(me.df+nz)); c.stroke();
+  c.lineWidth=2.5; c.beginPath(); c.arc(mx,Y(me.df),8,0,7); c.stroke(); c.fillStyle=css("--ink"); c.textAlign=byDrag?"left":"right"; c.fillText("this stint",byDrag?mx+11:mx-12,Y(me.df)+4); c.textAlign="left";
+  if (n>1){ c.fillStyle=css("--muted"); c.fillText(`dots: your stints here, green = quickest lap · bar = ±${nz} wobble`,m.l+4,h-m.b-6); } }
 // ---------- drag: from full-throttle acceleration on the straights ----------
 // a = P/(m·v) − k·v² − c (v in m/s): power over speed, minus aero drag (k) and rolling resistance (c). k is the drag index: it goes up with
 // more wing, more rake or a higher car. Top two gears only, no cornering, no braking; needs LongAccel. Compares stints of the same car.
@@ -3988,7 +4010,7 @@ function aeroCmpHTML(run, A, S){
     ["Fast corners: front / rear", me.fcF, oa.fcF, "mm", 1, null, me.fcR, oa.fcR], ["Fast corners: rake", me.fcRake, oa.fcRake, "mm", 1], ["Fast corners: time in the rake window", me.fcIn, oa.fcIn, "%", 0],
     ["At speed (straights): front / rear", me.fA, oa.fA, "mm", 1, null, me.rA, oa.rA], ["End of the straight: front / rear", me.topF, oa.topF, "mm", 1, null, me.topR, oa.topR],
     ["Braking from top speed: front / rear", me.brkF, oa.brkF, "mm", 1, null, me.brkR, oa.brkR], ["Splitter's lowest point", me.splMin, oa.splMin, "mm", 1],
-    ["Top speed", me.vmax, oa.vmax, "km/h", 1], ["Drag index (lower = less drag)", me.drag, oa.drag, "", 2], ...(()=>{ const ref=ptsRef(run,A), a=ptsOf(me,ref), b=ptsOf(oa,ref); return a&&b ? [["Downforce points", a.df, b.df, "", 0], ["Drag points", a.drag, b.drag, "", 0]] : []; })(),
+    ["Top speed", me.vmax, oa.vmax, "km/h", 1], ...(()=>{ const ref=ptsRef(run,A), a=ptsOf(me,ref,trk), b=ptsOf(oa,ref,trk); return a&&b ? [["Downforce points", a.df, b.df, "", 0], ["Drag points", a.drag, b.drag, "", 0]] : []; })(),
     ["Balance in fast corners (+ understeer)", A.highSpeed&&A.highSpeed.med, o.bal&&o.bal.fast, "°", 2]];
   const f=(v,d)=>v==null||!Number.isFinite(+v)?"–":fmt(+v,d), dd=(a,b,d)=>Number.isFinite(+a)&&Number.isFinite(+b)&&a!=null&&b!=null&&Math.abs(a-b)>=Math.pow(10,-d)/2?`${a-b>0?"+":""}${fmt(a-b,d)}`:"";
   return `<section><h2>Compare with another stint <small>your aero numbers side by side: what a change did to the platform</small></h2>
