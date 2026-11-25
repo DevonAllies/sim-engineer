@@ -656,6 +656,11 @@ function analyze(run){
   { const S2={}; for (const b of ["low","med","high"]) S2[b]={coast:[],maint:[],coastA:[],maintA:[]};
     for (const j of idx){ const u=us[j]; if (!Number.isFinite(u) || ch.Brake[j]>0.05 || ch.Throttle[j]>=0.4) continue; const t2=ch.Throttle[j]<0.05?"coast":"maint", s=S2[bandOf(ch.Speed[j]*3.6)]; s[t2+"A"].push(u); if (lim[j]) s[t2].push(u); }
     A.midSplit={}; for (const [b,s] of Object.entries(S2)){ A.midSplit[b]={}; for (const k of ["coast","maint"]){ const a=s[k].length>=150?s[k]:s[k+"A"]; A.midSplit[b][k]={n:a.length, med:median(a)}; } } }
+  // left-handers against right-handers (mid-corner, near the limit): a car that pushes one way more than the other wants an asymmetric setup
+  { const D={}; for (const b of ["low","med","high"]) D[b]={L:[],R:[]};
+    for (const j of idx){ const u=us[j]; if (!lim[j] || !Number.isFinite(u) || ch.Brake[j]>0.05 || ch.Throttle[j]>=0.4) continue;
+      const left=(ch.YawRate[j]*ysgn>0)===leftInsideWhenPos; D[bandOf(ch.Speed[j]*3.6)][left?"L":"R"].push(u); }
+    A.dirBal={}; for (const [b,s] of Object.entries(D)) A.dirBal[b]={L:{n:s.L.length, med:median(s.L)}, R:{n:s.R.length, med:median(s.R)}}; }
   const pool = (ph,bd) => { const a=[]; for (const p of ph) for (const b of bd) a.push(...bins[p+b]); return {n:a.length, med:median(a)}; };
   A.mechMid = pool(["mid"],["low","med"]);
   A.mechAll = pool(["mid","exit"],["low"]);
@@ -1291,6 +1296,20 @@ function suggest(run, A){
       [O("Rear wing +1", C(w,+1)), O("Rear ride height −1 mm (less rake)", rear(SET.rh,-1))],
       "A loose rear at speed means the aero balance is too far forward for you. More rear wing or a little less rake moves it back.",
       `Your feel this stint; measured ${fmt(fm,2)}° in corners over 175 km/h.`, "medium"); }
+  // Left against right: pushing more one way than the other is a cross-weight job (a bar changes both ways alike)
+  if (A.dirBal){ let sw=0, sd=0; const parts=[];
+    for (const b of ["low","med","high"]){ const x=A.dirBal[b]; if (!x || x.L.n<90 || x.R.n<90 || !Number.isFinite(x.L.med) || !Number.isFinite(x.R.med)) continue; const d=x.L.med-x.R.med, wg=Math.min(x.L.n,x.R.n); sw+=wg; sd+=wg*d; parts.push([b,x,d]); }
+    const avg=sw?sd/sw:0, agree=!parts.some(([,,d])=>Math.sign(d)!==Math.sign(avg) && Math.abs(d)>0.25);
+    A.dirBalSum={avg, parts:parts.length, agree};
+    if (parts.length && agree && Math.abs(avg)>=0.4){
+      const pushL=avg>0, cw=findSet(run,(p,k)=>k==="crossweight"), cwv=cw?parseFloat(cw.raw):NaN, to=Number.isFinite(cwv)?fmt(cwv+(pushL?-0.5:0.5),1)+"%":null;
+      const nmC={leftfront:"LF",rightfront:"RF",leftrear:"LR",rightrear:"RR"}, up=pushL?["leftfront","rightrear"]:["rightfront","leftrear"], dn=pushL?["rightfront","leftrear"]:["leftfront","rightrear"];
+      const bn=b=>b==="low"?"slow":b==="med"?"medium":"fast";
+      add(Math.abs(avg)>=0.8?2:1,"Balance",`Asymmetric: pushes more in ${pushL?"left":"right"}-handers than ${pushL?"right":"left"}-handers (${fmt(Math.abs(avg),1)}° more understeer)`,
+        [O(`Cross weight ${pushL?"−":"+"}0.5%${to?` (→ ${to})`:""}: ${up.map(c=>nmC[c]).join(" and ")} ride height +0.5 mm, ${dn.map(c=>nmC[c]).join(" and ")} −0.5 mm`, up.map(c=>C(SET.rh(run,c),+0.5)), dn.map(c=>C(SET.rh(run,c),-0.5)))],
+        `The car isn't the same both ways, so the right setup here isn't symmetric. Cross weight above 50% makes the car push more in left-handers and turn better in right-handers; below 50% the opposite. Moving it ${pushL?"down":"up"} evens the two out without changing the overall balance (a bar or the wing would change both directions alike). The diagonal ride-height change leaves the front and rear heights, the rake and the splitter where they are. Check the garage reading${to?` lands near ${to}`:""} and go in 0.5 mm steps; if the gap closes, keep it.`,
+        `Mid-corner understeer near the limit, left / right: ${parts.map(([b,x])=>`${bn(b)} corners L ${fmt(x.L.med,1)}° / R ${fmt(x.R.med,1)}°`).join(", ")}${Number.isFinite(cwv)?`. Cross weight now ${fmt(cwv,1)}%`:""}.`, "low");
+    } }
   // Mid-corner, slow/medium
   if (A.mechMid.n>60){
     if (A.mechMid.med>US_PUSH)
@@ -1446,22 +1465,28 @@ function suggest(run, A){
   const minP = +S.minPress || 0, hotP = c => Number.isFinite(A.tires[c]?.press) ? A.tires[c].press : TT[c]?.hot;
   let BP=null; try { const tm=tyreModelOf(run,A,S); BP=tm&&tm.best; } catch(e){}
   let RP=null; if (RACE.type==="endurance") try { RP=racePressure(run,A,S); } catch(e){}
+  const heatOf=c=>{ const e=SET.press(run,CORNERS[c]), s=e?parseFloat(e.raw):NaN, h=hotP(c); return Number.isFinite(s)&&Number.isFinite(h)?h-s:NaN; };
+  const sideOff={}, sideWhy=[]; for (const [L,R] of [["LF","RF"],["LR","RR"]]){ const a=heatOf(L), b=heatOf(R);
+    if (Number.isFinite(a)&&Number.isFinite(b)&&Math.abs(a-b)>=3){ const m=(a+b)/2; sideOff[L]=Math.round(m-a); sideOff[R]=Math.round(m-b); sideWhy.push(`${a>b?L:R} gains ${fmt(Math.abs(a-b),0)} kPa more than ${a>b?R:L} from cold to hot`); } }
+  const offP=c=>sideOff[c]||0, splitTxt=()=>sideWhy.length?` Asymmetric on purpose: ${sideWhy.join("; ")}, so the side that heats up more starts lower and both reach the same hot pressure.`:"";
   if (RP){   // endurance: the starting pressure for the race's track / air temperature (hot pressure mid-window)
-    const es=Object.keys(CORNERS).filter(c=>!pressDone.has(c)).map(c=>SET.press(run,CORNERS[c])).filter(e=>e && Math.abs(parseFloat(e.raw)-RP.set)>=1);
+    const tg=c=>RP.set+offP(c), spl=Object.keys(sideOff).length>0;
+    const es=Object.keys(CORNERS).filter(c=>!pressDone.has(c)).map(c=>[c,SET.press(run,CORNERS[c])]).filter(([c,e])=>e && Math.abs(parseFloat(e.raw)-tg(c))>=1), lbl=spl?es.map(([c])=>`${c} ${tg(c)}`).join(", ")+" kPa":`${RP.set} kPa`;
     if (es.length)
-      add(3,"Tyres",`Race starting pressure: ${RP.set} kPa for ${fmt(RP.tRace,0)}°C track / ${fmt(RP.aRace,0)}°C air`,
-        [O(`Starting pressures → ${RP.set} kPa`, es.map(e=>CS(e,`${RP.set} kPa`)))],
-        `Over a long run the tyres should sit in the ${S.hotMin}–${S.hotMax} kPa hot window. Tyres are set at the air temperature and heat up with the track, so the gas law, calibrated on your ${RP.n} stint${RP.n>1?"s":""}, gives the start that lands them at about ${fmt(RP.hotSet,0)} kPa hot. Full table under Tyres.`,
+      add(3,"Tyres",`Race starting pressure: ${lbl} for ${fmt(RP.tRace,0)}°C track / ${fmt(RP.aRace,0)}°C air`,
+        [O(`Starting pressures → ${lbl}`, es.map(([c,e])=>CS(e,`${tg(c)} kPa`)))],
+        `Over a long run the tyres should sit in the ${S.hotMin}–${S.hotMax} kPa hot window. Tyres are set at the air temperature and heat up with the track, so the gas law, calibrated on your ${RP.n} stint${RP.n>1?"s":""}, gives the start that lands them at about ${fmt(RP.hotSet,0)} kPa hot. Full table under Tyres.${splitTxt()}`,
         `Tyre air temperature in the race ≈ ${fmt(RP.TeffRace,0)}°C (${RP.slopeSrc}).`, RP.n>=4?"medium":"low");
   } else if (BP){   // the best-pressure model (grip vs working window vs hot pressure) decides
     const AXC={F:["LF","RF"], R:["LR","RR"]}, moves=[];
     for (const [ax,a] of Object.entries(BP.ax)){ const cs=AXC[ax].filter(c=>!pressDone.has(c)); if (!cs.length) continue;
-      const es=cs.map(c=>SET.press(run,CORNERS[c])).filter(e=>e && Math.abs(parseFloat(e.raw)-a.pick.p)>=1); if (es.length) moves.push([ax,a,es]); }
+      const es=cs.map(c=>[c,SET.press(run,CORNERS[c])]).filter(([c,e])=>e && Math.abs(parseFloat(e.raw)-(a.pick.p+offP(c)))>=1); if (es.length) moves.push([ax,a,es]); }
+    const pl=(ax,a,es)=>es.some(([c])=>offP(c)) ? es.map(([c])=>`${c} ${a.pick.p+offP(c)}`).join(" / ")+" kPa" : `${ax==="F"?"fronts":"rears"} ${a.pick.p} kPa`;
     if (moves.length)
-      add(2,"Tyres",`Best starting pressure: ${moves.map(([ax,a])=>`${ax==="F"?"fronts":"rears"} ${a.pick.p} kPa`).join(", ")}`,
-        [O(`Starting pressures ${moves.map(([ax,a])=>`${ax==="F"?"front":"rear"} → ${a.pick.p}`).join(", ")} kPa`, moves.flatMap(([,a,es])=>es.map(e=>CS(e,`${a.pick.p} kPa`))))],
+      add(2,"Tyres",`Best starting pressure: ${moves.map(([ax,a,es])=>pl(ax,a,es)).join(", ")}`,
+        [O(`Starting pressures → ${moves.map(([ax,a,es])=>pl(ax,a,es)).join(", ")}`, moves.flatMap(([,a,es])=>es.map(([c,e])=>CS(e,`${a.pick.p+offP(c)} kPa`))))],
         `Lowest pressure gives the most grip, but a tyre outside its ${BP.ax.F?.rows?"working window":"window"} or over its hot-pressure target loses grip too. The model weighs all three and picks the lowest total cost${BP.measured?`, using the ${BP.perKpa>=0?"+":""}${BP.perKpa.toFixed(2)}°C per kPa measured across your stints`:" (no stints at other pressures yet, so pressure is assumed not to change the temperature)"}. Full table under Tyres.`,
-        moves.map(([ax,a])=>`${ax==="F"?"Fronts":"Rears"} now ${a.e.raw.trim()} at ${fmt(a.T,0)}°C → ${a.pick.p} kPa ≈ ${fmt(a.pick.t,0)}°C${Number.isFinite(a.pick.hot)?`, hot ≈ ${fmt(a.pick.hot,0)} kPa`:""}`).join("; ")+".", BP.measured?"medium":"low");
+        moves.map(([ax,a])=>`${ax==="F"?"Fronts":"Rears"} now ${a.e.raw.trim()} at ${fmt(a.T,0)}°C → ${a.pick.p} kPa ≈ ${fmt(a.pick.t,0)}°C${Number.isFinite(a.pick.hot)?`, hot ≈ ${fmt(a.pick.hot,0)} kPa`:""}`).join("; ")+"."+splitTxt(), BP.measured?"medium":"low");
   } else if (RACE.type!=="endurance" && minP){
     const high = Object.keys(CORNERS).filter(c=>!pressDone.has(c) && !(want[c] && want[c].press>0)).map(c=>[c,SET.press(run,CORNERS[c])]).filter(([,e])=>e && parseFloat(e.raw)>minP+0.5);
     if (high.length)
@@ -5211,7 +5236,7 @@ const GUIDE = [
   ["Traction control (TC)","Cuts power when the rear wheels spin.","More: less wheelspin and rear tyre wear, but slower exits if it cuts too much.","Less: faster exits if you can manage the throttle."],
   ["ABS","Stops the wheels locking under braking.","More: fewer lock-ups, but longer stops if set too high for the grip.","Less: shorter stops, but easier to lock up."],
   ["Toe","Whether the wheels point slightly in or out.","More toe-in: more stable on the straights.","Toe-out (front): sharper turn-in. Large toe either way adds drag and wear."],
-  ["Cross weight","How the weight is shared diagonally.","Keep 50% for road tracks so the car turns the same left and right.","Above 50%: more understeer in left-handers, more oversteer in right-handers."]]],
+  ["Cross weight","How the weight is shared diagonally.","Start at 50%. If the car pushes more one way than the other, move it (the app suggests it from the left- and right-hander balance).","Above 50%: more understeer in left-handers, more oversteer in right-handers."]]],
 ];
 // quick fixes, in our own words (after Chris Haye's cheat sheet; the app's own rules follow the same directions)
 const QUICK = [
