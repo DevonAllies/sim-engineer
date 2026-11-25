@@ -3141,7 +3141,7 @@ function render(){
   document.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>{ view=b.dataset.go; render(); });
   { const lf=$("#loadFullNow"); if (lf) lf.onclick=()=>{ lf.disabled=true; lf.textContent="Loading…"; loadStintIbt(run, 0, -1, true); }; }
   { const eo=$("#explainOpen"); if (eo) eo.onchange=()=>{ PREFS.set("explainOpen", eo.checked); render(); }; }
-  if (view==="aero"){ try { drawPoints(run,A); } catch(e){ console.error("points",e); } const ps=$("#ptsRefSet"); if (ps) ps.onclick=e=>{ e.preventDefault(); const me=aeroPoint(run,A); if (me && dfAt200(me)){ PREFS.set("dfref2|"+run.carPath,{df:dfAt200(me), vmax:me.vmax||null, track:learnTrackOf(run), label:`${new Date().toLocaleDateString([], {day:"2-digit", month:"short"})} · ${run.short||"this stint"}`}); render(); } }; }
+  if (view==="aero"){ try { drawPoints(run,A); } catch(e){ console.error("points",e); } const ps=$("#ptsRefSet"); if (ps) ps.onclick=e=>{ e.preventDefault(); const me=aeroPoint(run,A); if (me && dfAt200(me)){ PREFS.set(ptsKey(run),{df:dfAt200(me), vmax:me.vmax||null, track:learnTrackOf(run), label:`${new Date().toLocaleDateString([], {day:"2-digit", month:"short"})} · ${run.short||"this stint"}`}); render(); } }; }
   if (view==="aero" || view==="dampers"){ const ob=$("#openFull"); if (ob) ob.onclick=()=>{ current=+ob.dataset.i; LIVE.follow=false; render(); }; }
   if (view==="aero" && A.rh){ drawRH(run,A,S); try { drawRake(run,A,S); } catch(e){ console.error("rake",e); } { const rs=$("#rakeCmpSel"); if (rs) rs.onchange=()=>{ RAKE_CMP=rs.value||null; render(); }; } try { drawWinMap(run,A); } catch(e){ console.error("winmap",e); } try { wirePlat(run,A,S); } catch(e){ console.error("plat",e); } { const sel=$("#aeroCmpSel"); if (sel) sel.onchange=()=>{ AERO_CMP=sel.value; render(); }; } try { wireRHC(run,A,S); } catch(e){ console.error("rhc",e); } }
   if (view==="laps") drawTrace(run,A);
@@ -3965,17 +3965,20 @@ const ptsRecs = car => Object.values(LEARN||{}).filter(r=>r.car===car && r.aero 
 function ptsNoise(car){ const g={}; for (const r of ptsRecs(car)){ const s=ptsSig(r); if (s) (g[r.track+"#"+s]=g[r.track+"#"+s]||[]).push(dfAt200(r.aero)); }
   const dev=[]; for (const v of Object.values(g)) if (v.length>=2){ const m=median(v); for (const x of v) dev.push(Math.abs(x/m-1)); }
   return dev.length>=4 ? Math.min(20, Math.max(3, Math.round(1.4826*median(dev)*100))) : 10; }
+const ptsKey = run => "dfref3|"+run.carPath+"|"+learnTrackOf(run);
 function ptsRef(run, A){
-  const key="dfref2|"+run.carPath, P=PREFS.get(key); if (P && Number.isFinite(P.df)) return P;
-  // first time: every stint run on the programme baseline's setup (same track, wing and springs), median, so one odd stint can't set the scale;
-  // without a baseline, the earliest setup of this car with a downforce number
+  // one reference per car AND track: the downforce estimate (from how far the suspension is squashed) doesn't carry across tracks
+  // (Sebring's bumps read ~30% "more downforce" than Silverstone with the same wing), so points only compare stints at one track
+  const trk=learnTrackOf(run), key=ptsKey(run), P=PREFS.get(key); if (P && Number.isFinite(P.df)) return P;
+  // first time: every stint here on the programme baseline's setup (same wing and springs), median, so one odd stint can't set the scale;
+  // without a baseline here, the setup you've run most here
   const recs=ptsRecs(run.carPath);
-  let base=null; try { const PB=PREFS.get(tpKeyOf(run,"car")); if (PB){ const b=tpStatus(run,PB).find(s=>s.id==="base"); const id=b&&b.stints[0]&&b.stints[0].id; base=recs.find(r=>r.id===id)||null; } } catch(e){}
-  const here=recs.filter(x=>x.track===learnTrackOf(run)), cnt={}; for (const x of here){ const s=ptsSig(x); if (s) cnt[s]=(cnt[s]||0)+1; }
-  const top=Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a])[0], r=base||(top&&here.find(x=>ptsSig(x)===top))||here[0]||recs[0];
+  let base=null; try { const PB=PREFS.get(tpKeyOf(run,"car")); if (PB){ const b=tpStatus(run,PB).find(s=>s.id==="base"); const id=b&&b.stints[0]&&b.stints[0].id; base=recs.find(r=>r.id===id && r.track===trk)||null; } } catch(e){}
+  const here=recs.filter(x=>x.track===trk), cnt={}; for (const x of here){ const s=ptsSig(x); if (s) cnt[s]=(cnt[s]||0)+1; }
+  const top=Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a])[0], r=base||(top&&here.find(x=>ptsSig(x)===top))||here[0];
   if (r){ const sg=ptsSig(r), grp=recs.filter(x=>x.track===r.track && sg && ptsSig(x)===sg), G=grp.length?grp:[r], vm=G.map(x=>x.aero.vmax).filter(v=>v>100);
     const o={df:median(G.map(x=>dfAt200(x.aero))), vmax:vm.length?median(vm):null, track:r.track, n:G.length,
-      label:`${G.length>1?`your ${G.length} stints on`:new Date(r.date).toLocaleDateString([], {day:"2-digit", month:"short"})+" ·"} ${r.setupName||"setup"}${G.length>1?" (same wing and springs)":""}`};
+      label:`${G.length>1?`your ${G.length} stints here on`:new Date(r.date).toLocaleDateString([], {day:"2-digit", month:"short"})+" ·"} ${r.setupName||"setup"}${G.length>1?" (same wing and springs)":""}`};
     PREFS.set(key,o); return o; }
   const me=A?aeroPoint(run,A):null; if (me && dfAt200(me)) return {df:dfAt200(me), vmax:me.vmax||null, track:learnTrackOf(run), label:"this stint"}; return null; }
 function ptsOf(a, ref, trk){ if (!a || !ref) return null; const d=dfAt200(a); const o={df: d&&ref.df ? 100*d/ref.df : null, drag: trk!=null && ref.track===trk && a.vmax>100 && ref.vmax>100 ? 100*Math.pow(ref.vmax/a.vmax,3) : null}; o.eff = o.df&&o.drag ? 100*o.df/o.drag : null; return o; }
@@ -4007,7 +4010,7 @@ function pointsHTML(run, A){
       ${tile("Aim for", `${T.guide?"~":""}${T.v}`, near?(Math.abs(d)<=2?"✓ you're there":`✓ within the ±${T.nz} wobble`):`${d>0?"−":"+"}${fmt(Math.abs(d),0)} points`, col)}
     </div>
     <canvas id="ptsChart"></canvas>
-    ${infoBox("How the points work", `${esc(T.how)}. A point is 1% of the reference downforce (or drag): the median of every stint on that setup, so one odd stint can't set the scale. Downforce is estimated from how far the springs and bump rubbers are squashed at speed, taken to 200 km/h; drag from top speed: at the same track and gearing, drag goes with 1 ÷ top speed³ (a tow from another car spoils it), so drag points only compare at the reference's track. The estimate wobbles about ±${T.nz} points between stints of the same setup, so only a bigger change is real. Use them to compare setups of this car: wing, rake and ride height move them, softer springs alone mostly don't. More downforce for a smaller rise in drag is a good trade (efficiency up).`)}</section>`; }
+    ${infoBox("How the points work", `${esc(T.how)}. A point is 1% of the reference downforce (or drag): the median of every stint on that setup, so one odd stint can't set the scale. Downforce is estimated from how far the springs and bump rubbers are squashed at speed, taken to 200 km/h; drag from top speed: at the same track and gearing, drag goes with 1 ÷ top speed³ (a tow from another car spoils it), so drag points only compare at the reference's track. The estimate wobbles about ±${T.nz} points between stints of the same setup, so only a bigger change is real. Use them to compare setups of this car at this track (the estimate does not carry across tracks: bumpier tracks read higher): wing, rake and ride height move them, softer springs alone mostly don't. More downforce for a smaller rise in drag is a good trade (efficiency up).`)}</section>`; }
 function drawPoints(run, A){
   const cv=$("#ptsChart"); if (!cv) return; const ref=ptsRef(run,A), T=ptsTarget(run,A,ref), me=ptsOf(aeroPoint(run,A),ref,learnTrackOf(run)); if (!me) return;
   // against drag when both have it; otherwise stint by stint over time, which shows the wobble
