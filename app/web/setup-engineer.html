@@ -50,6 +50,7 @@ th{color:var(--muted);font-weight:500;font-size:12px}
 .sugg .measured{font-size:12.5px;margin:-2px 0 6px}
 .sugg .steps{margin:2px 0 8px 26px;padding:0;font-size:13px;line-height:1.7}
 .sugg .feel{margin:6px 0 2px;font-size:13px}
+.sugg .lever{margin:-4px 0 8px 26px;font-size:12.5px;color:var(--muted);max-width:760px}
 .sugg .pick{font-size:12px;margin:4px 0 0}
 details.info{margin:8px 0 0;font-size:13px}
 details.info>summary{cursor:pointer;color:var(--muted);font-size:12px;list-style:none;display:inline-block;padding:2px 10px;border:1px solid var(--line);border-radius:12px;user-select:none}
@@ -4404,6 +4405,57 @@ const GSECT = {InCarAdjustments:"In-car adjustments", GearsDifferential:"Gears /
 function garageStep(c){
   const parts=c.e.path.replace(/^CarSetup\./,"").split("."), tab=GTAB[parts[0]]||sentence(parts[0]), sect=parts.length>2?(GSECT[parts[1]]||sentence(parts[1])):"", inCar=/InCarAdjustments/.test(c.e.path);
   return `<li><span class="muted">${esc(tab)}${sect?` › ${esc(sect)}`:""}</span> · ${esc(sentence(c.e.key))}: ${esc(c.e.raw.trim())} → <b>${esc(c.res.raw)}</b>${c.res.clamped?` <span class="tag">at the limit</span>`:""}${inCar?` <span class="muted">(or from the cockpit)</span>`:""}</li>`; }
+// what each garage click does, for the driver: one line per setting and direction, shown under every option of a card
+// end: "front" / "rear" / "" ; up: the setting does more of itself (stiffer, more, higher; the car's own number direction already taken out)
+const LEVERS = [
+  [/arb|antiroll|anti_roll/, (end,up)=> end==="front" ? (up ? "A stiffer front anti-roll bar makes the car react quicker but gives the front tyres less grip in slow and medium corners (more understeer)." : "A softer front anti-roll bar lets the front tyres grip more in slow and medium corners, so the car turns better; it leans a little more.")
+                                                     : (up ? "A stiffer rear anti-roll bar helps the car rotate in the middle of the corner (less understeer), but the rear can get loose on the power." : "A softer rear anti-roll bar gives the rear tyres more grip and traction, so the rear is calmer; the car turns a little less.")],
+  [/heavespring|thirdspring/, (end,up)=> up ? `A stiffer ${end||"heave"} spring holds the car up at speed (steadier downforce), but it's harsher over bumps.` : `A softer ${end||"heave"} spring lets the car settle lower at speed and ride bumps better, at the cost of a less steady platform.`],
+  [/springrate|^spring$/, (end,up)=> end==="front" ? (up ? "A stiffer front spring holds the nose up under braking and at speed (steadier aero), with less front grip over bumps." : "A softer front spring gives the front more grip over bumps and more dive under braking; it must not bottom out.")
+                                                      : (up ? "A stiffer rear spring keeps the rear up at speed and helps the car rotate, with less rear grip over bumps." : "A softer rear spring gives the rear more grip and traction; the rear squats more on the power.")],
+  [/rideheight|perchoffset|torsionbar|pushrod|spacer/, (end,up)=> end==="front" ? (up ? "Raising the front gives the splitter more room and moves the aero balance back: less front grip in fast corners." : "Lowering the front adds front downforce (more grip in fast corners), as long as the splitter stays off the ground.")
+                                                     : (up ? "Raising the rear adds rake: more front grip in fast corners and a livelier rear." : "Lowering the rear takes rake out: a steadier rear at speed and a little less front grip.")],
+  [/bumprubbergap|packer|bumpstop/, (end,up)=> up ? `A bigger ${end?end+" ":""}bump-rubber gap lets the springs work longer before the stiff rubber takes over: softer over bumps, and the car sits a bit lower at speed.` : `A smaller ${end?end+" ":""}bump-rubber gap brings the stiff rubber in sooner: a firmer platform at speed, harsher over bumps.`],
+  [/camber/, (end,up)=> up ? `Less ${end} camber stands the tyre up straighter: more even wear and better braking grip, a little less cornering grip.` : `More ${end} camber leans the tyre into the corner: more cornering grip, a little less braking grip and more wear on the inside edge.`],
+  [/toe/, (end,up)=> end==="front" ? (up ? "More front toe-in: steadier on the straights and under braking, a slightly lazier turn-in." : "More front toe-out: a sharper turn-in, with a little more tyre scrub and heat.")
+                                    : (up ? "More rear toe-in: a more planted rear and better traction, with a little drag and heat on the straights." : "Less rear toe-in: freer on the straights and the car rotates more, but the rear is less planted.")],
+  [/^(?!.*bias).*pressure/, (end,up)=> up ? "More pressure: a firmer, sharper tyre that heats up less; too much and the grip drops." : "Less pressure: a bigger footprint and more grip, and the tyre heats up more."],
+  [/wing/, (end,up)=> up ? "More wing: more rear grip in fast corners and under braking, slower on the straights." : "Less wing: faster on the straights, less rear grip at high speed."],
+  [/brakepressurebias|brakebias/, (end,up)=> up ? "Brake bias forward: the front brakes do more of the work, so the rear stays calm; too far and the fronts lock." : "Brake bias rearward: the rear brakes help more, for shorter stops and more rotation on entry, as long as the rear stays planted."],
+  [/abs/, (end,up)=> up ? "More ABS: fewer lock-ups, slightly longer stops." : "Less ABS: harder braking if you're precise on the pedal, but easier to lock a wheel."],
+  [/^tc|traction/, (end,up)=> up ? "More traction control: it cuts power sooner when the rear slips, so exits are safer but a touch slower." : "Less traction control: more drive out of corners if you're smooth on the throttle."],
+  [/preload/, (end,up)=> up ? "More diff preload locks the rear wheels together more, mostly off the throttle: a steadier rear into corners and under braking, but the car turns in a little less." : "Less diff preload lets the rear wheels turn more freely: the car rotates more into and through the corner, with a looser feel."],
+  [/frictionfaces|clutchplates/, (end,up)=> up ? "More diff friction plates lock the rear harder on and off the power: more stability and traction, a little more understeer." : "Fewer diff friction plates loosen the rear: more rotation, but less stable under braking and on exits."],
+  [/(low|ls).*(rebound|rbd)/, (end,up)=> end==="front" ? (up ? "Stiffer front low-speed rebound slows the nose rising as you come off the brakes and onto the power: the front keeps its grip a little longer on exit." : "Softer front low-speed rebound lets the nose rise quicker on the power: the weight moves back sooner, helping traction.")
+                                                       : (up ? "Stiffer rear low-speed rebound slows the rear lifting when you brake: the rear stays lower and calmer as you turn in." : "Softer rear low-speed rebound lets the rear rise quicker under braking: more weight on the nose, more rotation on entry.")],
+  [/(low|ls).*(comp|bump)/, (end,up)=> end==="front" ? (up ? "Stiffer front low-speed bump slows the nose diving under braking: a steadier platform, a bit less front grip on turn-in." : "Softer front low-speed bump lets the nose dive quicker: more front grip on turn-in, a less steady platform.")
+                                                     : (up ? "Stiffer rear low-speed bump slows the rear squatting on the power: a sharper throttle response, a bit less traction." : "Softer rear low-speed bump lets the rear squat more on the power: more traction out of slow corners.")],
+  [/(high|hs).*(rebound|rbd)/, (end,up)=> up ? `Stiffer ${end} high-speed rebound: the wheel comes back down slower after a bump or kerb, calmer but it can lose contact.` : `Softer ${end} high-speed rebound: the wheel drops back onto the road quicker after a bump or kerb.`],
+  [/(high|hs).*(comp|bump)/, (end,up)=> up ? `Stiffer ${end} high-speed bump: firmer over kerbs and sharp bumps; it holds the car up but the wheel can skip.` : `Softer ${end} high-speed bump: the wheel rides over kerbs and sharp bumps instead of the whole car jumping.`],
+  [/fuel/, (end,up)=> up ? "More fuel: enough to finish, at the cost of a little weight." : "Less fuel: a lighter, quicker car; you still finish with the margin shown."],
+  [/gear/, (end,up)=> "Different gear ratios: changes how fast you reach the limiter and how strongly the car pulls out of corners."],
+];
+const leverEnd = p => /front|lf\b|rf\b|leftfront|rightfront/i.test(p) ? "front" : /rear|leftrear|rightrear/i.test(p) ? "rear" : "";
+function leverUp(c){ if (c.d!==undefined) return c.d>0; const a=numParts(c.e.raw), b=numParts(c.res&&c.res.raw||c.set); return a&&b ? b.v>a.v : null; }
+// one plain line per kind of change in an option (left and right of an axle count once; opposite moves left/right are a split, said as such)
+function leverLines(run, o){
+  const g=new Map();
+  // group by setting and end of the car; opposite moves within one end (left vs right) are a split
+  for (const c of o.ch){ if (!c.res || c.res.same) continue; const k=c.e.key.toLowerCase(), end=leverEnd(c.e.path), L=LEVERS.find(([re])=>re.test(k)); if (!L) continue;
+    const u=leverUp(c); if (u===null && !/gear/.test(k)) continue; const id=L[0].source+"|"+end;
+    const x=g.get(id)||{L,end,ups:new Set(),k}; x.ups.add(!!u); g.set(id,x); }
+  const out=[], split=[], one=[];
+  for (const x of g.values()) (x.ups.size>1 ? split : one).push(x);
+  if (split.some(x=>/rideheight/.test(x.k))) out.push("Raising one diagonal and lowering the other moves weight across the car (cross weight) without changing the front and rear heights: it changes left-handers against right-handers.");
+  if (split.some(x=>/pressure/.test(x.k))) out.push("Different pressures left and right, so the side that works harder doesn't end up over-inflated: both sides reach the same hot pressure.");
+  for (const x of split) if (!/rideheight|pressure/.test(x.k)) out.push(`${sentence(x.k)} goes one way on the left and the other on the right: the car is set up differently for left- and right-handers.`);
+  // the same move at both ends, said once when the sentence doesn't depend on the end
+  const tidy=s=>s.replace(/\s+/g," ").replace(/ :/g,":");
+  const bySrc=new Map(); for (const x of one){ const id=x.L[0].source+"|"+[...x.ups][0]; (bySrc.get(id)||bySrc.set(id,[]).get(id)).push(x); }
+  for (const xs of bySrc.values()){ const up=[...xs[0].ups][0], fn=xs[0].L[1], ends=xs.map(x=>x.end);
+    if (ends.includes("front") && ends.includes("rear") && fn("front",up).replace(/front/g,"")===fn("rear",up).replace(/rear/g,"")) out.push(tidy(fn("",up)));
+    else for (const e of ends) out.push(tidy(fn(e,up))); }
+  return [...new Set(out)]; }
 function sugCardsHTML(run, keep, empty="Nothing stands out."){
   const sel=selections(run);
   const list = run.sug.map((s,i)=>[s,i]).filter(([s])=>keep(s));
@@ -4413,7 +4465,7 @@ function sugCardsHTML(run, keep, empty="Nothing stands out."){
      ${(()=>{ const D=driverOf(s), live=s.opts.filter(o=>!o.limit);
        return `<h3>${D?esc(D.h):s.title}</h3>${D?`<div class="muted measured">Measured: ${s.title}</div>`:""}
      <div class="opts">${live.length>1?`<p class="muted pick">Pick one, then make these changes in the garage:</p>`:`<p class="muted pick">In the garage:</p>`}${s.opts.map((o,oi)=>`<label class="opt ${o.limit?"lim":""}"><input type="radio" name="o${i}" data-s="${i}" data-o="${oi}" ${sel[i]===oi?"checked":""} ${o.limit?"disabled":""}>
-        <b>${o.label}</b>${o.limit?" <span class='tag'>already at the limit</span>":""}</label>${o.limit?"":`<ul class="steps">${o.ch.filter(c=>!c.res.same).map(garageStep).join("")}</ul>`}`).join("")}</div>
+        <b>${o.label}</b>${o.limit?" <span class='tag'>already at the limit</span>":""}</label>${o.limit?"":`<ul class="steps">${o.ch.filter(c=>!c.res.same).map(garageStep).join("")}</ul>${(()=>{ const ll=leverLines(run,o); return ll.length?`<div class="lever">${ll.map(esc).join(" ")}</div>`:""; })()}`}`).join("")}</div>
      ${D&&D.feel?`<p class="feel"><b>You should feel:</b> ${esc(D.feel)}</p>`:""}
      <details class="info"><summary>ⓘ Why</summary>${D?`<div style="font-size:13.5px">${esc(D.why)}</div>
        <details class="info" style="margin-top:6px"><summary>Engineer's notes</summary><div class="why">${s.why}</div><div class="muted" style="font-size:12px;margin-top:4px">Evidence: ${s.evidence} · How sure: ${s.conf}</div></details>`
@@ -4478,12 +4530,13 @@ function setupBrief(run){
 // the switched-on change cards, as the Setup overlay shows them: what you feel, the garage clicks, what you should feel after
 function setupCards(run){
   if (!run.sug || !run.sug.length) return [];
-  const sel=selections(run), out=[];
-  run.sug.forEach((s,i)=>{ if (!(sel[i]>=0)) return; const o=s.opts[sel[i]]; if (!o || o.limit) return;
+  const sel=selections(run), out=[], onN=run.sug.filter((s,i)=>sel[i]>=0 && s.area!=="Fuel" && s.area!=="Qualifying").length;
+  const pick=(s,i)=>{ if (sel[i]>=0) return s.opts[sel[i]]; if (onN) return null; return s.pr>=2 ? s.opts.find(o=>!o.limit) : null; };
+  run.sug.forEach((s,i)=>{ const o=pick(s,i); if (!o || o.limit) return; const early=!(sel[i]>=0);
     const D=driverOf(s), steps=o.ch.filter(c=>c.res && !c.res.same).map(c=>{ const parts=c.e.path.replace(/^CarSetup\./,"").split(".");
       return {path:c.e.path, tab:GTAB[parts[0]]||sentence(parts[0]), sect:parts.length>2?(GSECT[parts[1]]||sentence(parts[1])):"", name:sentence(c.e.key), from:c.e.raw.trim(), to:c.res.raw, inCar:/InCarAdjustments/.test(c.e.path)}; });
-    if (steps.length) out.push({h:D?D.h:s.title, opt:o.label, pr:s.pr, area:s.area, feel:D&&D.feel||"", steps}); });
-  return out.sort((a,b)=>b.pr-a.pr); }
+    if (steps.length) out.push({h:D?D.h:s.title, opt:o.label, pr:s.pr, area:s.area, feel:D&&D.feel||"", does:(leverLines(run,o)[0]||""), early, steps}); });
+  return out.sort((a,b)=>b.pr-a.pr).slice(0, onN?99:3); }
 // the live garage (when iRacing is on and it's the same car): which of those clicks are already made
 function liveGarageMap(run){
   try { const w=liveWhere(); if (!LIVE.connected || !w || !LIVE.meta || !LIVE.meta.info || !LIVE.meta.info.CarSetup || !liveMatches(run,w)) return null;

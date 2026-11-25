@@ -65,7 +65,7 @@ if (window.se){ window.se.onEditMode(on=>{ edit=on; document.body.classList.togg
 const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 function vis(){ document.body.classList.toggle("hidden", !(edit || (where.connected && where.inGarage))); }
 // shrink the text a little when there's more than fits (down to 70%), never past the window
-function fit(){ const r=$("root"); let z=TEXT; document.body.style.zoom=z; for (let i=0;i<8 && r.scrollHeight>r.clientHeight+1 && z>TEXT*0.7;i++){ z-=TEXT*0.04; document.body.style.zoom=z; } }
+function fit(){ const r=$("root"); let z=TEXT; document.body.style.zoom=z; for (let i=0;i<12 && r.scrollHeight>r.clientHeight+1 && z>TEXT*0.6;i++){ z-=TEXT*0.04; document.body.style.zoom=z; } }
 function draw(){
   vis(); const B=plan && plan.brief;
   if (!B){ $("info").textContent=""; $("body").innerHTML=`<div class="none">Drive a stint: what to change shows here.</div>`; fit(); return; }
@@ -77,12 +77,14 @@ function draw(){
   if (bad.length) h+=bad.map(l=>`<div class="why"><b>${esc(l.k)}:</b> ${esc(l.v)}</div>`).join("");
   // the changes
   const steps=C.flatMap(c=>c.steps), nSet=steps.filter(s=>s.set===true).length, live=!!B.live;
-  h+=`<div class="hd"><span class="k">Changes for the next run${C.length?` · ${C.length}`:""}</span><span class="k">${live&&steps.length?`${nSet} of ${steps.length} set in the garage`:""}</span></div>`;
-  if (!C.length) h+=`<div class="why">${B.next?`Nothing switched on. Try first: ${esc(B.next)}`:"No changes switched on: the car is where you like it. Switch changes on in Setup Engineer (Changes)."}</div>`;
+  const early=C.length && C.every(c=>c.early);
+  h+=`<div class="hd"><span class="k">${early?"Suggested · early read":"Changes for the next run"}${C.length?` · ${C.length}`:""}</span><span class="k">${live&&steps.length?`${nSet} of ${steps.length} set in the garage`:""}</span></div>`;
+  if (!C.length) h+=`<div class="why">${B.next?`No setup change suggested. Next step: ${esc(B.next)}`:"No setup change suggested: the car is where you like it."}</div>`;
   for (const c of C){ const done=live && c.steps.every(s=>s.set===true);
     h+=`<div class="card p${c.pr} ${done?"alldone":""}"><h4>${done?"✓ ":""}${esc(c.h)}</h4>`
       + c.steps.map(s=>{ const cls=s.set===true?"set":live&&s.set===false?"todo":"", ic=s.set===true?"✓":live&&s.set===false?"○":"•";
           return `<div class="st ${cls}"><span class="ic">${ic}</span><span><span class="w">${esc(s.tab)}${s.sect?` › ${esc(s.sect)}`:""} ·</span> ${esc(s.name)}${s.inCar?` <span class="w">(cockpit)</span>`:""}</span><span class="to">${esc(s.from)} → ${esc(s.to)}</span></div>`; }).join("")
+      + (c.does && !done ? `<div class="feel">${esc(c.does)}</div>` : "")
       + (c.feel && !done ? `<div class="feel"><b>Feel:</b> ${esc(c.feel)}</div>` : "") + `</div>`; }
   if (live && steps.length && nSet===steps.length) h+=`<div class="ready">✓ All set. Save the setup, then run 5 clean laps.</div>`;
   if (plan.load || plan.saveAs) h+=`<div class="foot">${plan.load?`From <b>${esc(plan.load)}</b>`:""}${plan.saveAs?` · save as <b>${esc(plan.saveAs)}</b>`:""}</div>`;
