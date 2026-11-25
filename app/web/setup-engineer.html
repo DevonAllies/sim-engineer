@@ -47,6 +47,10 @@ th{color:var(--muted);font-weight:500;font-size:12px}
 .sugg{border:1px solid var(--line);border-left:4px solid var(--muted);border-radius:8px;padding:12px 14px;margin:10px 0}
 .sugg.p3{border-left-color:var(--bad)}.sugg.p2{border-left-color:var(--warn)}.sugg.p1{border-left-color:var(--good)}
 .sugg h3{margin:0 0 4px;font-size:15px}
+.sugg .measured{font-size:12.5px;margin:-2px 0 6px}
+.sugg .steps{margin:2px 0 8px 26px;padding:0;font-size:13px;line-height:1.7}
+.sugg .feel{margin:6px 0 2px;font-size:13px}
+.sugg .pick{font-size:12px;margin:4px 0 0}
 details.info{margin:8px 0 0;font-size:13px}
 details.info>summary{cursor:pointer;color:var(--muted);font-size:12px;list-style:none;display:inline-block;padding:2px 10px;border:1px solid var(--line);border-radius:12px;user-select:none}
 details.info>summary::-webkit-details-marker{display:none}
@@ -4347,16 +4351,73 @@ function saveAsName(n){
   return (m? `${m[1]} v${+m[2]+1}` : `${base} v2`) + ".sto";
 }
 // suggestion cards (with Use switch and options); shared by the Changes window and each area window
+// ---------- the change cards, written for the driver: what you feel, what to click in the garage, what you'll notice, and a plain why ----------
+// matched on "area|title"; the engineer's text and evidence stay one click deeper under the Why
+const DRIVER = [
+  [/^Aero platform\|Front ride height at speed/, "Front ride height at speed is off target", "More front grip in fast corners and a steadier front on the straights", "The floor under the car makes the most downforce when the front sits at a certain height at speed. Too high and it loses grip; too low and it touches down. This moves it back into that window."],
+  [/^Aero platform\|Rear ride height at speed/, "Rear ride height at speed is off target", "A rear that feels planted in fast corners", "Like the front, the rear has a height where the floor works best. Inside that window the car has more downforce for the same wing."],
+  [/^Aero platform\|Rear rises/, "The rear lifts too much under braking", "A calmer car as you turn in after a big stop", "Braking tips the car onto its nose. If the rear lifts too far, the floor loses grip at the back right when you turn in, so the rear goes light."],
+  [/^Aero platform\|.*bump rubbers/, "The front is resting on its bump stops at speed", "A steadier front on the straights and over bumps at speed", "Bump rubbers are stiff stops inside the suspension. Riding on them at speed makes the front stiff and jumpy and holds it at the wrong height. A bigger gap lets the springs do the work again."],
+  [/^Aero platform\|Splitter close/, "The front scrapes the ground", "No sudden push or bump when the nose touches down", "When the splitter hits the track the front loses grip for a moment and the car jumps. A little more room underneath stops it."],
+  [/^Aero platform\|.*bottoms out/, "The car bottoms out", "No hard hits or snaps of lost grip over bumps and kerbs", "When the car hits the ground or its bump stops, the tyres suddenly lose load, and with it grip. Keeping it off the stops keeps the grip steady."],
+  [/^(Aero trim\|You felt understeer|Balance\|More understeer in fast)/, "The car won't turn in fast corners", "More front bite in fast corners; slow corners stay much the same", "In fast corners the wing and the floor decide the balance, not the springs. Moving a little downforce toward the front helps it turn."],
+  [/^(Aero trim\|You felt oversteer|Balance\|Car is looser in fast)/, "The rear is nervous in fast corners", "A rear that stays planted at high speed, so you can commit", "At high speed the rear needs its share of downforce. A bit more wing, or a little less rake, keeps it stuck down."],
+  [/^Aero trim\|/, "The wing level doesn't suit this track", "Either more speed down the straights or more grip in the corners, whichever this track pays for", "Wing is a trade: more wing grips better in corners but drags on the straights. The track's mix of corners and straights decides which side wins."],
+  [/^Gearing\|/, "The gearing doesn't fit the longest straight", "Top gear used right to the end of the longest straight", "The gears should get you to the end of the longest straight just before the limiter. Otherwise you're leaving speed or acceleration on the table."],
+  [/^Balance\|Understeer in fast corners but oversteer in slow/, "Pushes in fast corners, loose in slow ones", "A car that turns in the fast corners and stays planted in the slow ones", "Fast corners are ruled by the aero, slow corners by the springs and bars. Here they point opposite ways, so each end gets its own fix."],
+  [/^Balance\|Asymmetric/, "The car turns better one way than the other", "The car feels the same in left- and right-handers", "Cross weight shifts load across the car's diagonals. It changes left-handers against right-handers without touching the overall balance, which is why a lopsided setup is right here."],
+  [/^Balance\|Anti-roll bars/, "Re-balance the anti-roll bars", "A car that's better balanced through the slow and medium corners", "The anti-roll bars decide how the grip is shared between the front and rear tyres in slow and medium corners. This pair of settings fits best what the car did on this stint."],
+  [/^Balance\|Mid-corner understeer/, "The car won't turn in slow and medium corners", "The front grips through the middle of the corner: less steering, and you can get on the power sooner", "In slower corners the anti-roll bars and springs decide the balance. A softer front bar (or a stiffer rear) lets the front tyres take more grip."],
+  [/^Balance\|Mid-corner is loose/, "The rear slides mid-corner in slow and medium corners", "A rear that stays put mid-corner, with fewer corrections", "The opposite of understeer: a stiffer front bar (or a softer rear) hands the rear tyres more of the grip."],
+  [/^Corner entry\|.*understeer/i, "The car won't turn in while you're on the brakes", "The nose follows you into the corner as you trail off the brake", "On the brakes the weight goes to the front. Brake bias and the diff decide how much of that front grip is left over for turning."],
+  [/^Corner entry\|/, "The rear steps out as you brake and turn in", "A calm rear into the corner, so you can brake later", "Braking makes the rear light. Less rear brake, or more diff locking off the throttle, keeps it in line."],
+  [/^Corner exit\|.*understeer/i, "The car runs wide when you get on the power", "The car holds its line on exit, so you can unwind the steering and use all the track", "On power the weight moves back and the front loses grip. A freer diff or a softer rear lets the front keep turning."],
+  [/^Corner exit\|/, "The rear spins up or steps out on the power", "You can get to full throttle sooner without the rear stepping out", "On power the rear tyres have to drive the car and corner at the same time. Traction control, the diff and rear grip decide how much they can take."],
+  [/^Dampers\|Slides follow kerb/, "Kerbs upset the car", "You can use the kerbs without a slide afterwards", "Softer fast damping lets the wheel ride over the kerb instead of the whole car jumping."],
+  [/^Dampers\|Splitter nearly touches/, "The nose dives too far under braking", "No scraping or bouncing on the brakes", "Slowing the dive keeps the splitter off the ground, so front grip doesn't come and go in the braking zone."],
+  [/^Dampers\|/, "The shock absorbers need a tweak", "The car settles quicker after bumps and kerbs", "Dampers control how fast the car moves on its springs. Getting bump and rebound in balance keeps the tyres pressed onto the road."],
+  [/^Track\|Bumpy/, "Bumpy track: soften the car", "The car rides the bumps instead of skipping over them: more grip and fewer surprises", "On a bumpy track a tyre that stays on the ground grips more than a stiff car that skips. Give up a little aero precision for mechanical grip."],
+  [/^Track\|.*stiffer/, "Smooth track: you can run the car stiffer", "Sharper response and a steadier car at speed", "When the track is smooth, a stiffer car holds the floor at its best height without losing grip over bumps."],
+  [/^Track\|/, "Smooth, slow track: set up for mechanical grip", "More grip in the slow corners", "With mostly slow corners on a smooth surface, softer bars and springs give the tyres more grip where the lap time is."],
+  [/^Brakes\|(Rear unstable|Rear tyres lock)/, "The rear gets nervous under braking", "Straight, stable stops, so you can brake later with confidence", "Brake bias decides how much work the front and rear brakes do. More to the front stops the rear tyres locking or stepping out."],
+  [/^Brakes\|/, "The front tyres do all the braking", "Shorter stops and fewer front lock-ups", "Moving the bias back lets the rear tyres help stop the car, as long as the rear stays calm."],
+  [/^Tyres\|.*inside more than/, "The tyres lean in too much", "Little change over one lap; more even grip over a run and better braking", "Camber is how much the tyre leans in. Too much and only the inside edge works; a little less spreads the work across the tyre."],
+  [/^Tyres\|.*inside less than/, "The tyres don't lean into corners enough", "More grip in the middle of corners", "When the car rolls in a corner the tyre tips onto its outside edge. More lean (negative camber) keeps the whole tyre on the road."],
+  [/^Tyres\|.*middle hotter/, "Tyre pressure is too high", "More grip once the tyres are warm", "Too much pressure makes the tyre balloon, so only the middle touches the road. A little less gives a bigger, grippier footprint."],
+  [/^Tyres\|.*middle cooler/, "Tyre pressure is too low", "Sharper, more precise steering", "Too little pressure lets the tyre fold in the middle. A little more lets it sit flat on the road."],
+  [/^Tyres\|.*below the working window/, "The tyres are too cold", "More grip for more of the lap, sooner in the stint", "Every tyre has a temperature where it grips best. These changes make the tyres work a little harder so they reach it."],
+  [/^Tyres\|.*above the working window/, "The tyres are too hot", "Grip that doesn't fade as the stint goes on", "Every tyre has a temperature where it grips best. Past it they get greasy and wear faster; these changes take a little heat out."],
+  [/^Tyres\|/, "Set the starting tyre pressures", "Tyres at their best grip once they're up to temperature", s=>"Tyres gain pressure as they heat up. The right starting pressure lands them in the range where they grip best."+(/Asymmetric on purpose/.test(s.evidence||"")?" Left and right are set differently on purpose: one side works harder on this track (the outside of most corners), so it starts lower and both end up the same when hot.":"")],
+  [/^Tyre wear\|.*inside edge/, "The inside of the tyres wears out first", "Grip that lasts longer through a stint", "Too much camber works the inside edge hardest. A little less spreads the wear across the tyre."],
+  [/^Tyre wear\|/, "These tyres won't last a double stint", "Tyres that still grip in the second stint", "Less sliding and a gentler setup save tread for the second stint."],
+  [/^Fuel\|/, "How much fuel to put in", null, "Enough to finish with a small safety margin. Any more is just extra weight."],
+  [/^Qualifying\|.*camber/, "More camber for a one-lap run", "More grip in the corners over a single lap", "Tyre wear doesn't matter over one lap, so the tyres can lean in more for grip."],
+  [/^Qualifying\|.*traction/i, "Less traction control for qualifying", "Faster exits, if you're smooth with the throttle", "TC cuts power when the rear slips. Over one lap you can handle a little more slip, and that's quicker."],
+  [/^Qualifying\|.*ABS/, "Less ABS for qualifying", "Shorter stops, if you're precise on the brake pedal", "ABS releases the brakes when a tyre starts to lock. Less of it lets you brake harder, but you manage lock-ups yourself."],
+];
+function driverOf(s){ const k=s.area+"|"+s.title, f=(v)=>typeof v==="function"?v(s):v;
+  for (const [re,h,feel,why] of DRIVER) if (re.test(k)) return {h:f(h), feel:f(feel), why:f(why)}; return null; }
+// one garage click: which tab and section, which setting, from → to
+const GTAB = {TiresAero:"Tires/Aero", Chassis:"Chassis", Dampers:"Dampers", Drivetrain:"Drivetrain", Systems:"Systems"};
+const sentence = x => { const p=pretty(x); return (p.charAt(0).toUpperCase()+p.slice(1).toLowerCase()).replace(/\b(arb|tc|abs|rh)\b/gi,m=>m.toUpperCase()); };
+const GSECT = {InCarAdjustments:"In-car adjustments", GearsDifferential:"Gears / differential", FrontBrakes:"Front / brakes", FrontDampers:"Front dampers", RearDampers:"Rear dampers"};
+function garageStep(c){
+  const parts=c.e.path.replace(/^CarSetup\./,"").split("."), tab=GTAB[parts[0]]||sentence(parts[0]), sect=parts.length>2?(GSECT[parts[1]]||sentence(parts[1])):"", inCar=/InCarAdjustments/.test(c.e.path);
+  return `<li><span class="muted">${esc(tab)}${sect?` › ${esc(sect)}`:""}</span> · ${esc(sentence(c.e.key))}: ${esc(c.e.raw.trim())} → <b>${esc(c.res.raw)}</b>${c.res.clamped?` <span class="tag">at the limit</span>`:""}${inCar?` <span class="muted">(or from the cockpit)</span>`:""}</li>`; }
 function sugCardsHTML(run, keep, empty="Nothing stands out."){
   const sel=selections(run);
   const list = run.sug.map((s,i)=>[s,i]).filter(([s])=>keep(s));
   return list.length ? list.map(([s,i])=>`<div class="sugg p${s.pr} ${sel[i]>=0?"on":"off"}">
      <label class="incl"><input type="checkbox" data-s="${i}" ${sel[i]>=0?"checked":""}> Use</label>
-     <span class="tag">${s.area}</span><span class="tag">${["","low","medium","high"][s.pr]} priority</span><span class="tag">${s.conf} confidence</span>${s.early?`<span class="tag">early read: ${run.A?(run.A.sessLaps??run.A.rep.length):"?"} of ${MIN_LAPS} laps</span>`:""}
-     <h3>${s.title}</h3>
-     <div class="opts">${s.opts.map((o,oi)=>`<label class="opt ${o.limit?"lim":""}"><input type="radio" name="o${i}" data-s="${i}" data-o="${oi}" ${sel[i]===oi?"checked":""} ${o.limit?"disabled":""}>
-        <b>${o.label}</b>${o.limit?" <span class='tag'>already at the limit</span>":""}<span class="muted"> · ${o.ch.filter(c=>!c.res.same).map(changeText).map(esc).join(" · ")}</span></label>`).join("")}</div>
-     <details class="info"><summary>ⓘ Why</summary><div class="why">${s.why}</div><div class="muted" style="font-size:12px;margin-top:4px">Evidence: ${s.evidence}</div></details></div>`).join("")
+     <span class="tag">${s.area}</span><span class="tag">${["","low","medium","high"][s.pr]} priority</span>${s.early?`<span class="tag">early read: ${run.A?(run.A.sessLaps??run.A.rep.length):"?"} of ${MIN_LAPS} laps</span>`:""}
+     ${(()=>{ const D=driverOf(s), live=s.opts.filter(o=>!o.limit);
+       return `<h3>${D?esc(D.h):s.title}</h3>${D?`<div class="muted measured">Measured: ${s.title}</div>`:""}
+     <div class="opts">${live.length>1?`<p class="muted pick">Pick one, then make these changes in the garage:</p>`:`<p class="muted pick">In the garage:</p>`}${s.opts.map((o,oi)=>`<label class="opt ${o.limit?"lim":""}"><input type="radio" name="o${i}" data-s="${i}" data-o="${oi}" ${sel[i]===oi?"checked":""} ${o.limit?"disabled":""}>
+        <b>${o.label}</b>${o.limit?" <span class='tag'>already at the limit</span>":""}</label>${o.limit?"":`<ul class="steps">${o.ch.filter(c=>!c.res.same).map(garageStep).join("")}</ul>`}`).join("")}</div>
+     ${D&&D.feel?`<p class="feel"><b>You should feel:</b> ${esc(D.feel)}</p>`:""}
+     <details class="info"><summary>ⓘ Why</summary>${D?`<div style="font-size:13.5px">${esc(D.why)}</div>
+       <details class="info" style="margin-top:6px"><summary>Engineer's notes</summary><div class="why">${s.why}</div><div class="muted" style="font-size:12px;margin-top:4px">Evidence: ${s.evidence} · How sure: ${s.conf}</div></details>`
+       : `<div class="why">${s.why}</div><div class="muted" style="font-size:12px;margin-top:4px">Evidence: ${s.evidence} · How sure: ${s.conf}</div>`}</details>`; })()}</div>`).join("")
     : `<p class="muted">${empty}</p>`;
 }
 // race type + length: changes fuel, how aggressive the balance can be, tyre pressure policy, camber, TC order
