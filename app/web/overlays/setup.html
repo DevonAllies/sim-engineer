@@ -31,7 +31,7 @@ body.edit #editbar{display:block}
 .card.p3{border-left-color:var(--bad)}.card.p2{border-left-color:var(--warn)}.card.p1{border-left-color:var(--ok)}
 .card.alldone{opacity:.55}
 .card h4{font-size:12.5px;font-weight:650;margin:0 0 2px}
-.st{display:grid;grid-template-columns:14px 1fr auto;gap:4px;align-items:baseline;font-size:11.5px}
+.st{display:grid;grid-template-columns:14px 1fr;gap:4px;align-items:baseline;font-size:11.5px}
 .st .ic{color:var(--muted);text-align:center}
 .st.set .ic{color:var(--ok)}
 .st.todo .ic{color:var(--warn)}
@@ -44,6 +44,7 @@ body.edit #editbar{display:block}
 .foot b{color:var(--ink);font-weight:500}
 .none{color:var(--muted);text-align:center;padding:16px 6px}
 .ready{color:var(--ok);font-weight:600;font-size:12px}
+#body{display:flex;flex-direction:column;gap:5px;flex:1;min-height:0;overflow:hidden}
 </style>
 </head>
 <body class="hidden">
@@ -64,12 +65,30 @@ if (window.se){ window.se.onEditMode(on=>{ edit=on; document.body.classList.togg
   window.se.onPlan(p=>{ plan=p; draw(); }); window.se.getPlan().then(p=>{ plan=p; draw(); }); }
 const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 function vis(){ document.body.classList.toggle("hidden", !(edit || (where.connected && where.inGarage))); }
-// shrink the text a little when there's more than fits (down to 70%), never past the window
-function fit(){ const r=$("root"); let z=TEXT; document.body.style.zoom=z; for (let i=0;i<12 && r.scrollHeight>r.clientHeight+1 && z>TEXT*0.6;i++){ z-=TEXT*0.04; document.body.style.zoom=z; } }
+// the overlay can't scroll (it lets the mouse through to iRacing), so everything has to fit: first the "what it does" lines go,
+// then the "Feel" lines, then the text shrinks (down to 75%), and if it still doesn't fit the changes are shown a page at a time
+// (the pages turn every 8 s, "page 1 of 2" in the header)
+const fits = () => { const b=$("body"); return b.scrollHeight<=b.clientHeight+1; };
+let PAGE=0, PAGES=1, pageTimer=null;
 function draw(){
   vis(); const B=plan && plan.brief;
-  if (!B){ $("info").textContent=""; $("body").innerHTML=`<div class="none">Drive a stint: what to change shows here.</div>`; fit(); return; }
+  if (!B){ $("info").textContent=""; $("body").innerHTML=`<div class="none">Drive a stint: what to change shows here.</div>`; return; }
   $("info").textContent=[B.track, B.when].filter(Boolean).join(" · ");
+  const C=B.changes||[];
+  const put=(o)=>{ $("body").innerHTML=compose(B, o); document.body.style.zoom=o.z; };
+  for (const lv of [{does:1,feel:1},{does:0,feel:1},{does:0,feel:0}]){ put({...lv, z:TEXT, from:0, to:C.length}); if (fits()){ PAGES=1; return; } }
+  for (let z=TEXT*0.95; z>=TEXT*0.75-1e-9; z-=TEXT*0.05){ put({does:0, feel:0, z, from:0, to:C.length}); if (fits()){ PAGES=1; return; } }
+  // pages: as many changes per page as fit at 75%
+  const z=TEXT*0.75; let per=1; for (let k=C.length-1;k>=1;k--){ put({does:0, feel:0, z, from:0, to:k, page:"1 of 2"}); if (fits()){ per=k; break; } }
+  PAGES=Math.ceil(C.length/per); if (PAGE>=PAGES) PAGE=0;
+  put({does:0, feel:0, z, from:PAGE*per, to:Math.min(C.length,(PAGE+1)*per), page:`${PAGE+1} of ${PAGES}`});
+  clearTimeout(pageTimer); pageTimer=setTimeout(()=>{ PAGE=(PAGE+1)%PAGES; draw(); }, 8000);
+}
+// "12 clicks" → "10 clicks": the change itself (−2), so it's clear how far to go
+function delta(a, b){ const x=parseFloat(a), y=parseFloat(b); if (!Number.isFinite(x) || !Number.isFinite(y) || x===y) return "";
+  const dec=Math.max((String(a).match(/\.(\d+)/)||["",""])[1].length, (String(b).match(/\.(\d+)/)||["",""])[1].length), d=y-x;
+  return `${d>0?"+":"−"}${Math.abs(d).toFixed(dec)}`; }
+function compose(B, o){
   const L=B.lines||[], C=B.changes||[];
   // status strip
   let h=`<div class="chips">${L.map(l=>`<span class="chip ${l.c||""}" title="${esc(l.v)}"><i></i>${esc(l.k)}</span>`).join("")}</div>`;
@@ -78,20 +97,20 @@ function draw(){
   // the changes
   const steps=C.flatMap(c=>c.steps), nSet=steps.filter(s=>s.set===true).length, live=!!B.live;
   const early=C.length && C.every(c=>c.early);
-  h+=`<div class="hd"><span class="k">${early?"Suggested · early read":"Changes for the next run"}${C.length?` · ${C.length}`:""}</span><span class="k">${live&&steps.length?`${nSet} of ${steps.length} set in the garage`:""}</span></div>`;
+  h+=`<div class="hd"><span class="k">${early?"Suggested · early read":"Changes for the next run"}${C.length?` · ${C.length}`:""}${o.page?` · page ${o.page}`:""}</span><span class="k">${live&&steps.length?`${nSet} of ${steps.length} set`:""}</span></div>`;
   if (!C.length) h+=`<div class="why">${B.next?`No setup change suggested. Next step: ${esc(B.next)}`:"No setup change suggested: the car is where you like it."}</div>`;
-  for (const c of C){ const done=live && c.steps.every(s=>s.set===true);
+  for (const c of C.slice(o.from, o.to)){ const done=live && c.steps.every(s=>s.set===true);
     h+=`<div class="card p${c.pr} ${done?"alldone":""}"><h4>${done?"✓ ":""}${esc(c.h)}</h4>`
-      + c.steps.map(s=>{ const cls=s.set===true?"set":live&&s.set===false?"todo":"", ic=s.set===true?"✓":live&&s.set===false?"○":"•";
-          return `<div class="st ${cls}"><span class="ic">${ic}</span><span><span class="w">${esc(s.tab)}${s.sect?` › ${esc(s.sect)}`:""} ·</span> ${esc(s.name)}${s.inCar?` <span class="w">(cockpit)</span>`:""}</span><span class="to">${esc(s.from)} → ${esc(s.to)}</span></div>`; }).join("")
-      + (c.does && !done ? `<div class="feel">${esc(c.does)}</div>` : "")
-      + (c.feel && !done ? `<div class="feel"><b>Feel:</b> ${esc(c.feel)}</div>` : "") + `</div>`; }
+      + c.steps.map(s=>{ const cls=s.set===true?"set":live&&s.set===false?"todo":"", ic=s.set===true?"✓":live&&s.set===false?"○":"•", d=delta(s.from, s.to);
+          // the values go right after the setting's name and wrap with the text, so they can never be cut off at the edge
+          return `<div class="st ${cls}"><span class="ic">${ic}</span><span><span class="w">${esc(s.tab)}${s.sect?` › ${esc(s.sect)}`:""} ·</span> ${esc(s.name)}${s.inCar?` <span class="w">(cockpit)</span>`:""}: <span class="to">${esc(s.from)} → ${esc(s.to)}</span>${d?` <span class="w">(${d})</span>`:""}</span></div>`; }).join("")
+      + (o.does && c.does && !done ? `<div class="feel">${esc(c.does)}</div>` : "")
+      + (o.feel && c.feel && !done ? `<div class="feel"><b>Feel:</b> ${esc(c.feel)}</div>` : "") + `</div>`; }
   if (live && steps.length && nSet===steps.length) h+=`<div class="ready">✓ All set. Save the setup, then run 5 clean laps.</div>`;
   if (plan.load || plan.saveAs) h+=`<div class="foot">${plan.load?`From <b>${esc(plan.load)}</b>`:""}${plan.saveAs?` · save as <b>${esc(plan.saveAs)}</b>`:""}</div>`;
-  $("body").innerHTML=h; $("body").style.display="flex"; $("body").style.flexDirection="column"; $("body").style.gap="5px"; $("body").style.flex="1";
-  fit();
+  return h;
 }
-window.addEventListener("resize", fit);
+window.addEventListener("resize", ()=>draw());
 // where is the car? (garage / pit stall = show, driving = hide)
 const TYPES={0:"getUint8",1:"getUint8",2:"getInt32",3:"getUint32",4:"getFloat32",5:"getFloat64"};
 const cstr=b=>{ let s=""; for (const x of b){ if(!x) break; s+=String.fromCharCode(x);} return s; };
