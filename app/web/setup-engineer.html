@@ -4473,17 +4473,35 @@ function setupBrief(run){
   { const tw=A.tw; if (tw && Number.isFinite(tw.front) && Number.isFinite(tw.rear)){ const o=v=>v<tw.lo?"cold":v>tw.hi?"hot":"in"; L.push({k:"Tyres", v:`front ${fmt(tw.front,0)} °C ${o(tw.front)}, rear ${fmt(tw.rear,0)} °C ${o(tw.rear)} (window ${fmt(tw.lo,0)}–${fmt(tw.hi,0)})`, c: o(tw.front)==="in"&&o(tw.rear)==="in"?"ok":"warn"}); } }
   { const n=A.events?A.events.length/A.rep.length:NaN; if (Number.isFinite(n)) L.push({k:"Slides", v:`${fmt(n,1)} a lap`, c:n>2?"warn":"ok"}); }
   let next=""; try { const d=document.createElement("div"); d.innerHTML=setupOrderHTML(run, A); const row=[...d.querySelectorAll("tr")].find(tr=>tr.querySelector(".warn")); if (row){ const td=row.querySelectorAll("td"); next=`${td[1].innerText.trim()}: ${td[2].innerText.trim()}`; } } catch(e){}
-  return {when:`${A.rep.length} clean lap${A.rep.length===1?"":"s"}`, lines:L.slice(0,5), next:next.length>110?next.slice(0,108)+"…":next}; }
+  return {when:`${A.rep.length} clean lap${A.rep.length===1?"":"s"}`, car:run.carName, track:((run.info.WeekendInfo||{}).TrackDisplayName)||"", stint:run.short||"",
+    changes:(()=>{ try { return setupCards(run); } catch(e){ console.error("setupCards", e); return []; } })(), lines:L.slice(0,5), next:next.length>110?next.slice(0,108)+"…":next}; }
+// the switched-on change cards, as the Setup overlay shows them: what you feel, the garage clicks, what you should feel after
+function setupCards(run){
+  if (!run.sug || !run.sug.length) return [];
+  const sel=selections(run), out=[];
+  run.sug.forEach((s,i)=>{ if (!(sel[i]>=0)) return; const o=s.opts[sel[i]]; if (!o || o.limit) return;
+    const D=driverOf(s), steps=o.ch.filter(c=>c.res && !c.res.same).map(c=>{ const parts=c.e.path.replace(/^CarSetup\./,"").split(".");
+      return {path:c.e.path, tab:GTAB[parts[0]]||sentence(parts[0]), sect:parts.length>2?(GSECT[parts[1]]||sentence(parts[1])):"", name:sentence(c.e.key), from:c.e.raw.trim(), to:c.res.raw, inCar:/InCarAdjustments/.test(c.e.path)}; });
+    if (steps.length) out.push({h:D?D.h:s.title, opt:o.label, pr:s.pr, area:s.area, feel:D&&D.feel||"", steps}); });
+  return out.sort((a,b)=>b.pr-a.pr); }
+// the live garage (when iRacing is on and it's the same car): which of those clicks are already made
+function liveGarageMap(run){
+  try { const w=liveWhere(); if (!LIVE.connected || !w || !LIVE.meta || !LIVE.meta.info || !LIVE.meta.info.CarSetup || !liveMatches(run,w)) return null;
+    const m=new Map(); for (const e of flatten(LIVE.meta.info.CarSetup,"CarSetup")) m.set(e.path, e.raw); return m; } catch(e){ return null; } }
+const sameSetting = (a,b) => { const x=parseFloat(a), y=parseFloat(b); return Number.isFinite(x)&&Number.isFinite(y) ? Math.abs(x-y)<1e-6 : String(a).trim()===String(b).trim(); };
+function markLiveSet(brief, run){
+  if (!brief || !brief.changes) return; const G=run?liveGarageMap(run):null; brief.live=!!G;
+  for (const c of brief.changes) for (const s of c.steps) s.set = G ? (G.has(s.path) ? sameSetting(G.get(s.path), s.to) : null) : null; }
 function publishPlan(run){
-  if (!window.se || !window.se.publishPlan) return;
+  if (!window.se || !window.se.publishPlan) return; LAST_PLAN_RUN=run;
   const st=setupName(run), items=[...buildPlan(run).values()].map(p=>({where:whereOf(p.e.path), name:pretty(p.e.key), from:p.e.raw.trim(), to:p.to, done:!!(run.doneMap && run.doneMap[p.e.path+"="+p.to])}));
   let brief=null; try { brief=setupBrief(run); } catch(e){ console.error("brief", e); }
   LAST_PLAN = {brief, tests:Object.keys(PREFS.data||{}).filter(k=>{ const v=PREFS.data[k]; if (!k.startsWith("testprog|") || !v || !v.created || v.state) return false; const p=k.split("|"); if (p[2]==="car") return true; const C=PREFS.data[`testprog|${p[1]}|car`]; return !(C && C.track===p[2] && C.state==="paused"); }).map(k=>{ const v=PREFS.data[k], p=k.split("|"); return p[2]==="car" ? `${p[1]}|${v.track}` : `${p[1]}|${p[2]}`; }), car:run.carName, load:st.name, saveAs:saveAsName(st.name||"my setup.sto"), items, done:items.filter(i=>i.done).length};
   publishProg();
 }
 // the Test step overlay's data rides along with the plan; sent again whenever the live garage changes
-let LAST_PLAN=null;
-function publishProg(){ if (!window.se || !window.se.publishPlan || !LAST_PLAN) return; try { LAST_PLAN.prog=tpOverlayData(); } catch(e){ LAST_PLAN.prog={none:""}; console.error("prog", e); } window.se.publishPlan(LAST_PLAN); }
+let LAST_PLAN=null, LAST_PLAN_RUN=null;
+function publishProg(){ if (!window.se || !window.se.publishPlan || !LAST_PLAN) return; try { markLiveSet(LAST_PLAN.brief, LAST_PLAN_RUN); } catch(e){ console.error("liveset", e); } try { LAST_PLAN.prog=tpOverlayData(); } catch(e){ LAST_PLAN.prog={none:""}; console.error("prog", e); } window.se.publishPlan(LAST_PLAN); }
 function carViewHTML(run, plan, A){
   const cell = {LF:[],RF:[],LR:[],RR:[],F:[],R:[],C:[]};
   for (const e of run.setupFlat){

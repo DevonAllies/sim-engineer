@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Setup brief</title>
+<title>Setup</title>
 <style>
-:root{--ink:#eef0f4;--muted:#9aa3b2;--line:rgba(255,255,255,.09);--panel:rgba(14,16,21,.88);--accent:#ff6a4d;--ok:#5fd38d;--warn:#ffb347;--bad:#ff6a6a}
+:root{--ink:#eef0f4;--muted:#9aa3b2;--line:rgba(255,255,255,.09);--panel:rgba(14,16,21,.90);--accent:#ff6a4d;--ok:#5fd38d;--warn:#ffb347;--bad:#ff6a6a;--chip:rgba(255,255,255,.06)}
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{background:transparent;overflow:hidden;height:100%}
-body{font:12px/1.3 system-ui,"Segoe UI",sans-serif;color:var(--ink);font-variant-numeric:tabular-nums;user-select:none}
-#root{position:relative;width:100%;height:100%;padding:9px 11px;background:var(--panel);border:1px solid var(--line);border-radius:10px;display:flex;flex-direction:column;gap:5px;overflow:hidden;transition:opacity .25s}
+body{font:12px/1.35 system-ui,"Segoe UI",sans-serif;color:var(--ink);font-variant-numeric:tabular-nums;user-select:none}
+#root{position:relative;width:100%;height:100%;padding:9px 11px;background:var(--panel);border:1px solid var(--line);border-radius:10px;display:flex;flex-direction:column;gap:6px;overflow:hidden;transition:opacity .25s}
 body.hidden #root{opacity:0}
 body.edit #root{outline:2px dashed var(--accent);outline-offset:-2px;-webkit-app-region:drag;cursor:move}
 #editbar{display:none;position:absolute;left:0;right:0;bottom:0;font-size:10px;text-align:center;color:#fff;background:var(--accent);border-radius:0 0 10px 10px;padding:2px}
@@ -16,38 +16,80 @@ body.edit #editbar{display:block}
 .top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
 .top b{font-size:11px;letter-spacing:.1em;color:var(--accent)}
 .k{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
-.row{display:grid;grid-template-columns:62px 1fr;gap:6px;align-items:baseline;border-bottom:1px solid var(--line);padding:2px 0}
-.row .k{padding-top:1px}
-.v{font-size:12.5px}
 .ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
-.next{font-size:12px;margin-top:2px}
+/* status: one chip per area, coloured; the ones that need work spell out why */
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{font-size:10.5px;padding:1px 7px;border-radius:10px;background:var(--chip);border:1px solid var(--line)}
+.chip i{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:5px;vertical-align:1px;background:var(--muted)}
+.chip.ok i{background:var(--ok)}.chip.warn i{background:var(--warn)}
+.chip.ok,.chip.warn{color:var(--ink)}
+.why{font-size:11px;color:var(--muted)}
+.why b{color:var(--warn);font-weight:600}
+/* the changes */
+.hd{display:flex;justify-content:space-between;align-items:baseline;border-top:1px solid var(--line);padding-top:5px}
+.card{border-left:3px solid var(--muted);padding:3px 0 3px 8px}
+.card.p3{border-left-color:var(--bad)}.card.p2{border-left-color:var(--warn)}.card.p1{border-left-color:var(--ok)}
+.card.alldone{opacity:.55}
+.card h4{font-size:12.5px;font-weight:650;margin:0 0 2px}
+.st{display:grid;grid-template-columns:14px 1fr auto;gap:4px;align-items:baseline;font-size:11.5px}
+.st .ic{color:var(--muted);text-align:center}
+.st.set .ic{color:var(--ok)}
+.st.todo .ic{color:var(--warn)}
+.st .w{color:var(--muted)}
+.st .to{font-weight:650;white-space:nowrap}
+.st.set .to{color:var(--ok)}
+.feel{font-size:11px;color:var(--muted);margin-top:1px}
+.feel b{color:var(--ink);font-weight:500}
+.foot{font-size:10.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:4px;margin-top:auto}
+.foot b{color:var(--ink);font-weight:500}
 .none{color:var(--muted);text-align:center;padding:16px 6px}
+.ready{color:var(--ok);font-weight:600;font-size:12px}
 </style>
 </head>
 <body class="hidden">
 <div id="root">
   <div class="top"><b>SETUP</b><span class="k" id="info"></span></div>
   <div id="body"></div>
-  <div id="editbar">Setup brief · drag to move · drag the edge to resize</div>
+  <div id="editbar">Setup · drag to move · drag the edge to resize</div>
 </div>
 <script>
 "use strict";
-// a short summary of what the car is doing (from the main app's last stint): balance, aero platform, roll, tyres, and the one change to try first
+// what to change before the next run, laid out for the driver: a status strip (balance, aero, tyres…), then each switched-on change with
+// its garage clicks, ticked off as the live garage matches them, and what you should feel afterwards. Shows in the garage and pit stall.
 const $=id=>document.getElementById(id);
-let TEXT=1; function fit(){ document.body.style.zoom=TEXT; } fit();
-if (window.se && window.se.onStyle) window.se.onStyle(s=>{ TEXT=s.text||1; document.body.style.fontFamily=`"${s.font||"Segoe UI"}", system-ui, sans-serif`; fit(); });
+let TEXT=1;
+if (window.se && window.se.onStyle) window.se.onStyle(s=>{ TEXT=s.text||1; document.body.style.fontFamily=`"${s.font||"Segoe UI"}", system-ui, sans-serif`; draw(); });
 let edit=false, plan=null, where={connected:false, inGarage:false};
 if (window.se){ window.se.onEditMode(on=>{ edit=on; document.body.classList.toggle("edit",on); vis(); });
   window.se.onPlan(p=>{ plan=p; draw(); }); window.se.getPlan().then(p=>{ plan=p; draw(); }); }
-const esc=s=>String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 function vis(){ document.body.classList.toggle("hidden", !(edit || (where.connected && where.inGarage))); }
+// shrink the text a little when there's more than fits (down to 70%), never past the window
+function fit(){ const r=$("root"); let z=TEXT; document.body.style.zoom=z; for (let i=0;i<8 && r.scrollHeight>r.clientHeight+1 && z>TEXT*0.7;i++){ z-=TEXT*0.04; document.body.style.zoom=z; } }
 function draw(){
   vis(); const B=plan && plan.brief;
-  if (!B || !B.lines || !B.lines.length){ $("info").textContent=""; $("body").innerHTML=`<div class="none">Drive a stint: a short summary of the car shows here.</div>`; return; }
-  $("info").textContent=B.when||"";
-  $("body").innerHTML=B.lines.map(l=>`<div class="row"><span class="k">${esc(l.k)}</span><span class="v ${l.c||""}">${esc(l.v)}</span></div>`).join("")
-    + (B.next?`<div class="next"><span class="k">Try first</span> ${esc(B.next)}</div>`:"");
+  if (!B){ $("info").textContent=""; $("body").innerHTML=`<div class="none">Drive a stint: what to change shows here.</div>`; fit(); return; }
+  $("info").textContent=[B.track, B.when].filter(Boolean).join(" · ");
+  const L=B.lines||[], C=B.changes||[];
+  // status strip
+  let h=`<div class="chips">${L.map(l=>`<span class="chip ${l.c||""}" title="${esc(l.v)}"><i></i>${esc(l.k)}</span>`).join("")}</div>`;
+  const bad=L.filter(l=>l.c==="warn").slice(0,2);
+  if (bad.length) h+=bad.map(l=>`<div class="why"><b>${esc(l.k)}:</b> ${esc(l.v)}</div>`).join("");
+  // the changes
+  const steps=C.flatMap(c=>c.steps), nSet=steps.filter(s=>s.set===true).length, live=!!B.live;
+  h+=`<div class="hd"><span class="k">Changes for the next run${C.length?` · ${C.length}`:""}</span><span class="k">${live&&steps.length?`${nSet} of ${steps.length} set in the garage`:""}</span></div>`;
+  if (!C.length) h+=`<div class="why">${B.next?`Nothing switched on. Try first: ${esc(B.next)}`:"No changes switched on: the car is where you like it. Switch changes on in Setup Engineer (Changes)."}</div>`;
+  for (const c of C){ const done=live && c.steps.every(s=>s.set===true);
+    h+=`<div class="card p${c.pr} ${done?"alldone":""}"><h4>${done?"✓ ":""}${esc(c.h)}</h4>`
+      + c.steps.map(s=>{ const cls=s.set===true?"set":live&&s.set===false?"todo":"", ic=s.set===true?"✓":live&&s.set===false?"○":"•";
+          return `<div class="st ${cls}"><span class="ic">${ic}</span><span><span class="w">${esc(s.tab)}${s.sect?` › ${esc(s.sect)}`:""} ·</span> ${esc(s.name)}${s.inCar?` <span class="w">(cockpit)</span>`:""}</span><span class="to">${esc(s.from)} → ${esc(s.to)}</span></div>`; }).join("")
+      + (c.feel && !done ? `<div class="feel"><b>Feel:</b> ${esc(c.feel)}</div>` : "") + `</div>`; }
+  if (live && steps.length && nSet===steps.length) h+=`<div class="ready">✓ All set. Save the setup, then run 5 clean laps.</div>`;
+  if (plan.load || plan.saveAs) h+=`<div class="foot">${plan.load?`From <b>${esc(plan.load)}</b>`:""}${plan.saveAs?` · save as <b>${esc(plan.saveAs)}</b>`:""}</div>`;
+  $("body").innerHTML=h; $("body").style.display="flex"; $("body").style.flexDirection="column"; $("body").style.gap="5px"; $("body").style.flex="1";
+  fit();
 }
+window.addEventListener("resize", fit);
 // where is the car? (garage / pit stall = show, driving = hide)
 const TYPES={0:"getUint8",1:"getUint8",2:"getInt32",3:"getUint32",4:"getFloat32",5:"getFloat64"};
 const cstr=b=>{ let s=""; for (const x of b){ if(!x) break; s+=String.fromCharCode(x);} return s; };
