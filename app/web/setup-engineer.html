@@ -6560,7 +6560,7 @@ const TECH_TIPS = {
   iBal:  "The car pushes or slides as you turn in: a slightly slower entry or a smoother release lets it settle.",
   iPoint:"Turn in at the same point every lap: your fastest pass shows where.",
   iSpeed:"Carry more speed to the apex, like your fastest pass through here.",
-  hCoast:"Go straight from brake to throttle: the coasting in between costs time and unsettles the car.",
+  hCoast:"You coast longer here than on your fastest pass: once the car is pointed, pick up the throttle sooner. A short coast to let the car rotate is fine.",
   hLate: "Pick the throttle up sooner, around the apex: you wait too long after it.",
   hEarly:"You're on the throttle well before the apex: if the car pushes wide, wait a moment longer.",
   hProg: "Squeeze the throttle on progressively and keep it going: lifting again after you pick it up costs drive.",
@@ -6579,7 +6579,9 @@ function techPass(p, B){
     iPoint: Number.isFinite(p.ti-B.ti) ? lin(Math.abs(p.ti-B.ti), 25, 5) : NaN,
     iSpeed: lin(p.vmin, B.vmin-6, B.vmin-1) };
   const H = {
-    hCoast: lin(p.coast, 0.6, 0.1),
+    // coasting is judged against your fastest pass through this corner, not against zero: in a GT3 a short coast after the brake
+    // lets the car rotate, so only coasting clearly longer than when you were quickest (0.25 s free, nothing left at +0.8 s) costs points
+    hCoast: Number.isFinite(p.coast) && Number.isFinite(B.coast) ? lin(p.coast-B.coast, 0.8, 0.25) : NaN,
     hPick: Number.isFinite(p.pickRel) ? (p.pickRel>12 ? lin(p.pickRel, 45, 12) : p.pickRel<-30 ? 0.5 : 1) : NaN,
     hProg: p.lifts===0 ? 1 : p.lifts===1 ? 0.5 : 0,
     hTrac: p.exitSlide ? 0 : p.usPower>US_PUSH ? 0.5 : 1 };
@@ -6624,13 +6626,13 @@ function techHTML(run, A){
     <div class="grid" style="margin-bottom:8px">
       ${tile("Trail braking","trail","brake still on at turn-in, carried into the corner, released smoothly, car under control")}
       ${tile("Turn-in","turn","one clean steering input, the car settled, same turn-in point, apex speed")}
-      ${tile("Throttle","thr","no coasting, picked up around the apex, squeezed on without lifting, no slides on exit")}
+      ${tile("Throttle","thr","coasting no longer than your fastest pass, picked up around the apex, squeezed on without lifting, no slides on exit")}
     </div>
     ${worst.length?`<p class="summary" data-keep><b>Work on:</b> ${worst.map(r=>`<b>T${r.n}</b>: ${esc(r.tip)}`).join(" ")}</p>`:""}
     <div class="tablewrap"><table><tr><th>Corner</th><th>Trail braking</th><th>Turn-in</th><th>Throttle</th><th>Typical vs best</th><th>Work on</th></tr>
     ${S.rows.map(r=>`<tr><td>T${r.n}<div class="muted" style="font-size:11px">${fmt(r.at/1000,2)} km</div></td><td>${cell(r.trail)}</td><td>${cell(r.turn)}</td><td>${cell(r.thr)}</td>
       <td>${Number.isFinite(r.loss)?`${r.loss>=0?"+":"−"}${Math.abs(r.loss).toFixed(2)} s`:"–"}</td><td class="muted" style="font-size:12px">${r.tip?esc(r.tip):"✓"}</td></tr>`).join("")}</table></div>
-    ${infoBox("How the scores work", "Every clean pass through every corner is checked, then averaged. Trail braking (corners where you brake): is some brake (about 10–30%) still on when the steering goes in, is it carried toward the apex, is it released in one smooth movement without re-pressing or dumping it, and does the car stay in control (no ABS, slides or push while turning). Turn-in: one clean steering input with few corrections, the car settled (not pushing or sliding), turning in where your fastest pass did, and the apex speed of your fastest pass. Throttle: little coasting between brake and throttle, picked up around the apex, squeezed on without lifting, and no slides or push on exit. 85+ is excellent, 70+ good, 55+ getting there. The comparison is with your previous stint here in this car.")}
+    ${infoBox("How the scores work", "Every clean pass through every corner is checked, then averaged. Trail braking (corners where you brake): is some brake (about 10–30%) still on when the steering goes in, is it carried toward the apex, is it released in one smooth movement without re-pressing or dumping it, and does the car stay in control (no ABS, slides or push while turning). Turn-in: one clean steering input with few corrections, the car settled (not pushing or sliding), turning in where your fastest pass did, and the apex speed of your fastest pass. Throttle: coasting no longer than on your fastest pass through that corner (a short coast to let a GT car rotate is fine), picked up around the apex, squeezed on without lifting, and no slides or push on exit. 85+ is excellent, 70+ good, 55+ getting there. The comparison is with your previous stint here in this car.")}
   </section>`;
 }
 // ---------- GP · driver coach: your own driving, corner by corner, best lap vs your typical lap ----------
