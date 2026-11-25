@@ -833,7 +833,7 @@ function analyze(run){
     }
     let kOn=0, kAll=0; if (A.kerbMask) for (const j of idx){ if (ch.Speed[j]*3.6<60) continue; kAll++; if (kerb[j]) kOn++; }
     const lapsN = Math.max(1, (A.rep||[]).length);
-    A.surface = {n:rough.length, p90:pct(rough,.9), med:median(rough), vertSd:sd, fastShare: all? fast/all : NaN, slowShare: all? slow/all : NaN,
+    A.surface = {n:rough.length, p90:pct(rough,.9), med:median(rough), vertSd:sd, k:SURF_K(run.carPath), fastShare: all? fast/all : NaN, slowShare: all? slow/all : NaN,
       kerbPct: A.kerbMask && kAll ? kOn/kAll*100 : NaN, kerbPerLap: A.kerbMask ? (()=>{ let s=0, last=-1e9; for (const j of idx){ if (!kerb[j]) continue; if (j-last>kHz*0.4) s++; last=j; } return s/lapsN; })() : NaN};
   }
 
@@ -1176,13 +1176,20 @@ function trimFor(run, vmax){
   return {table: hit? hit[1] : null, speed: bySpeed};
 }
 
-// track surface from vertical vibration on the straights (calibrated on Fuji 0.8 smooth … Imola 1.4 bumpy), and track character from where you corner hard
+// track surface: how fast the wheels move over the bumps on the straights (shock speed, 90th percentile, mm/s). On your GT3 stints:
+// Fuji 31 and Spa 36 smooth, Hockenheim 39 / Montreal 42 / Silverstone 45 / Imola 48 medium, Sebring 51 and the Nordschleife 89 bumpy.
+// Prototypes run ~1.5× the shock speed on the same road. Without shock data (live), the body's vertical vibration (Fuji 0.8 … Imola 1.4).
+const SURF_K = car => (PROFILES[car]||{}).proto ? 1.5 : 1;
+function surfClass(s){ if (!s) return null; const k=s.k||1;
+  if (Number.isFinite(s.p90) && s.p90>0 && (s.n||0)>300) return s.p90<38*k ? "Smooth" : s.p90<48*k ? "Medium" : "Bumpy";
+  if (Number.isFinite(s.vertSd)) return s.vertSd<1.0 ? "Smooth" : s.vertSd<1.35 ? "Medium" : "Bumpy"; return null; }
+// track character from where you corner hard
 function trackType(A){
-  const s=A.surface; if (!s || !(s.n>300) || !Number.isFinite(s.vertSd)) return null;
-  const surf = s.vertSd<1.0 ? "Smooth" : s.vertSd<1.35 ? "Medium" : "Bumpy";
+  const s=A.surface; if (!s || !(s.n>300) || !surfClass(s)) return null;
+  const surf = surfClass(s);
   const kind = s.fastShare > s.slowShare+0.1 ? "fast" : s.slowShare > s.fastShare+0.15 ? "slow" : "mixed";
   const kindTxt = kind==="fast" ? "mostly fast corners" : kind==="slow" ? "mostly slow corners" : "a mix of fast and slow corners";
-  return {surf, kind, kindTxt, sd:s.vertSd, mix:`${Math.round(s.fastShare*100)}% of hard cornering above 175 km/h, ${Math.round(s.slowShare*100)}% below 125 km/h`};
+  return {surf, kind, kindTxt, sd:s.vertSd, sh:s.p90, mix:`${Math.round(s.fastShare*100)}% of hard cornering above 175 km/h, ${Math.round(s.slowShare*100)}% below 125 km/h`};
 }
 // ---------- rules (Acura NSX GT3 manual + iRacing setup notes) ----------
 function suggest(run, A){
@@ -1366,17 +1373,17 @@ function suggest(run, A){
           : [O("High-speed compression −2, front and rear", hsc(-2)), ...(arbM?[]:[O("Both anti-roll bars −1", C(SET.frontArb(run),-1), C(SET.rearArb(run),-1))]), O("Bump rubber gap +2 mm all round (more travel)", both(SET.bump,+2))],
         TS.kind==="fast" ? "The road is bumpy but the lap is mostly fast corners, where you need the aero platform. So only soften the high-speed damping, which soaks up the bumps, and keep springs and anti-roll bars for the aero."
           : "On a bumpy track a stiff car skips over the bumps and the tyres lose contact. Softer high-speed damping, softer anti-roll bars and more suspension travel keep the tyres on the road. With mostly slow corners, mechanical grip matters more than aero.",
-        `Vertical vibration on the straights ${fmt(TS.sd,2)} m/s² (smooth < 1.0, bumpy > 1.35); ${TS.mix}.`, "low");
+        `${Number.isFinite(TS.sh)&&TS.sh>0?`Wheels move ${fmt(TS.sh,0)} mm/s over the bumps on the straights (90th percentile; GT3: under 38 smooth, 48+ bumpy)`:`Vertical vibration on the straights ${fmt(TS.sd,2)} m/s²`}; ${TS.mix}.`, "low");
     else if (TS.surf==="Smooth" && TS.kind==="fast")
       add(1,"Track",`Smooth track with ${TS.kindTxt}: you can run stiffer for the aero`,
         [...(arbM?[]:[O("Both anti-roll bars +1", C(SET.frontArb(run),+1), C(SET.rearArb(run),+1))]), O("High-speed compression +1, front and rear", hsc(+1))],
         "On a smooth, fast track the car makes most of its grip from aero, and aero works best when the car sits still. Stiffer anti-roll bars and damping keep the platform steady, and there are few bumps to punish it.",
-        `Vertical vibration on the straights ${fmt(TS.sd,2)} m/s²; ${TS.mix}.`, "low");
+        `${Number.isFinite(TS.sh)&&TS.sh>0?`Wheels move ${fmt(TS.sh,0)} mm/s over the bumps on the straights (90th percentile; GT3: under 38 smooth, 48+ bumpy)`:`Vertical vibration on the straights ${fmt(TS.sd,2)} m/s²`}; ${TS.mix}.`, "low");
     else if (TS.surf==="Smooth" && TS.kind==="slow" && !arbM)
       add(1,"Track",`Smooth track with ${TS.kindTxt}: favour mechanical grip`,
         [O("Both anti-roll bars −1", C(SET.frontArb(run),-1), C(SET.rearArb(run),-1))],
         "Mostly slow corners, where aero does little and the tyres do the work. Softer anti-roll bars let the car lean onto its tyres for more grip; the smooth surface means you can keep the dampers as they are.",
-        `Vertical vibration on the straights ${fmt(TS.sd,2)} m/s²; ${TS.mix}.`, "low");
+        `${Number.isFinite(TS.sh)&&TS.sh>0?`Wheels move ${fmt(TS.sh,0)} mm/s over the bumps on the straights (90th percentile; GT3: under 38 smooth, 48+ bumpy)`:`Vertical vibration on the straights ${fmt(TS.sd,2)} m/s²`}; ${TS.mix}.`, "low");
   }
 
   // Brakes: bias from the individual braking zones
@@ -2165,6 +2172,7 @@ function trackTable(car){
     const L=L0.filter(r=>ok.has(r)); if (!L.length) return null;
     const P=L.filter(r=>r.prof), mine=L.filter(r=>r.car===car), dry=mine.filter(r=>!r.wet && Number.isFinite(r.best));
     const t={track, name:(L.find(r=>r.trackName)||{}).trackName||track, n:L.length, nCar:mine.length, cars:new Set(L.map(r=>r.carName||r.car)).size, last:Math.max(...L.map(r=>r.date||0)),
+      shock:M(L,r=>r.susp&&Number.isFinite(r.susp.p90)&&r.susp.p90>0?r.susp.p90/SURF_K(r.car):NaN),
       rough:M(L,r=>r.prof&&Number.isFinite(r.prof.rough)?r.prof.rough:r.susp?r.susp.rough:NaN), roughN:L.filter(r=>(r.prof&&Number.isFinite(r.prof.rough))||(r.susp&&Number.isFinite(r.susp.rough))).length,
       full:M(P,r=>r.prof.full), slowN:M(P,r=>r.prof.slowN), fastN:M(P,r=>r.prof.fastN), heavy:M(P,r=>r.prof.heavy), corners:M(P,r=>r.prof.corners), slowSh:M(P,r=>r.prof.slowSh), fastSh:M(P,r=>r.prof.fastSh), len:M(P,r=>r.prof.len),
       vmax:mine.length?Math.max(...mine.map(r=>r.prof&&Number.isFinite(r.prof.vmax)?r.prof.vmax:r.aero&&Number.isFinite(r.aero.vmax)?r.aero.vmax:-1)):NaN};
@@ -2180,6 +2188,7 @@ function renderTracks(){
   if (!cars[car]) car=(runs[current]&&cars[runs[current].carPath]) ? runs[current].carPath : (Object.entries(cars).sort((a,b)=>b[1].n-a[1].n)[0]||[])[0];
   const T=trackTable(car), cn=cars[car]?cars[car].name:"";
   const surf=v=>!Number.isFinite(v)?"–":v<1.0?`<b class="ok">smooth</b>`:v<1.35?`<b class="warn">medium</b>`:`<b class="bad">bumpy</b>`;
+  const surf2=c=>c==="Smooth"?`<b class="ok">smooth</b>`:c==="Medium"?`<b class="warn">medium</b>`:c==="Bumpy"?`<b class="bad">bumpy</b>`:"–";
   const DF={high:`<b style="color:var(--us)">high</b>`, medium:`<b class="warn">medium</b>`, low:`<b class="ok">low</b>`};
   const p=v=>Number.isFinite(v)?Math.round(v*100)+"%":"–", day=ms=>ms?new Date(ms).toLocaleDateString([], {day:"2-digit", month:"short"}):"–";
   const old=T.filter(t=>!Number.isFinite(t.full)).length;
@@ -2187,7 +2196,7 @@ function renderTracks(){
    <div class="row" style="align-items:center;gap:10px;margin:0 0 10px"><label class="muted">Top speed, best lap and wing for <select id="trkcar">${Object.entries(cars).sort((a,b)=>b[1].n-a[1].n).map(([k,v])=>`<option value="${esc(k)}" ${k===car?"selected":""}>${esc(v.name)} (${v.n})</option>`).join("")}</select></label></div>
    ${T.length?`<div class="tablewrap"><table style="font-size:12px"><tr><th>Track</th><th>Length</th><th>Surface</th><th>Corners: slow / fast</th><th>Hard cornering: slow / fast</th><th>Full throttle</th><th>Heavy stops</th><th>Top speed</th><th>Downforce</th><th>Best of your GT3s</th><th>Best lap</th><th>Wing</th><th>Stints</th><th>Last</th></tr>
     ${T.map(t=>`<tr><td><b>${esc(t.name)}</b></td><td>${Number.isFinite(t.len)?fmt(t.len,2)+" km":"–"}</td>
-      <td>${surf(t.rough)} <span class="muted">${fmt(t.rough,2)}</span></td>
+      <td>${Number.isFinite(t.shock)?surf2(surfClass({p90:t.shock, n:999})):surf(t.rough)} <span class="muted">${Number.isFinite(t.shock)?fmt(t.shock,0)+" mm/s":fmt(t.rough,2)}</span></td>
       <td>${Number.isFinite(t.slowN)?`${Math.round(t.slowN)} / ${Math.round(t.fastN)}`:"–"}</td>
       <td>${Number.isFinite(t.slowSh)?`${p(t.slowSh)} / ${p(t.fastSh)}`:"–"}</td>
       <td>${p(t.full)}</td><td>${Number.isFinite(t.heavy)?Math.round(t.heavy):"–"}</td>
@@ -5550,7 +5559,7 @@ function arbModel(run, A){
         else { const se=SM.cols.map((c,j)=>!c.cov&&SM_PRIOR.some(([re])=>re.test(c.c.k))?E.se[j]:NaN).filter(Number.isFinite); if (se.length) Gsrc+=`; the all-stints model (${SM.n} stints) knows the bars only to ±${Math.min(...se).toFixed(2)}° per step so far: a stint or two with a different bar, 5+ clean laps each, and it takes over`; } } } catch(e){} }
   const pred=(kf,kr,fi,ri)=>{ const s=share(kf,kr,fi,ri); return {us: Number.isFinite(us0) ? us0+G*(s.phi-base.phi) : NaN, phi:s.phi, roll:s.tot/base.tot}; };
   const grid=F.vals.map((fv,fi)=>R.vals.map((rv,ri)=>({fv, rv, fi, ri, ...pred(kF,kR,fi,ri)})));
-  const surf=A.surface&&Number.isFinite(A.surface.vertSd) ? (A.surface.vertSd<1.0?"smooth":A.surface.vertSd<1.35?"medium":"bumpy") : "medium";
+  const surf=(surfClass(A.surface)||"Medium").toLowerCase();
   const maxRoll = surf==="bumpy" ? 1.0 : surf==="medium" ? 1.12 : 1.3;      // bumpy: no stiffer than now; smooth: stiffer is fine
   const target = (RACE.type==="endurance" ? 0.3 : RACE.type==="qual" ? -0.1 : 0.1) + BAL_SHIFT;   // slight understeer for endurance, a pointy car for qualifying; moved by your style and feel
   // the rear already slides mid-corner: never add rotation with the bars (the average balance hides the slides)
@@ -6256,8 +6265,8 @@ function trackProfile(run, A){
   const heavy=(A.brakeZones||[]).filter(z=>z.vIn-z.vMin>80).length, s=A.surface||{};
   // weights: how much of the lap each thing decides
   const w={ straight: full/n*2, slow: (s.slowShare||0)*2 + slowN*0.08, fast: (s.fastShare||0)*2 + fastN*0.08, braking: heavy*0.12, traction: slowN*0.07,
-    kerbs: Number.isFinite(s.vertSd) ? (s.vertSd>=1.35?0.5:s.vertSd>=1.0?0.25:0.08) : 0.15 };
-  return {w, full:full/n, slowN, fastN, heavy, corners:labs.length, vmax:A.vmax, surf: Number.isFinite(s.vertSd)?(s.vertSd<1.0?"smooth":s.vertSd<1.35?"medium":"bumpy"):"–"};
+    kerbs: ({Bumpy:0.5, Medium:0.25, Smooth:0.08})[surfClass(s)] ?? 0.15 };
+  return {w, full:full/n, slowN, fastN, heavy, corners:labs.length, vmax:A.vmax, surf: (surfClass(s)||"–").toLowerCase()};
 }
 function carFitHTML(run, A){
   const me=CAR_TRAITS[run.carPath]; let P; try { P=trackProfile(run,A); } catch(e){ return ""; }
