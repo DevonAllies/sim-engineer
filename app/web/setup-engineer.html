@@ -4518,8 +4518,11 @@ function setupBrief(run){
   { const ar=A.rh ? run : [...runs].reverse().find(r=>r.carPath===run.carPath && r.A && r.A.rh && !r.live); const W0=(PROFILES[run.carPath]||{}).aeroWin;
     if (ar && W0){ const AA=ar.A, FC=fastCorners(ar,AA), f=FC.length?median(FC.map(c=>c.F)):AA.rh.front, r=FC.length?median(FC.map(c=>c.R)):AA.rh.rear, RW=rakeWindow(ar,S);
       const o=(v,w)=>v>w[1]+1.5?`${fmt(v-w[1],0)} mm high`:v<w[0]-1.5?`${fmt(w[0]-v,0)} mm low`:"in", rk=r-f, rin=RW&&rk>=RW.lo-1.5&&rk<=RW.hi+1.5;
-      const tx=`fast corners: front ${o(f,W0.df.f)}, rear ${o(r,W0.df.r)}, rake ${rin?"in":"out"}${ar!==run?" (last full-data stint)":""}`;
-      L.push({k:"Aero", v:tx, c: o(f,W0.df.f)==="in" && o(r,W0.df.r)==="in" && rin ? "ok" : "warn"}); }
+      // the same rule as the Aero tab: the max-downforce box is the target on the straights (at speed); in the fast corners the car
+      // always sits above it (less downforce at 150–200 km/h), so there only the rake counts
+      const sF=o(AA.rh.front,W0.df.f), sR=o(AA.rh.rear,W0.df.r), stIn=sF==="in"&&sR==="in";
+      const tx=`${stIn?"straights in the box":`straights: front ${sF}, rear ${sR}`}, fast-corner rake ${rin?"in":"out"}${stIn&&rin?": no change":""}${ar!==run?" (last full-data stint)":""}`;
+      L.push({k:"Aero", v:tx, c: stIn && rin ? "ok" : "warn"}); }
     else if (!A.rh && W0) L.push({k:"Aero", v:"ride heights after you get out of the car (full-data stint)", c:""}); }
   try { const RC=A.rh?rollCal(run,A):null; if (RC){ const out=RC.per.length?Math.min(...RC.per.map(p=>p.outF)):NaN; L.push({k:"Roll", v:`${fmt((RC.gradF+RC.gradR)/2,2)}°/g${Number.isFinite(out)?` · outside front edge ${fmt(out,0)} mm`:""}`, c: Number.isFinite(out)&&out<15?"warn":""}); } } catch(e){}
   { const tw=A.tw; if (tw && Number.isFinite(tw.front) && Number.isFinite(tw.rear)){ const o=v=>v<tw.lo?"cold":v>tw.hi?"hot":"in"; L.push({k:"Tyres", v:`front ${fmt(tw.front,0)} °C ${o(tw.front)}, rear ${fmt(tw.rear,0)} °C ${o(tw.rear)} (window ${fmt(tw.lo,0)}–${fmt(tw.hi,0)})`, c: o(tw.front)==="in"&&o(tw.rear)==="in"?"ok":"warn"}); } }
