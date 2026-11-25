@@ -3101,7 +3101,7 @@ function render(){
   </section>` + safe(()=>midSplitHTML(run, A),"midsplit") + safe(()=>balanceWhyHTML(run, A),"balwhy") + cornerBalanceHTML(run, A) + limitHTML(run, A) + arbHTML(run, A) + rotationHTML(run, A) + areaCards("balance"),
     brakes: () => inCarHTML(run, A) + brakesHTML(run, A) + areaCards("brakes"),
     loss: () => gpHTML(run, A),
-    gp: () => gpHTML(run, A) + safe(()=>inputsHTML(run, A, S),"inputs") + safe(()=>refLapHTML(run, A),"reflap") + (()=>{ try { return teamCompareHTML(run, A); } catch(e){ console.error(e); return ""; } })(),
+    gp: () => safe(()=>techHTML(run, A),"Technique scores") + gpHTML(run, A) + safe(()=>inputsHTML(run, A, S),"inputs") + safe(()=>refLapHTML(run, A),"reflap") + (()=>{ try { return teamCompareHTML(run, A); } catch(e){ console.error(e); return ""; } })(),
     hanna: () => (()=>{ try { return enduranceTestHTML(run, A, S); } catch(e){ console.error(e); return ""; } })() + (()=>{ try { return teamEnduHTML(run, A); } catch(e){ console.error(e); return ""; } })()
       + safe(()=>strategyHTML(run, A, S),"strategy") + safe(()=>liftPlanHTML(run, A),"liftplan") + safe(()=>raceTempsHTML(run, A, S),"racetemps") + safe(()=>modelRangeHTML(run, "Fuel model"),"range") + safe(()=>fuelModelHTML(run, A),"fuelmodel")
       + hannaHTML(run, A) + wearModelHTML(run, A, S) + areaCards("fuel"),
@@ -5885,6 +5885,7 @@ function learnRecord(run, A, opts){
     rec.prof={w:Object.fromEntries(Object.entries(P.w).map(([k,v])=>[k,+v.toFixed(3)])), vmax:num(P.vmax), corners:P.corners,
       // the Tracks tab: full throttle share, slow / fast corners, heavy stops, how bumpy, and the lap length
       full:num(P.full), slowN:P.slowN, fastN:P.fastN, heavy:P.heavy, slowSh:num(s.slowShare), fastSh:num(s.fastShare), rough:num(s.vertSd), len:Number.isFinite(len)?len:null}; } catch(e){}   // lift and coast: where and how long you coast before each braking zone, and what it saves in fuel
+  try { const T=techScores(run, A); if (T) rec.tech={trail:num(T.trail), turn:num(T.turn), thr:num(T.thr)}; } catch(e){}   // trail braking, turn-in, throttle scores (GP)
   if (dry) return rec;
   run.learnedId=rec.id; learnStore.put(rec);
   // push to the team folder: every clean lap (GP's driving comparison) and, for long runs, the stint summary (endurance: fuel, lift and coast, tyre wear)
@@ -6545,6 +6546,93 @@ function inCarHTML(run, A){
    <p class="muted" style="font-size:12px">Brake bias forward = more stable on the brakes, but the fronts lock sooner. TC more help = less wheelspin and rear tyre wear, but it can cut power on exit. ABS more help = fewer lock-ups, but longer stops if set too high. If corners disagree, set the base value for most of them and adjust in the car for the rest.</p>
   </section>`;
 }
+// ---------- technique scores: trail braking, turn-in and throttle, 0–100, per corner and for the stint ----------
+// each is a few plain checks per corner pass (every clean lap), averaged; the weakest check is what to work on
+const lin = (v, a, b) => !Number.isFinite(v) ? NaN : a<b ? Math.max(0,Math.min(1,(v-a)/(b-a))) : Math.max(0,Math.min(1,(a-v)/(a-b)));   // 0 at a, 1 at b
+const band = (v, z0, o0, o1, z1) => !Number.isFinite(v) ? NaN : v<=z0||v>=z1 ? 0 : v<o0 ? (v-z0)/(o0-z0) : v<=o1 ? 1 : (z1-v)/(z1-o1);
+const TECH_TIPS = {
+  tOn:   "Keep 10–30% brake on as you start turning, and bleed it off toward the apex: it loads the front tyres so the car bites.",
+  tOver: "Too much brake still on at turn-in: ease off as the steering goes in, or the front tyres are asked to brake and turn at once.",
+  tCarry:"Carry the last of the brake further into the corner instead of letting go right at turn-in.",
+  tSmooth:"Release the brake in one smooth, steady movement: no re-pressing, and no dropping it all at once.",
+  tCtrl: "The car is on the edge on the brakes here (ABS, a slide or a push while turning): brake a touch earlier or release a little sooner.",
+  iHands:"One smooth steering input to the apex: fewer corrections means the tyres keep their grip.",
+  iBal:  "The car pushes or slides as you turn in: a slightly slower entry or a smoother release lets it settle.",
+  iPoint:"Turn in at the same point every lap: your fastest pass shows where.",
+  iSpeed:"Carry more speed to the apex, like your fastest pass through here.",
+  hCoast:"Go straight from brake to throttle: the coasting in between costs time and unsettles the car.",
+  hLate: "Pick the throttle up sooner, around the apex: you wait too long after it.",
+  hEarly:"You're on the throttle well before the apex: if the car pushes wide, wait a moment longer.",
+  hProg: "Squeeze the throttle on progressively and keep it going: lifting again after you pick it up costs drive.",
+  hTrac: "The rear slides or the car pushes on the power: open the steering as you add throttle, and add it a little more gently.",
+};
+function techPass(p, B){
+  const braked = p.peak>0.3 && Number.isFinite(p.trail);
+  const T = braked ? {
+    tOn:   p.trail>0.45 ? 0.3 : band(p.trail, 0, 0.06, 0.35, 0.6),
+    tCarry: Number.isFinite(p.relFrac) ? lin(p.relFrac, 0, 0.4) : NaN,
+    tSmooth: Math.max(0, 1 - 0.4*p.reapply - (p.dump?0.6:0)),
+    tCtrl: 1 - (p.absTI>0.15?1/3:0) - (p.slideTI?1/3:0) - (p.usEntry>US_PUSH?1/3:0) } : null;
+  const I = {
+    iHands: p.corrE<=1 ? 1 : p.corrE===2 ? 0.6 : 0.2,   // one unwind before the apex is normal; a second reversal is a correction
+    iBal: p.slideTI ? 0 : Number.isFinite(p.usTI) ? lin(p.usTI, US_PUSH_BAD, US_PUSH) : NaN,
+    iPoint: Number.isFinite(p.ti-B.ti) ? lin(Math.abs(p.ti-B.ti), 25, 5) : NaN,
+    iSpeed: lin(p.vmin, B.vmin-6, B.vmin-1) };
+  const H = {
+    hCoast: lin(p.coast, 0.6, 0.1),
+    hPick: Number.isFinite(p.pickRel) ? (p.pickRel>12 ? lin(p.pickRel, 45, 12) : p.pickRel<-30 ? 0.5 : 1) : NaN,
+    hProg: p.lifts===0 ? 1 : p.lifts===1 ? 0.5 : 0,
+    hTrac: p.exitSlide ? 0 : p.usPower>US_PUSH ? 0.5 : 1 };
+  return {T, I, H, pickRel:p.pickRel, trail:p.trail};
+}
+const W_T={tOn:35, tCarry:20, tSmooth:25, tCtrl:20}, W_I={iHands:30, iBal:30, iPoint:20, iSpeed:20}, W_H={hCoast:25, hPick:25, hProg:25, hTrac:25};
+function wScore(parts, W){ let s=0, w=0; for (const [k,wt] of Object.entries(W)){ const v=parts[k]; if (Number.isFinite(v)){ s+=v*wt; w+=wt; } } return w ? 100*s/w : NaN; }
+function techScores(run, A){
+  if (A._tech!==undefined) return A._tech;
+  const C=coachCorners(run, A); if (!C.length) return A._tech=null;
+  const rows=C.map(c=>{
+    const P=c.per.map(p=>techPass(p, c.B)), avgPart=(g,k)=>{ const v=P.map(x=>x[g]&&x[g][k]).filter(Number.isFinite); return v.length ? v.reduce((a,b)=>a+b,0)/v.length : NaN; };
+    const part=g=>Object.fromEntries(Object.keys(g==="T"?W_T:g==="I"?W_I:W_H).map(k=>[k,avgPart(g,k)]));
+    const pT=P.some(x=>x.T)?part("T"):null, pI=part("I"), pH=part("H");
+    const sT=pT?wScore(pT,W_T):NaN, sI=wScore(pI,W_I), sH=wScore(pH,W_H);
+    // what to work on here: the weakest check of the lowest score
+    const weakest=(p,W)=>Object.keys(W).filter(k=>Number.isFinite(p[k])).sort((a,b)=>p[a]-p[b])[0];
+    const pick=[[sT,pT,W_T],[sI,pI,W_I],[sH,pH,W_H]].filter(([s,p])=>p && Number.isFinite(s)).sort((a,b)=>a[0]-b[0])[0];
+    let tip=null; if (pick && pick[0]<80){ let k=weakest(pick[1],pick[2]);
+      if (k==="tOn") k = c.per.map(p=>p.trail).filter(Number.isFinite).reduce((a,b,_,x)=>a+b/x.length,0)>0.35 ? "tOver" : "tOn";
+      if (k==="hPick") k = (c.T.pick-c.B.pick>0 || median(c.per.map(p=>p.pickRel).filter(Number.isFinite))>12) ? "hLate" : "hEarly";
+      tip=TECH_TIPS[k]; }
+    return {n:c.n, at:c.at, laps:c.laps, loss:c.loss, trail:sT, turn:sI, thr:sH, pT, pI, pH, tip}; });
+  const mean2=k=>{ const v=rows.map(r=>r[k]).filter(Number.isFinite); return v.length ? v.reduce((a,b)=>a+b,0)/v.length : NaN; };
+  return A._tech={rows, trail:mean2("trail"), turn:mean2("turn"), thr:mean2("thr"), laps:A.rep.length};
+}
+const techWord = v => !Number.isFinite(v) ? "–" : v>=85 ? "excellent" : v>=70 ? "good" : v>=55 ? "getting there" : "work on it";
+const techCol = v => !Number.isFinite(v) ? "inherit" : v>=85 ? "var(--good)" : v>=70 ? "#8fd18f" : v>=55 ? "#e0a030" : "var(--bad)";
+// your previous stint here (same car and track) with scores, to see if a change of approach worked
+function techPrev(run){
+  const trk=learnTrackOf(run), me=run.learnedId, t0=runDate(run);
+  return Object.values(LEARN||{}).filter(r=>r.car===run.carPath && r.track===trk && r.tech && r.id!==me && (r.date||0)<t0-60000).sort((a,b)=>b.date-a.date)[0]||null; }
+function techHTML(run, A){
+  const S=techScores(run, A); if (!S || !S.rows.length) return "";
+  const P=techPrev(run), d=(v,k)=>P&&P.tech&&Number.isFinite(P.tech[k])&&Number.isFinite(v) ? Math.round(v-P.tech[k]) : null;
+  const tile=(name,k,what)=>{ const v=S[k], dd=d(v,k);
+    return `<div class="stat"><div class="k">${name}</div><div class="v" style="font-size:32px;color:${techCol(v)}">${Number.isFinite(v)?Math.round(v):"–"}<span style="font-size:14px;color:var(--muted)"> /100</span></div>
+      <div class="s">${techWord(v)}${dd!==null?` · <b style="color:${dd>2?"var(--good)":dd<-2?"var(--bad)":"var(--muted)"}">${dd>0?"+":""}${dd}</b> vs your last stint here`:""}</div><div class="s" style="margin-top:2px">${what}</div></div>`; };
+  const cell=v=>Number.isFinite(v)?`<b style="color:${techCol(v)}">${Math.round(v)}</b>`:`<span class="muted">–</span>`;
+  const worst=S.rows.filter(r=>r.tip).sort((a,b)=>Math.min(a.trail||99,a.turn,a.thr)-Math.min(b.trail||99,b.turn,b.thr)).slice(0,3);
+  return `<section><h2>Technique scores <small>trail braking, turn-in and throttle, from ${S.laps} clean lap${S.laps===1?"":"s"}${P?` · compared with your stint of ${new Date(P.date).toLocaleString([], {day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit"})}`:""}</small></h2>
+    <div class="grid" style="margin-bottom:8px">
+      ${tile("Trail braking","trail","brake still on at turn-in, carried into the corner, released smoothly, car under control")}
+      ${tile("Turn-in","turn","one clean steering input, the car settled, same turn-in point, apex speed")}
+      ${tile("Throttle","thr","no coasting, picked up around the apex, squeezed on without lifting, no slides on exit")}
+    </div>
+    ${worst.length?`<p class="summary" data-keep><b>Work on:</b> ${worst.map(r=>`<b>T${r.n}</b>: ${esc(r.tip)}`).join(" ")}</p>`:""}
+    <div class="tablewrap"><table><tr><th>Corner</th><th>Trail braking</th><th>Turn-in</th><th>Throttle</th><th>Typical vs best</th><th>Work on</th></tr>
+    ${S.rows.map(r=>`<tr><td>T${r.n}<div class="muted" style="font-size:11px">${fmt(r.at/1000,2)} km</div></td><td>${cell(r.trail)}</td><td>${cell(r.turn)}</td><td>${cell(r.thr)}</td>
+      <td>${Number.isFinite(r.loss)?`${r.loss>=0?"+":"−"}${Math.abs(r.loss).toFixed(2)} s`:"–"}</td><td class="muted" style="font-size:12px">${r.tip?esc(r.tip):"✓"}</td></tr>`).join("")}</table></div>
+    ${infoBox("How the scores work", "Every clean pass through every corner is checked, then averaged. Trail braking (corners where you brake): is some brake (about 10–30%) still on when the steering goes in, is it carried toward the apex, is it released in one smooth movement without re-pressing or dumping it, and does the car stay in control (no ABS, slides or push while turning). Turn-in: one clean steering input with few corrections, the car settled (not pushing or sliding), turning in where your fastest pass did, and the apex speed of your fastest pass. Throttle: little coasting between brake and throttle, picked up around the apex, squeezed on without lifting, and no slides or push on exit. 85+ is excellent, 70+ good, 55+ getting there. The comparison is with your previous stint here in this car.")}
+  </section>`;
+}
 // ---------- GP · driver coach: your own driving, corner by corner, best lap vs your typical lap ----------
 function coachCorners(run, A){
   const secs=cornerSections(run,A), ch=run.ch, TL=(parseFloat((run.info.WeekendInfo||{}).TrackLength)||0)*1000;
@@ -6575,8 +6663,23 @@ function coachCorners(run, A){
       let rel=-1; if (ti>=0) for (let j=ti;j<=apex;j++) if (ch.Brake[j]<0.05){ rel=j; break; }
       const medUs=(a,b)=>{ const v=[]; for (let j=a;j<=b;j++) if (Number.isFinite(A.us[j])) v.push(A.us[j]); return v.length>5 ? median(v) : NaN; };
       const usEntry = ti>=0 ? medUs(ti, rel>=0?rel:apex) : NaN, usMid = medUs(rel>=0?rel:(ti>=0?ti:apex), pick>=0?pick:apex);
+      // technique details for the scores: how far into the corner the brake is carried, re-pressing or dumping it, steering corrections
+      // on the way to the apex, throttle lifts between pick-up and full throttle, slides on exit
+      const tk=Math.max(1,Math.round(run.tick*0.1)); let pkJ=j0; for (let j=j0;j<=apex;j++) if (ch.Brake[j]>ch.Brake[pkJ]) pkJ=j;
+      let reapply=0, lo=ch.Brake[pkJ], dump=false; const relEnd=rel>=0?rel:apex;
+      for (let j=pkJ+tk;j<=relEnd;j+=tk){ const b=ch.Brake[j], b0=ch.Brake[j-tk]; if (b>lo+0.06) { reapply++; lo=b; } else lo=Math.min(lo,b); if (j>=Math.max(j0,(ti>=0?ti:apex)-run.tick) && b0>0.2 && b<0.05) dump=true; }
+      const relFrac = ti>=0 && apex>ti ? (rel>=0 ? (rel-ti)/(apex-ti) : (ch.Brake[apex]>0.05?1:0)) : NaN;
+      // a correction = the wheel turning back the other way by more than ~4.5° (0.08 rad) from where it had got to, on the steering
+      // smoothed over 0.15 s: bumps kicking the wheel through the force feedback (Sebring) and hand tremor don't count
+      let corrE=0; if (ti>=0){ const win=Math.max(1,Math.round(run.tick*0.15)), sm=j=>{ let s=0,n=0; for (let k=Math.max(0,j-win+1);k<=j;k++){ s+=ch.SteeringWheelAngle[k]; n++; } return s/n; };
+        let ext=sm(ti), dir=0; for (let j=ti+1;j<=apex;j++){ const a=sm(j);
+        if (dir>=0 && a>ext){ ext=a; if (!dir) dir=1; } else if (dir<=0 && a<ext){ ext=a; if (!dir) dir=-1; }
+        else if (dir && Math.abs(a-ext)>0.08){ corrE++; dir=-dir; ext=a; } } }
+      let lifts=0, tmax=0; if (pick>=0) for (let j=pick;j<=(full>=0?full:j3);j++){ const th=ch.Throttle[j]; if (th>tmax) tmax=th; else if (tmax-th>0.1){ lifts++; tmax=th; } }
+      const exitSlide = pick>=0 && A.events.some(e=>e.a>=pick && e.a<=j3);
       per.push({best:l===A.best, lap:l.lap, brk, peak, trail: ti>=0 ? ch.Brake[ti] : NaN, trailAvg: trailN? trailSum/trailN : NaN, trailT, absTI: absTI/run.tick, slideTI, usTI, usPower, usEntry, usMid,
         vTI: ti>=0 ? ch.Speed[ti]*3.6 : NaN, pickRel: pick>=0 ? dist(pick)-dist(apex) : NaN,
+        reapply, dump, relFrac, corrE, lifts, exitSlide, pickFull: pick>=0&&full>=0 ? (full-pick)/run.tick : NaN,
         ti: ti>=0 ? dist(ti) : NaN, apexD: dist(apex), coast, pick: pick>=0?dist(pick):NaN, full: full>=0?dist(full):NaN, vmin:ch.Speed[apex]*3.6, corr, time:ch.SessionTime[j3]-ch.SessionTime[j0]});
     }
     // the reference is your OPTIMAL lap: your fastest pass through this corner on any lap (not just the best lap)
