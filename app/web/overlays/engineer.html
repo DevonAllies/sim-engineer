@@ -128,7 +128,7 @@ function word(el, a, minN=20){
 }
 
 // ---------- iRacing data ----------
-const WANT = ["PlayerTrackSurface","SessionTime","Speed","SteeringWheelAngle","YawRate","LatAccel","Brake","Throttle","Lap","LapDist","LapDistPct","OnPitRoad","IsOnTrack","PlayerCarInPitStall","BrakeABSactive","VertAccel","LFspeed","RFspeed","LRspeed","RRspeed",
+const WANT = ["PlayerTrackSurface","PlayerTrackSurfaceMaterial","SessionTime","Speed","SteeringWheelAngle","YawRate","LatAccel","Brake","Throttle","Lap","LapDist","LapDistPct","OnPitRoad","IsOnTrack","PlayerCarInPitStall","BrakeABSactive","VertAccel","LFspeed","RFspeed","LRspeed","RRspeed",
   "LFrideHeight","RFrideHeight","LRrideHeight","RRrideHeight","CFSRrideHeight","dcBrakeBias","dcTractionControl","dcABS",
   "LFpressure","RFpressure","LRpressure","RRpressure",
   "LFtempL","LFtempM","LFtempR","RFtempL","RFtempM","RFtempR","LRtempL","LRtempM","LRtempR","RRtempL","RRtempM","RRtempR"];
@@ -178,10 +178,23 @@ function closeCorner(){
     const rec = {a:corner.a, m:corner.apexP, b:endP, at:corner.at, brkAt:corner.brkAt, apexAt:corner.apexAt, powAt:corner.powAt, endAt: ST.last ? ST.last.LapDist : NaN, exitSlide:corner.exitSlide, us:median(corner.us), v:median(corner.v), entry:corner.entry, min:corner.min, exit:corner.lastV,
                  usIn: corner.usIn.length>5 ? median(corner.usIn) : NaN, slide:corner.slide,
                  ph:{entry:corner.ph.entry.length>8?median(corner.ph.entry):NaN, mid:corner.ph.mid.length>8?median(corner.ph.mid):NaN, exit:corner.ph.exit.length>8?median(corner.ph.exit):NaN}};
-    ST.cur.corners.push(rec); judge(rec);
+    rec.offT=corner.offT||0; rec.paintT=corner.paintT||0; rec.widePh=corner.widePh||"";
+    ST.cur.corners.push(rec);
+    // the verdict waits 1.5 s (or until the next corner): running wide often happens just after the corner has "closed", on the exit
+    flushPend(); ST.pend={rec, until:(ST.last?ST.last.SessionTime:0)+1.5};
     ST.corners.push(rec); if (ST.corners.length>24) ST.corners.shift();
   }
   corner=null;
+}
+function flushPend(){ if (ST.pend){ const r=ST.pend.rec; ST.pend=null; judge(r); } }
+// where the car is: off track (iRacing's own call), or on grass, dirt, sand, gravel, grasscrete or astroturf (material 15+);
+// paint (9–10) is the painted run-off beyond the white line. Kerbs (11–14) are part of the track and don't count.
+function trackEdge(s, dt){
+  const m=s.PlayerTrackSurfaceMaterial, off = s.PlayerTrackSurface===0 || (Number.isFinite(m) && m>=15), paint = Number.isFinite(m) && (m===9 || m===10);
+  // paint before the apex is the inside of the corner (clipping it is fine); only paint after the apex is running wide
+  const add=(o, ph)=>{ if (off){ o.offT=(o.offT||0)+dt; if (!o.widePh) o.widePh=ph; } else if (paint && ph==="exit"){ o.paintT=(o.paintT||0)+dt; if (!o.widePh) o.widePh=ph; } };
+  if (corner) add(corner, s.LapDist>corner.apexAt+5 ? "exit" : "entry");
+  if (ST.pend){ add(ST.pend.rec, "exit"); if (s.SessionTime>=ST.pend.until) flushPend(); }
 }
 // corner entry coaching: compare this corner with the same corner on your best lap
 // ---------- time lost per corner to the fastest car in your class (live: every car's position, 20x a second) ----------
@@ -292,7 +305,19 @@ function judge(rec){
   const name = ref ? `T${ST.ref.indexOf(ref)+1}` : atKm(rec.at);
   const pushIn = rec.usIn>1.6, slide = rec.slide;
   let v=null;
-  if (ref){
+  // running wide comes first: a fast corner that leaves the track (or runs onto the paint past the white line) isn't a good corner
+  const wideOff = rec.offT>=0.1, widePaint = !wideOff && rec.paintT>=0.3;
+  if (wideOff || widePaint){
+    const where = rec.widePh==="entry" ? "on entry" : "on exit", pushOut = rec.ph && rec.ph.exit>1.6;
+    const fix = rec.widePh==="entry" ? (pushIn ? "too fast in, the front pushed: brake a touch earlier" : "too fast in: brake a touch earlier or turn in a little later")
+      : rec.exitSlide ? "the rear stepped out on the power: squeeze the throttle in more gently"
+      : pushOut ? "the front pushed wide on the power: wait a moment longer before full throttle"
+      : "too much speed for the exit: a little less on the power until the steering opens";
+    const P = ref ? pedalAdvice(rec, ref) : null, gained = P && Number.isFinite(P.loss) && P.loss<0;
+    v={w: rec.widePh==="entry" ? "Off track on entry" : `Ran wide on exit${wideOff?" (off track)":" (onto the paint)"}`, c:"warn", d:`${fix}${gained?(wideOff?" · the time gained doesn't count off the track":" · some of the time gained came from the extra room"):""}`};
+    ST.cur.wide=(ST.cur.wide||0)+1;
+  }
+  else if (ref){
     const dE=rec.entry-ref.entry, dM=rec.min-ref.min, dX=rec.exit-ref.exit, d=`in ${sg(dE)} · apex ${sg(dM)} · out ${sg(dX)} km/h`;
     const P = pedalAdvice(rec, ref), vs = ST.refStored ? "vs your best here (saved)" : "vs your best";
     const lt = Number.isFinite(P.loss) ? `${P.loss>=0?"+":"−"}${Math.abs(P.loss).toFixed(2)} s` : "";
@@ -351,6 +376,7 @@ function addSample(s){
   // off track: this lap isn't clean, so it isn't counted, but the count carries on from the next line crossing (no reset)
   // same rule as the app's learning: up to 0.5 s off track in a lap is still a clean lap (a wheel over at one corner), more isn't
   if (s.PlayerTrackSurface===0){ const dt=ST.offT0!=null ? Math.min(0.1, Math.max(0, s.SessionTime-ST.offT0)) : 1/60; ST.cur.off=(ST.cur.off||0)+dt; if (ST.cur.off>=0.5) ST.cur.valid=false; }
+  { const dtE=ST.offT0!=null ? Math.min(0.1, Math.max(0, s.SessionTime-ST.offT0)) : 1/60; if (!ST.outLap) trackEdge(s, dtE); }
   ST.offT0 = s.SessionTime;
   if (!ST.stint) ST.stint = newStint();
   const V=s.Speed, ay=Math.abs(s.LatAccel), st=s.SteeringWheelAngle, r0=s.YawRate;
@@ -374,7 +400,7 @@ function addSample(s){
     const I=ST.cur.inp || (ST.cur.inp={n:[],v:[],b:[],t:[],s:[]}); I.n[bi]=(I.n[bi]||0)+1; I.v[bi]=(I.v[bi]||0)+kmh; I.b[bi]=(I.b[bi]||0)+s.Brake; I.t[bi]=(I.t[bi]||0)+s.Throttle; I.s[bi]=(I.s[bi]||0)+s.SteeringWheelAngle; }
   if (s.Brake>0.08 && !(ST.pb>0.08)){ ST.brkOn=s.LapDist; if (corner && !Number.isFinite(corner.brkAt) && corner.min>=kmh) corner.brkAt=s.LapDist; }
   ST.pb=s.Brake;
-  if (ay>6 && V>12){ if (!corner){ const bo=s.LapDist-ST.brkOn; corner={a: (zone && Number.isFinite(zone.pct)) ? zone.pct : s.LapDistPct, apexP:s.LapDistPct, at:s.LapDist, brkAt: bo>=0 && bo<400 ? ST.brkOn : NaN, apexAt:s.LapDist, powAt:NaN, exitSlide:false, us:[], v:[], usIn:[], ph:{entry:[],mid:[],exit:[]}, entry:kmh, min:kmh, lastV:kmh, slide:false}; }
+  if (ay>6 && V>12){ if (!corner){ flushPend(); const bo=s.LapDist-ST.brkOn; corner={a: (zone && Number.isFinite(zone.pct)) ? zone.pct : s.LapDistPct, apexP:s.LapDistPct, at:s.LapDist, brkAt: bo>=0 && bo<400 ? ST.brkOn : NaN, apexAt:s.LapDist, powAt:NaN, exitSlide:false, us:[], v:[], usIn:[], ph:{entry:[],mid:[],exit:[]}, entry:kmh, min:kmh, lastV:kmh, slide:false}; }
     if (Number.isFinite(us)) corner.ph[s.Brake>0.05 ? "entry" : s.Throttle<0.4 ? "mid" : "exit"].push(us);
     if (kmh<corner.min){ corner.apexP=s.LapDistPct; corner.apexAt=s.LapDist; corner.powAt=NaN; }
     if (!Number.isFinite(corner.powAt) && s.Throttle>0.95 && s.LapDist>corner.apexAt) corner.powAt=s.LapDist;

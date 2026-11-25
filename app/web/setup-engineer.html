@@ -444,7 +444,7 @@ const $ = s => document.querySelector(s);
 // ---------- IBT parsing ----------
 const TYPES = {0:[1,"getUint8"],1:[1,"getUint8"],2:[4,"getInt32"],3:[4,"getUint32"],4:[4,"getFloat32"],5:[8,"getFloat64"]};
 const WANT = ["SessionTime","Lap","LapDistPct","LapDist","Speed","Throttle","Brake","SteeringWheelAngle","YawRate",
- "LatAccel","LongAccel","Gear","RPM","OnPitRoad","IsOnTrack","PlayerTrackSurface","BrakeABSactive","Lat","Lon",
+ "LatAccel","LongAccel","Gear","RPM","OnPitRoad","IsOnTrack","PlayerTrackSurface","PlayerTrackSurfaceMaterial","BrakeABSactive","Lat","Lon",
  "LFrideHeight","RFrideHeight","LRrideHeight","RRrideHeight","CFSRrideHeight",
  "LFspeed","RFspeed","LRspeed","RRspeed","LFshockVel","RFshockVel","LRshockVel","RRshockVel",
  "LFshockDefl","RFshockDefl","LRshockDefl","RRshockDefl","VertAccel","SteeringWheelPctTorque","SteeringWheelMaxForceNm","SteeringWheelTorque",
@@ -6565,6 +6565,7 @@ const TECH_TIPS = {
   hEarly:"You're on the throttle well before the apex: if the car pushes wide, wait a moment longer.",
   hProg: "Squeeze the throttle on progressively and keep it going: lifting again after you pick it up costs drive.",
   hTrac: "The rear slides or the car pushes on the power: open the steering as you add throttle, and add it a little more gently.",
+  hLine: "You run wide past the track edge here: a little less speed in, or wait a moment longer before full throttle, so the car stays on the road.",
 };
 function techPass(p, B){
   const braked = p.peak>0.3 && Number.isFinite(p.trail);
@@ -6584,10 +6585,11 @@ function techPass(p, B){
     hCoast: Number.isFinite(p.coast) && Number.isFinite(B.coast) ? lin(p.coast-B.coast, 0.8, 0.25) : NaN,
     hPick: Number.isFinite(p.pickRel) ? (p.pickRel>12 ? lin(p.pickRel, 45, 12) : p.pickRel<-30 ? 0.5 : 1) : NaN,
     hProg: p.lifts===0 ? 1 : p.lifts===1 ? 0.5 : 0,
-    hTrac: p.exitSlide ? 0 : p.usPower>US_PUSH ? 0.5 : 1 };
+    hTrac: p.exitSlide ? 0 : p.usPower>US_PUSH ? 0.5 : 1,
+    hLine: p.offT>=0.1 ? 0 : p.paintT>=0.3 ? 0.4 : 1 };   // stayed on the track (kerbs are fine)
   return {T, I, H, pickRel:p.pickRel, trail:p.trail};
 }
-const W_T={tOn:35, tCarry:20, tSmooth:25, tCtrl:20}, W_I={iHands:30, iBal:30, iPoint:20, iSpeed:20}, W_H={hCoast:25, hPick:25, hProg:25, hTrac:25};
+const W_T={tOn:35, tCarry:20, tSmooth:25, tCtrl:20}, W_I={iHands:30, iBal:30, iPoint:20, iSpeed:20}, W_H={hCoast:20, hPick:20, hProg:20, hTrac:20, hLine:20};
 function wScore(parts, W){ let s=0, w=0; for (const [k,wt] of Object.entries(W)){ const v=parts[k]; if (Number.isFinite(v)){ s+=v*wt; w+=wt; } } return w ? 100*s/w : NaN; }
 function techScores(run, A){
   if (A._tech!==undefined) return A._tech;
@@ -6626,13 +6628,13 @@ function techHTML(run, A){
     <div class="grid" style="margin-bottom:8px">
       ${tile("Trail braking","trail","brake still on at turn-in, carried into the corner, released smoothly, car under control")}
       ${tile("Turn-in","turn","one clean steering input, the car settled, same turn-in point, apex speed")}
-      ${tile("Throttle","thr","coasting no longer than your fastest pass, picked up around the apex, squeezed on without lifting, no slides on exit")}
+      ${tile("Throttle","thr","coasting no longer than your fastest pass, picked up around the apex, squeezed on without lifting, staying on the track, no slides on exit")}
     </div>
     ${worst.length?`<p class="summary" data-keep><b>Work on:</b> ${worst.map(r=>`<b>T${r.n}</b>: ${esc(r.tip)}`).join(" ")}</p>`:""}
     <div class="tablewrap"><table><tr><th>Corner</th><th>Trail braking</th><th>Turn-in</th><th>Throttle</th><th>Typical vs best</th><th>Work on</th></tr>
     ${S.rows.map(r=>`<tr><td>T${r.n}<div class="muted" style="font-size:11px">${fmt(r.at/1000,2)} km</div></td><td>${cell(r.trail)}</td><td>${cell(r.turn)}</td><td>${cell(r.thr)}</td>
       <td>${Number.isFinite(r.loss)?`${r.loss>=0?"+":"−"}${Math.abs(r.loss).toFixed(2)} s`:"–"}</td><td class="muted" style="font-size:12px">${r.tip?esc(r.tip):"✓"}</td></tr>`).join("")}</table></div>
-    ${infoBox("How the scores work", "Every clean pass through every corner is checked, then averaged. Trail braking (corners where you brake): is some brake (about 10–30%) still on when the steering goes in, is it carried toward the apex, is it released in one smooth movement without re-pressing or dumping it, and does the car stay in control (no ABS, slides or push while turning). Turn-in: one clean steering input with few corrections, the car settled (not pushing or sliding), turning in where your fastest pass did, and the apex speed of your fastest pass. Throttle: coasting no longer than on your fastest pass through that corner (a short coast to let a GT car rotate is fine), picked up around the apex, squeezed on without lifting, and no slides or push on exit. 85+ is excellent, 70+ good, 55+ getting there. The comparison is with your previous stint here in this car.")}
+    ${infoBox("How the scores work", "Every clean pass through every corner is checked, then averaged. Trail braking (corners where you brake): is some brake (about 10–30%) still on when the steering goes in, is it carried toward the apex, is it released in one smooth movement without re-pressing or dumping it, and does the car stay in control (no ABS, slides or push while turning). Turn-in: one clean steering input with few corrections, the car settled (not pushing or sliding), turning in where your fastest pass did, and the apex speed of your fastest pass. Throttle: coasting no longer than on your fastest pass through that corner (a short coast to let a GT car rotate is fine), picked up around the apex, squeezed on without lifting, and staying on the track (kerbs are fine), and no slides or push on exit. 85+ is excellent, 70+ good, 55+ getting there. The comparison is with your previous stint here in this car.")}
   </section>`;
 }
 // ---------- GP · driver coach: your own driving, corner by corner, best lap vs your typical lap ----------
@@ -6679,9 +6681,11 @@ function coachCorners(run, A){
         else if (dir && Math.abs(a-ext)>0.08){ corrE++; dir=-dir; ext=a; } } }
       let lifts=0, tmax=0; if (pick>=0) for (let j=pick;j<=(full>=0?full:j3);j++){ const th=ch.Throttle[j]; if (th>tmax) tmax=th; else if (tmax-th>0.1){ lifts++; tmax=th; } }
       const exitSlide = pick>=0 && A.events.some(e=>e.a>=pick && e.a<=j3);
+      let offT=0, paintT=0; { const M=ch.PlayerTrackSurfaceMaterial, PS=ch.PlayerTrackSurface, jEnd=Math.min(l.e-1, j3+Math.round(run.tick*1.5));
+        for (let j=(ti>=0?ti:j0);j<=jEnd;j++){ const m=M?M[j]:NaN; if ((PS&&PS[j]===0) || m>=15) offT+=1/run.tick; else if ((m===9||m===10) && j>apex) paintT+=1/run.tick; } }   // paint before the apex is the inside of the corner
       per.push({best:l===A.best, lap:l.lap, brk, peak, trail: ti>=0 ? ch.Brake[ti] : NaN, trailAvg: trailN? trailSum/trailN : NaN, trailT, absTI: absTI/run.tick, slideTI, usTI, usPower, usEntry, usMid,
         vTI: ti>=0 ? ch.Speed[ti]*3.6 : NaN, pickRel: pick>=0 ? dist(pick)-dist(apex) : NaN,
-        reapply, dump, relFrac, corrE, lifts, exitSlide, pickFull: pick>=0&&full>=0 ? (full-pick)/run.tick : NaN,
+        reapply, dump, relFrac, corrE, lifts, exitSlide, offT, paintT, wide: offT>=0.1 || paintT>=0.3, pickFull: pick>=0&&full>=0 ? (full-pick)/run.tick : NaN,
         ti: ti>=0 ? dist(ti) : NaN, apexD: dist(apex), coast, pick: pick>=0?dist(pick):NaN, full: full>=0?dist(full):NaN, vmin:ch.Speed[apex]*3.6, corr, time:ch.SessionTime[j3]-ch.SessionTime[j0]});
     }
     // the reference is your OPTIMAL lap: your fastest pass through this corner on any lap (not just the best lap)
